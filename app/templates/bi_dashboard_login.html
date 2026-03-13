@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>供应链运营看板登录</title>
+  <style>
+    :root {
+      --bg-start: #3e40df;
+      --bg-end: #2f35be;
+      --card: rgba(255, 255, 255, 0.96);
+      --line: rgba(132, 144, 255, 0.2);
+      --text: #111827;
+      --sub: #667085;
+      --accent: #4258ff;
+      --accent-deep: #3547e5;
+      --shadow: 0 30px 80px rgba(11, 18, 74, 0.28);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 16% 16%, rgba(255,255,255,.12), transparent 26%),
+        radial-gradient(circle at 84% 18%, rgba(255,255,255,.1), transparent 20%),
+        linear-gradient(135deg, var(--bg-start) 0%, var(--bg-end) 100%);
+    }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(420px, 520px);
+      gap: 48px;
+      padding: 40px 56px;
+      align-items: center;
+    }
+    .brand {
+      color: rgba(255,255,255,.96);
+      align-self: start;
+    }
+    .brand-mark {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.12);
+      backdrop-filter: blur(14px);
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      margin-bottom: 18px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
+    }
+    .brand h1 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
+    .brand p {
+      margin: 0;
+      max-width: 420px;
+      color: rgba(255,255,255,.72);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+    .showcase {
+      position: relative;
+      padding: 12px 0 24px;
+      color: #fff;
+    }
+    .showcase h2 {
+      margin: 24px 0 12px;
+      font-size: clamp(38px, 5vw, 64px);
+      line-height: 1.03;
+      letter-spacing: -0.05em;
+      max-width: 660px;
+    }
+    .showcase .lead {
+      max-width: 560px;
+      color: rgba(255,255,255,.76);
+      line-height: 1.8;
+      font-size: 15px;
+    }
+    .artboard {
+      position: relative;
+      margin-top: 48px;
+      height: 360px;
+      border-radius: 34px;
+      background: linear-gradient(145deg, rgba(255,255,255,.18), rgba(255,255,255,.06));
+      border: 1px solid rgba(255,255,255,.2);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+    .art-glow,
+    .art-orb,
+    .art-card,
+    .art-chip,
+    .art-ring {
+      position: absolute;
+    }
+    .art-glow {
+      inset: auto auto 20px 28px;
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(81,212,255,.85), rgba(81,212,255,0));
+      filter: blur(12px);
+    }
+    .art-card {
+      inset: 52px auto auto 72px;
+      width: 480px;
+      height: 230px;
+      border-radius: 28px;
+      background: linear-gradient(145deg, rgba(117,233,255,.95), rgba(67,152,255,.88));
+      border: 4px solid rgba(255,255,255,.34);
+      box-shadow: 0 18px 36px rgba(40, 84, 201, 0.35);
+    }
+    .art-card::before,
+    .art-card::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(255,255,255,.34);
+      filter: blur(8px);
+    }
+    .art-card::before {
+      width: 70px;
+      height: 70px;
+      inset: 28px auto auto 36px;
+    }
+    .art-card::after {
+      width: 96px;
+      height: 96px;
+      inset: auto 42px 30px auto;
+    }
+    .art-orb {
+      width: 120px;
+      height: 120px;
+      border-radius: 34px;
+      background: linear-gradient(145deg, #ffe6b3, #ff9e67);
+      inset: 176px auto auto 202px;
+      transform: rotate(-18deg);
+      box-shadow: 0 18px 40px rgba(221, 115, 57, .32);
+    }
+    .art-chip {
+      inset: 98px 92px auto auto;
+      width: 98px;
+      height: 98px;
+      border-radius: 24px;
+      background: linear-gradient(145deg, #ffd0b0, #ffffff);
+      transform: rotate(12deg);
+      box-shadow: 0 14px 28px rgba(38, 50, 100, .18);
+    }
+    .art-ring {
+      inset: 128px auto auto 500px;
+      width: 128px;
+      height: 128px;
+      border-radius: 50%;
+      border: 12px solid rgba(255,255,255,.72);
+      border-right-color: rgba(255,255,255,.18);
+      transform: rotate(22deg);
+    }
+    .login-card {
+      position: relative;
+      width: min(100%, 480px);
+      padding: 40px 42px 34px;
+      border-radius: var(--radius-xl);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      justify-self: center;
+    }
+    .login-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 76px;
+      height: 76px;
+      background: linear-gradient(135deg, rgba(255,255,255,0) 49%, rgba(87,114,255,.18) 50%);
+      border-top-right-radius: var(--radius-xl);
+    }
+    .login-card::after {
+      content: "";
+      position: absolute;
+      top: 20px;
+      right: 22px;
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background:
+        linear-gradient(90deg, rgba(66,88,255,.85) 0 8px, transparent 8px 16px, rgba(66,88,255,.85) 16px 24px, transparent 24px),
+        linear-gradient(rgba(66,88,255,.85) 0 8px, transparent 8px 16px, rgba(66,88,255,.85) 16px 24px, transparent 24px);
+      background-size: 24px 24px;
+      opacity: .86;
+    }
+    .login-head {
+      margin-bottom: 24px;
+    }
+    .login-head h3 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+    .login-head p {
+      margin: 0;
+      color: var(--sub);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+    .field {
+      margin-bottom: 16px;
+    }
+    .field label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #344054;
+    }
+    .field input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #eef1ff;
+      border-radius: 14px;
+      padding: 14px 16px;
+      font: inherit;
+      color: var(--text);
+      outline: none;
+      transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+    }
+    .field input:focus {
+      border-color: rgba(66,88,255,.46);
+      box-shadow: 0 0 0 4px rgba(66,88,255,.12);
+      transform: translateY(-1px);
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 8px 0 20px;
+      color: var(--sub);
+      font-size: 13px;
+    }
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .check input { accent-color: var(--accent); }
+    .submit {
+      width: 100%;
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 18px;
+      background: linear-gradient(180deg, var(--accent), var(--accent-deep));
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 18px 30px rgba(66, 88, 255, 0.24);
+    }
+    .submit:disabled { opacity: .6; cursor: wait; }
+    .notice {
+      min-height: 22px;
+      margin-top: 14px;
+      color: #c01048;
+      font-size: 13px;
+    }
+    .foot {
+      margin-top: 28px;
+      font-size: 12px;
+      color: var(--sub);
+      text-align: center;
+    }
+    @media (max-width: 1180px) {
+      .shell { grid-template-columns: 1fr; padding: 32px 20px; gap: 20px; }
+      .brand { align-self: auto; }
+      .artboard { height: 280px; }
+      .art-card { inset: 42px auto auto 26px; width: calc(100% - 120px); }
+      .art-orb { inset: 148px auto auto 124px; }
+      .art-chip { inset: 84px 36px auto auto; }
+      .art-ring { inset: 94px auto auto auto; right: 34px; }
+      .login-card { width: 100%; }
+    }
+    @media (max-width: 720px) {
+      .showcase h2 { font-size: 40px; }
+      .login-card { padding: 30px 22px 24px; }
+      .artboard { height: 220px; }
+      .art-orb, .art-chip, .art-ring { display: none; }
+      .art-card { inset: 28px 18px auto 18px; width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="showcase">
+      <div class="brand">
+        <div class="brand-mark">◌</div>
+        <h1>供应链 BI</h1>
+        <p>库存、销售与退货数据统一汇聚，按天沉淀，按视图消费。为管理层和运营团队提供更直接的经营判断界面。</p>
+      </div>
+      <h2>让库存与销售数据，进入可直接决策的展示层。</h2>
+      <p class="lead">登录后即可查看最新看板，按日期切换明细，自定义图表组件，并将 AI 生成的分析结果保存为可编辑备注。</p>
+      <div class="artboard">
+        <div class="art-glow"></div>
+        <div class="art-card"></div>
+        <div class="art-orb"></div>
+        <div class="art-chip"></div>
+        <div class="art-ring"></div>
+      </div>
+    </section>
+
+    <section class="login-card">
+      <div class="login-head">
+        <h3>账号登录</h3>
+        <p>使用已配置的本地测试账号或管理员账号进入看板。</p>
+      </div>
+      <form id="loginForm">
+        <div class="field">
+          <label for="username">登录账号</label>
+          <input id="username" name="username" type="text" autocomplete="username" placeholder="请输入用户名" required />
+        </div>
+        <div class="field">
+          <label for="password">登录密码</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required />
+        </div>
+        <div class="row">
+          <label class="check">
+            <input id="remember" type="checkbox" />
+            <span>记住此设备</span>
+          </label>
+          <span>公网临时地址可直接访问</span>
+        </div>
+        <button class="submit" id="submitBtn" type="submit">立即登录</button>
+        <div class="notice" id="notice"></div>
+      </form>
+      <div class="foot">登录页已改为会话登录，不再依赖浏览器原生 Basic Auth 弹窗。</div>
+    </section>
+  </div>
+
+  <script>
+    const NEXT_PATH = __NEXT_PATH_JSON__;
+    const form = document.getElementById("loginForm");
+    const submitBtn = document.getElementById("submitBtn");
+    const notice = document.getElementById("notice");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      notice.textContent = "";
+      submitBtn.disabled = true;
+      submitBtn.textContent = "登录中...";
+      try {
+        const payload = {
+          username: document.getElementById("username").value.trim(),
+          password: document.getElementById("password").value,
+          remember: document.getElementById("remember").checked,
+          next: NEXT_PATH,
+        };
+        const response = await fetch("/financial/bi-dashboard/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.detail || "登录失败");
+        }
+        const data = await response.json();
+        window.location.href = data.redirect_to || "/financial/bi-dashboard";
+      } catch (error) {
+        notice.textContent = error.message || "登录失败";
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "立即登录";
+      }
+    });
+  </script>
+</body>
+</html>

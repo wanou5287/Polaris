@@ -1,0 +1,8 @@
+settings:
+  session_secret: change-me-to-a-random-secret
+
+users:
+  - username: bi_admin
+    password: change-me-admin-password
+  - username: tester
+    password: change-me-tester-password

@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>退货拆包出勤录入</title>
+  <style>
+    :root {
+      --bg: #eef3ec;
+      --panel: rgba(255, 255, 255, 0.94);
+      --panel-strong: #ffffff;
+      --line: rgba(15, 23, 42, 0.08);
+      --text: #111827;
+      --sub: #667085;
+      --accent: #1f6dff;
+      --accent-soft: rgba(31, 109, 255, 0.1);
+      --shadow-lg: 0 28px 60px rgba(24, 32, 56, 0.14);
+      --shadow-md: 0 18px 36px rgba(24, 32, 56, 0.08);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(31, 109, 255, 0.12), transparent 26%),
+        radial-gradient(circle at 100% 12%, rgba(18, 183, 106, 0.1), transparent 22%),
+        linear-gradient(180deg, #f5f8f3 0%, var(--bg) 100%);
+    }
+    button, input { font: inherit; }
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: rgba(248, 250, 252, 0.96);
+      color: var(--text);
+      outline: none;
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+    input:focus {
+      border-color: rgba(31, 109, 255, 0.4);
+      box-shadow: 0 0 0 4px rgba(31, 109, 255, 0.12);
+    }
+    .shell {
+      min-height: 100vh;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .glass {
+      background: var(--panel);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow-md);
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-radius: var(--radius-xl);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #d1f1d7, #9fd19c);
+      color: #1f5132;
+      font-weight: 700;
+    }
+    .brand h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+    .brand p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+    }
+    .pill,
+    .primary,
+    .ghost {
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .pill,
+    .ghost {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+    .primary {
+      color: #fff;
+      background: linear-gradient(180deg, #2c77ff, #1558d8);
+      box-shadow: 0 14px 28px rgba(31, 109, 255, 0.2);
+    }
+    .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(31, 109, 255, 0.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      padding: 18px;
+      border-radius: var(--radius-lg);
+    }
+    .panel h2,
+    .panel h3 {
+      margin: 0 0 10px;
+      letter-spacing: -0.03em;
+    }
+    .panel p,
+    .helper {
+      margin: 0;
+      color: var(--sub);
+      line-height: 1.7;
+      font-size: 13px;
+    }
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .field label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: var(--sub);
+    }
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .metric-card {
+      padding: 16px;
+      border-radius: 18px;
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.78));
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      box-shadow: 0 12px 24px rgba(24, 32, 56, 0.05);
+    }
+    .metric-card strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+    .metric-card span {
+      color: var(--sub);
+      font-size: 12px;
+    }
+    .table-wrap {
+      overflow: auto;
+      border-radius: 18px;
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      background: rgba(255, 255, 255, 0.76);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      text-align: left;
+      white-space: nowrap;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: rgba(247, 249, 253, 0.95);
+      color: var(--sub);
+      font-weight: 600;
+    }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: rgba(31, 109, 255, 0.04); }
+    .empty {
+      min-height: 180px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      border-radius: 18px;
+      border: 1px dashed rgba(15, 23, 42, 0.12);
+      background: rgba(255, 255, 255, 0.64);
+      color: var(--sub);
+      padding: 18px;
+    }
+    .notice {
+      min-height: 22px;
+      color: #1558d8;
+      font-size: 13px;
+    }
+    .notice.error { color: #d92d20; }
+    @media (max-width: 1080px) {
+      .workspace { grid-template-columns: 1fr; }
+      .card-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .shell { padding: 14px; }
+      .topbar { grid-template-columns: 1fr; }
+      .top-actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar glass">
+      <div class="brand">
+        <div class="brand-mark">返</div>
+        <div>
+          <h1>退货拆包出勤录入</h1>
+          <p>按日期维护退货拆包出勤人数。提交后会自动回填销售清洗表，并重新计算人效。</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="pill" id="backBtn" type="button">返回看板</button>
+        <span class="user-chip" id="currentUserChip"></span>
+        <button class="ghost" id="logoutBtn" type="button">退出</button>
+      </div>
+    </header>
+
+    <section class="card-grid">
+      <article class="metric-card glass">
+        <span>最新原始销售日期</span>
+        <strong id="latestRawDate">--</strong>
+      </article>
+      <article class="metric-card glass">
+        <span>最新清洗日期</span>
+        <strong id="latestCleaningDate">--</strong>
+      </article>
+      <article class="metric-card glass">
+        <span>已录入日期数</span>
+        <strong id="recordCount">0</strong>
+      </article>
+    </section>
+
+    <section class="workspace">
+      <aside class="panel glass">
+        <div class="stack">
+          <div>
+            <h2>录入当日出勤人数</h2>
+            <p>日期维度只需要录一次，系统会自动回填到该日期下所有物料的清洗明细。</p>
+          </div>
+          <div class="field">
+            <label for="bizDate">日期</label>
+            <input id="bizDate" type="date" />
+          </div>
+          <div class="field">
+            <label for="attendanceCount">退货拆包出勤人数</label>
+            <input id="attendanceCount" type="number" min="0" step="0.5" placeholder="例如 8" />
+          </div>
+          <button class="primary" id="saveBtn" type="button">保存并回填</button>
+          <div class="notice" id="notice"></div>
+          <div class="helper">
+            口径说明：
+            销售退货（销退仓）/ 退货拆包出勤人数 = 退货拆包人效。
+            如果当日没有录入人数，人效会保持 0。
+          </div>
+        </div>
+      </aside>
+
+      <section class="panel glass">
+        <div class="stack">
+          <div>
+            <h3>最近日期录入与汇总</h3>
+            <p>点击表格中的某一行，会自动带出对应日期和已录入人数，便于修正。</p>
+          </div>
+          <div class="table-wrap" id="tableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>出勤人数</th>
+                  <th>销退仓退货</th>
+                  <th>当日总退货</th>
+                  <th>当日总销量</th>
+                  <th>退货拆包人效</th>
+                </tr>
+              </thead>
+              <tbody id="summaryRows"></tbody>
+            </table>
+          </div>
+          <div class="empty" id="emptyState" hidden>当前还没有可展示的清洗数据或出勤录入记录。</div>
+        </div>
+      </section>
+    </section>
+  </div>
+
+  <script>
+    const CURRENT_USER = __BI_CURRENT_USER_JSON__;
+    const DASHBOARD_PATH = __BI_DASHBOARD_PATH_JSON__;
+    const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
+    const LIST_API = "/financial/bi-dashboard/api/return-unpack-attendance";
+    const SAVE_API = "/financial/bi-dashboard/api/return-unpack-attendance";
+
+    const el = {
+      currentUserChip: document.getElementById("currentUserChip"),
+      latestRawDate: document.getElementById("latestRawDate"),
+      latestCleaningDate: document.getElementById("latestCleaningDate"),
+      recordCount: document.getElementById("recordCount"),
+      bizDate: document.getElementById("bizDate"),
+      attendanceCount: document.getElementById("attendanceCount"),
+      saveBtn: document.getElementById("saveBtn"),
+      notice: document.getElementById("notice"),
+      summaryRows: document.getElementById("summaryRows"),
+      emptyState: document.getElementById("emptyState"),
+      tableWrap: document.getElementById("tableWrap"),
+    };
+
+    function toast(message, isError = false) {
+      el.notice.textContent = message || "";
+      el.notice.classList.toggle("error", Boolean(isError));
+    }
+
+    function formatNumber(value, fractionDigits = 2) {
+      const numeric = Number(value || 0);
+      return Number.isFinite(numeric) ? numeric.toLocaleString("zh-CN", { maximumFractionDigits: fractionDigits, minimumFractionDigits: fractionDigits }) : "--";
+    }
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        credentials: "same-origin",
+        ...options,
+      });
+      if (response.status === 401) {
+        window.location.href = `${DASHBOARD_PATH}`;
+        throw new Error("登录已失效");
+      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `请求失败：${response.status}`);
+      }
+      return payload;
+    }
+
+    function fillForm(row) {
+      el.bizDate.value = row.biz_date || "";
+      el.attendanceCount.value = row.attendance_count ?? "";
+    }
+
+    function renderRows(rows) {
+      if (!rows.length) {
+        el.summaryRows.innerHTML = "";
+        el.tableWrap.hidden = true;
+        el.emptyState.hidden = false;
+        return;
+      }
+      el.tableWrap.hidden = false;
+      el.emptyState.hidden = true;
+      el.summaryRows.innerHTML = rows.map((row) => `
+        <tr class="clickable" data-biz-date="${row.biz_date}" data-attendance="${row.attendance_count}">
+          <td>${row.biz_date || "--"}</td>
+          <td>${formatNumber(row.attendance_count, 2)}</td>
+          <td>${formatNumber(row.sales_return_warehouse)}</td>
+          <td>${formatNumber(row.total_return_qty)}</td>
+          <td>${formatNumber(row.total_sales_qty)}</td>
+          <td>${formatNumber(row.return_unpack_efficiency)}</td>
+        </tr>
+      `).join("");
+      el.summaryRows.querySelectorAll("tr.clickable").forEach((row) => {
+        row.addEventListener("click", () => {
+          fillForm({
+            biz_date: row.dataset.bizDate,
+            attendance_count: row.dataset.attendance,
+          });
+        });
+      });
+    }
+
+    async function loadSummaries() {
+      const payload = await api(LIST_API);
+      const rows = payload.rows || [];
+      el.currentUserChip.textContent = CURRENT_USER;
+      el.latestRawDate.textContent = payload.latest_raw_date || "--";
+      el.latestCleaningDate.textContent = payload.latest_cleaning_date || "--";
+      el.recordCount.textContent = String(rows.filter((row) => Number(row.attendance_count || 0) > 0).length);
+      renderRows(rows);
+      if (!el.bizDate.value) {
+        el.bizDate.value = payload.latest_cleaning_date || payload.latest_raw_date || new Date().toISOString().slice(0, 10);
+      }
+    }
+
+    async function saveAttendance() {
+      const bizDate = el.bizDate.value;
+      const attendanceCount = el.attendanceCount.value;
+      if (!bizDate) {
+        toast("请选择日期", true);
+        return;
+      }
+      if (attendanceCount === "") {
+        toast("请输入退货拆包出勤人数", true);
+        return;
+      }
+      el.saveBtn.disabled = true;
+      toast("");
+      try {
+        const payload = await api(SAVE_API, {
+          method: "POST",
+          body: JSON.stringify({
+            biz_date: bizDate,
+            attendance_count: attendanceCount,
+          }),
+        });
+        toast(`已保存 ${payload.biz_date} 的出勤人数`);
+        await loadSummaries();
+        fillForm({
+          biz_date: payload.biz_date,
+          attendance_count: payload.attendance_count,
+        });
+      } catch (error) {
+        toast(error.message || "保存失败", true);
+      } finally {
+        el.saveBtn.disabled = false;
+      }
+    }
+
+    async function logout() {
+      try {
+        await api(LOGOUT_PATH, { method: "POST" });
+      } finally {
+        window.location.href = `${DASHBOARD_PATH}`;
+      }
+    }
+
+    function bindEvents() {
+      document.getElementById("backBtn").addEventListener("click", () => {
+        window.location.href = DASHBOARD_PATH;
+      });
+      document.getElementById("logoutBtn").addEventListener("click", logout);
+      el.saveBtn.addEventListener("click", saveAttendance);
+    }
+
+    async function bootstrap() {
+      bindEvents();
+      try {
+        await loadSummaries();
+      } catch (error) {
+        toast(error.message || "加载失败", true);
+      }
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>

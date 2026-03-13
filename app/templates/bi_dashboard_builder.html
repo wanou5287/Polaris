@@ -1,0 +1,2997 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>供应链运营数据看板</title>
+  <style>
+    :root {
+      --bg: #edf1eb;
+      --bg-strong: #e3ebe2;
+      --panel: rgba(255, 255, 255, 0.92);
+      --panel-strong: #ffffff;
+      --line: rgba(15, 23, 42, 0.08);
+      --line-strong: rgba(15, 23, 42, 0.16);
+      --text: #111827;
+      --sub: #667085;
+      --accent: #1f6dff;
+      --accent-soft: rgba(31, 109, 255, 0.10);
+      --success-soft: rgba(28, 183, 126, 0.12);
+      --danger: #d92d20;
+      --shadow-lg: 0 32px 80px rgba(24, 32, 56, 0.12);
+      --shadow-md: 0 18px 36px rgba(24, 32, 56, 0.08);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 6% 2%, rgba(31,109,255,.12), transparent 26%),
+        radial-gradient(circle at 96% 10%, rgba(28,183,126,.10), transparent 20%),
+        linear-gradient(180deg, #f4f7f3 0%, var(--bg) 100%);
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 11px 14px;
+      background: rgba(248, 250, 252, 0.96);
+      color: var(--text);
+      outline: none;
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: rgba(31,109,255,.42);
+      box-shadow: 0 0 0 4px rgba(31,109,255,.12);
+    }
+    textarea { min-height: 120px; resize: vertical; }
+    .shell {
+      min-height: 100vh;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .glass {
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,.72);
+      box-shadow: var(--shadow-md);
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 14px 16px;
+      border-radius: var(--radius-xl);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: linear-gradient(145deg, #d1f1d7, #9fd19c);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: #1f5132;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.5);
+    }
+    .brand-copy { min-width: 0; }
+    .eyebrow {
+      margin: 0 0 2px;
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--sub);
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: -0.04em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .top-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .pill,
+    .ghost,
+    .danger-ghost,
+    .primary {
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: 13px;
+      border: 1px solid transparent;
+    }
+    .pill, .ghost {
+      background: rgba(255,255,255,.78);
+      border-color: var(--line);
+      color: var(--text);
+    }
+    .primary {
+      background: linear-gradient(180deg, #2c77ff, #1558d8);
+      color: #fff;
+      box-shadow: 0 14px 28px rgba(31,109,255,.2);
+    }
+    .danger-ghost {
+      background: rgba(217,45,32,.08);
+      color: var(--danger);
+      border: 1px solid rgba(217,45,32,.14);
+    }
+    .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(31,109,255,.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .user-chip::before {
+      content: "";
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #2c77ff, #5db1ff);
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(320px, .95fr);
+      gap: 16px;
+      padding: 18px;
+      border-radius: var(--radius-xl);
+    }
+    .hero-main {
+      padding: 14px;
+      border-radius: 24px;
+      background: linear-gradient(145deg, rgba(255,255,255,.85), rgba(250,252,255,.56));
+      border: 1px solid rgba(255,255,255,.72);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-main::after {
+      content: "";
+      position: absolute;
+      right: -40px;
+      bottom: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(31,109,255,.14), transparent 62%);
+    }
+    .hero-head h2 {
+      margin: 4px 0 10px;
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.04;
+      letter-spacing: -0.05em;
+    }
+    .hero-head p {
+      margin: 0;
+      max-width: 760px;
+      color: var(--sub);
+      line-height: 1.75;
+      font-size: 14px;
+    }
+    .hero-toolbar,
+    .quick-types,
+    .chip-list,
+    .meta-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .hero-toolbar .field-inline {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.7);
+      border: 1px solid rgba(255,255,255,.7);
+    }
+    .hero-toolbar select,
+    .hero-toolbar input {
+      min-width: 180px;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      padding: 6px 4px;
+    }
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .stat-card {
+      border-radius: 22px;
+      padding: 18px;
+      background: linear-gradient(160deg, rgba(255,255,255,.96), rgba(248,251,255,.78));
+      border: 1px solid rgba(255,255,255,.76);
+      box-shadow: 0 14px 28px rgba(26, 41, 71, 0.06);
+    }
+    .stat-card strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+    .stat-card span {
+      color: var(--sub);
+      font-size: 12px;
+    }
+    .quick-types button {
+      padding: 10px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(31,109,255,.12);
+      background: rgba(255,255,255,.78);
+      color: #174ea9;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .chip-list .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(31,109,255,.08);
+      color: #1757cc;
+      font-size: 12px;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 14px;
+      align-items: start;
+      min-height: 0;
+    }
+    .board {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(24, minmax(0, 1fr));
+      grid-auto-rows: 56px;
+      gap: 8px;
+      align-items: stretch;
+      min-height: 720px;
+      padding: 6px;
+      border-radius: 24px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,.18)),
+        linear-gradient(90deg, rgba(15,23,42,.028) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(15,23,42,.028) 1px, transparent 1px);
+      background-size: 100% 100%, var(--grid-step-x, 32px) var(--grid-step-y, 32px), var(--grid-step-x, 32px) var(--grid-step-y, 32px);
+    }
+    .board.drag-over {
+      background: linear-gradient(180deg, rgba(31,109,255,.04), rgba(31,109,255,.02));
+      box-shadow: inset 0 0 0 1px rgba(31,109,255,.08);
+    }
+    .layout-guide {
+      position: absolute;
+      pointer-events: none;
+      z-index: 1;
+      border-radius: 22px;
+      background: rgba(31,109,255,.12);
+      border: 2px dashed rgba(31,109,255,.35);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.5);
+    }
+    .guide-line {
+      position: absolute;
+      pointer-events: none;
+      z-index: 1;
+      background: rgba(31,109,255,.24);
+      box-shadow: 0 0 0 1px rgba(255,255,255,.48);
+    }
+    .guide-line.vertical {
+      top: 0;
+      bottom: 0;
+      width: 1px;
+    }
+    .guide-line.horizontal {
+      left: 0;
+      right: 0;
+      height: 1px;
+    }
+    .card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+      height: 100%;
+      min-width: 0;
+      padding: 16px;
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,.9);
+      border: 1px solid rgba(255,255,255,.76);
+      box-shadow: var(--shadow-md);
+      transition: transform .18s ease, box-shadow .18s ease;
+      grid-column: var(--grid-col, auto) / span var(--grid-w, 12);
+      grid-row: var(--grid-row, auto) / span var(--grid-h, 5);
+      z-index: 2;
+      overflow: hidden;
+    }
+    .card:hover { transform: translateY(-2px); }
+    .card.dragging { opacity: .45; transform: scale(.98); }
+    .card.active { box-shadow: 0 0 0 2px rgba(31,109,255,.18), var(--shadow-md); }
+    .card-head,
+    .card-meta,
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .card-head h3,
+    .panel-head h3 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.03em;
+    }
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .card-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .drag-handle {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      background: rgba(15,23,42,.04);
+      color: var(--sub);
+      cursor: grab;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .drag-handle:active { cursor: grabbing; }
+    .mini-btn {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.76);
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .mini-btn.primary { background: rgba(31,109,255,.1); color: #1558d8; border-color: rgba(31,109,255,.12); }
+    .mini-btn.danger { background: rgba(217,45,32,.08); color: var(--danger); border-color: rgba(217,45,32,.12); }
+    .card-meta {
+      font-size: 12px;
+      color: var(--sub);
+      flex-wrap: wrap;
+    }
+    .card-body {
+      flex: 1;
+      min-height: 0;
+      min-width: 0;
+      overflow: hidden;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(248,250,252,.88), rgba(255,255,255,.92));
+      border: 1px solid rgba(15,23,42,.04);
+      padding: 10px;
+      position: relative;
+    }
+    .card-body.scrollable { overflow: auto; }
+    .card-body.metric-body {
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+    }
+    .resize-handle {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      background:
+        linear-gradient(135deg, transparent 0 42%, rgba(31,109,255,.25) 42% 55%, transparent 55% 100%),
+        linear-gradient(135deg, transparent 0 62%, rgba(31,109,255,.5) 62% 75%, transparent 75% 100%);
+      cursor: nwse-resize;
+      z-index: 3;
+    }
+    .metric-panel {
+      height: 100%;
+      min-height: 0;
+      width: 100%;
+      border-radius: 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 8px;
+      padding: 22px;
+      background: linear-gradient(160deg, rgba(31,109,255,.12), rgba(115,167,255,.05));
+      overflow: hidden;
+    }
+    .metric-panel strong {
+      font-size: clamp(34px, 5vw, 52px);
+      letter-spacing: -0.05em;
+      line-height: .95;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+    .metric-panel span {
+      color: var(--sub);
+      font-size: 13px;
+      line-height: 1.4;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .metric-panel.compact {
+      padding: 16px;
+      gap: 6px;
+      border-radius: 16px;
+    }
+    .metric-panel.compact strong { font-size: clamp(24px, 3vw, 36px); }
+    .metric-panel.compact span { font-size: 12px; }
+    .metric-panel.tiny {
+      padding: 12px;
+      gap: 4px;
+      border-radius: 14px;
+    }
+    .metric-panel.tiny strong { font-size: 24px; }
+    .metric-panel.tiny span {
+      font-size: 11px;
+      -webkit-line-clamp: 1;
+    }
+    .empty {
+      min-height: 140px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px dashed rgba(15,23,42,.12);
+      color: var(--sub);
+      background: rgba(255,255,255,.6);
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .data-table th, .data-table td {
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(15,23,42,.06);
+      text-align: left;
+      white-space: nowrap;
+    }
+    .ranking-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .ranking-list li {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(249, 246, 237, 0.94);
+    }
+    .rank-badge {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #f4c24d, #e49e21);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .side-column {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: sticky;
+      top: 20px;
+    }
+    .panel {
+      padding: 16px;
+      border-radius: var(--radius-lg);
+    }
+    .panel form, .panel-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .panel label {
+      display: block;
+      font-size: 12px;
+      color: var(--sub);
+      margin-bottom: 6px;
+    }
+    .helper {
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .density-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(31,109,255,.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .analysis-text { min-height: 280px; }
+    .drawer,
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      background: rgba(15, 23, 42, 0.3);
+      display: flex;
+      justify-content: flex-end;
+    }
+    .modal { align-items: center; justify-content: center; }
+    .hidden { display: none !important; }
+    .drawer-panel,
+    .modal-panel {
+      background: rgba(255,255,255,.98);
+      box-shadow: var(--shadow-lg);
+      border: 1px solid rgba(255,255,255,.82);
+    }
+    .drawer-panel {
+      width: min(560px, 100vw);
+      height: 100%;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .modal-panel {
+      width: min(900px, 94vw);
+      max-height: 88vh;
+      overflow: auto;
+      padding: 18px;
+      border-radius: 26px;
+    }
+    .drawer-tabs {
+      display: flex;
+      gap: 8px;
+      padding: 6px;
+      border-radius: 999px;
+      background: rgba(15,23,42,.04);
+    }
+    .drawer-tabs button {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--sub);
+      font-weight: 600;
+    }
+    .drawer-tabs button.active {
+      background: #fff;
+      color: #1558d8;
+      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+    }
+    .drawer-scroll {
+      flex: 1;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .section {
+      margin-bottom: 18px;
+      padding: 16px;
+      border-radius: 20px;
+      background: rgba(246, 248, 252, .94);
+      border: 1px solid rgba(15, 23, 42, .05);
+    }
+    .section h4 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .option-card,
+    .token {
+      border-radius: 16px;
+      border: 1px solid rgba(15,23,42,.08);
+      background: rgba(255,255,255,.84);
+    }
+    .option-card {
+      padding: 12px 14px;
+      text-align: left;
+    }
+    .option-card.active {
+      border-color: rgba(31,109,255,.26);
+      background: rgba(31,109,255,.08);
+      box-shadow: inset 0 0 0 1px rgba(31,109,255,.1);
+    }
+    .option-card strong { display: block; margin-bottom: 4px; font-size: 14px; }
+    .option-card span { color: var(--sub); font-size: 12px; }
+    .template-shell {
+      display: grid;
+      grid-template-columns: minmax(280px, .88fr) minmax(0, 1.12fr);
+      gap: 14px;
+    }
+    .template-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .template-card {
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(15,23,42,.08);
+      background: rgba(255,255,255,.86);
+      box-shadow: 0 12px 24px rgba(24, 32, 56, 0.05);
+    }
+    .template-card h5 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+    .template-card p {
+      margin: 8px 0 0;
+      color: var(--sub);
+      line-height: 1.7;
+      font-size: 13px;
+    }
+    .template-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .template-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    .template-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(31,109,255,.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .token-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .token {
+      padding: 8px 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .token input { width: auto; }
+    .item-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) 140px minmax(0, .9fr) auto;
+      gap: 10px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+    .item-row.filter {
+      grid-template-columns: 130px 1fr 130px 1fr auto;
+    }
+    .filter-value-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .filter-value-group input {
+      min-width: 0;
+    }
+    .filter-range-sep {
+      color: var(--sub);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .drawer-footer,
+    .toolbar-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 40;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: rgba(17,24,39,.92);
+      color: #fff;
+      box-shadow: var(--shadow-lg);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 1180px) {
+      .hero, .workspace { grid-template-columns: 1fr; }
+      .side-column { position: static; }
+    }
+    @media (max-width: 900px) {
+      .topbar, .hero { grid-template-columns: 1fr; }
+      .board { grid-template-columns: 1fr; grid-auto-rows: auto; min-height: 0; }
+      .layout-guide { display: none; }
+      .card { grid-column: auto / auto; grid-row: auto / auto; min-height: 300px; }
+      .hero-stats, .template-shell { grid-template-columns: 1fr; }
+      .item-row, .item-row.filter, .grid-2, .option-grid { grid-template-columns: 1fr; }
+      .drawer-panel { width: 100vw; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar glass">
+      <div class="brand">
+        <div class="brand-mark">BI</div>
+        <div class="brand-copy">
+          <p class="eyebrow">供应链 BI</p>
+          <h1 id="headerTitle">供应链运营数据看板</h1>
+        </div>
+      </div>
+<div class="top-actions">
+        <button class="pill" id="refreshBtn">刷新数据</button>
+        <button class="pill" id="globalFilterBtn">筛选</button>
+        <button class="pill" id="layoutTemplateBtn">布局模板</button>
+        <button class="pill" id="exportBtn">导出</button>
+        <button class="pill" id="attendanceEntryBtn">出勤录入</button>
+        <button class="pill" id="resetLayoutBtn">重置布局</button>
+        <button class="primary" id="openCreateDrawerBtn">添加图表</button>
+        <span class="density-pill" id="gridDensityBadge">24列自由栅格</span>
+        <span class="user-chip" id="currentUserChip"></span>
+        <button class="danger-ghost" id="logoutBtn">退出</button>
+      </div>
+    </header>
+
+    <section class="hero glass">
+      <div class="hero-main">
+        <div class="hero-head">
+          <p class="eyebrow">数据驾驶舱</p>
+          <h2 id="heroTitle">供应链运营数据看板</h2>
+          <p id="heroDescription">用库存、销售与退货数据支撑日常监控与经营复盘。你可以直接新增图表、切换日期、保存过滤条件，并将 AI 解读沉淀为可编辑备注。</p>
+        </div>
+        <div class="hero-toolbar">
+          <div class="field-inline">
+            <span class="helper">看板</span>
+            <select id="viewSelect"></select>
+          </div>
+          <div class="field-inline">
+            <span class="helper">业务日期</span>
+            <input id="bizDate" type="date" />
+          </div>
+          <button class="pill" id="saveViewBtn">保存看板信息</button>
+        </div>
+        <div class="quick-types" id="quickTypeList"></div>
+        <div class="chip-list" id="globalFilterChipList"></div>
+      </div>
+      <div class="hero-stats" id="heroStats"></div>
+    </section>
+
+    <main class="workspace">
+      <section class="board" id="board">
+        <div class="layout-guide hidden" id="layoutGuide"></div>
+        <div class="guide-line vertical hidden" id="layoutGuideVertical"></div>
+        <div class="guide-line horizontal hidden" id="layoutGuideHorizontal"></div>
+      </section>
+      <aside class="side-column">
+        <section class="panel glass">
+          <div class="panel-head">
+            <h3>看板管理</h3>
+            <span class="helper">创建和维护视图</span>
+          </div>
+          <div class="panel-stack">
+            <div>
+              <label for="currentViewName">当前看板名称</label>
+              <input id="currentViewName" type="text" placeholder="请输入当前看板名称" />
+            </div>
+            <div>
+              <label for="currentViewDescription">当前看板说明</label>
+              <textarea id="currentViewDescription" placeholder="输入这张看板面向的业务场景与说明"></textarea>
+            </div>
+            <button class="primary" id="saveCurrentViewBtn">保存当前看板</button>
+            <div class="helper">当前看板保存后，全局筛选、图表配置和布局会继续沿用。</div>
+            <hr style="border:none;border-top:1px solid rgba(15,23,42,.06);width:100%;margin:4px 0;">
+            <div>
+              <label for="newViewName">新建看板名称</label>
+              <input id="newViewName" type="text" placeholder="例如：周销售复盘" />
+            </div>
+            <div>
+              <label for="newViewDescription">新看板说明</label>
+              <textarea id="newViewDescription" placeholder="简单描述这个看板的用途"></textarea>
+            </div>
+            <button class="pill" id="createViewBtn">创建新看板</button>
+          </div>
+        </section>
+
+        <section class="panel glass">
+          <div class="panel-head">
+            <h3 id="analysisTitle">AI 洞察</h3>
+            <div class="toolbar-row">
+              <button class="pill" id="closeAiBtn" disabled>收起</button>
+              <button class="pill" id="rerunAiBtn" disabled>重新分析</button>
+            </div>
+          </div>
+          <p class="helper" id="analysisMeta">点击任意图表卡片右上角的“AI 分析”，右侧会自动填充结果。你可以继续手动修改并保存。</p>
+          <textarea class="analysis-text" id="analysisText" placeholder="这里会显示 AI 生成或人工编辑后的分析内容"></textarea>
+          <div class="toolbar-row">
+            <span class="helper" id="analysisHint">尚未选择图表。</span>
+            <button class="primary" id="saveAnalysisBtn">保存解读</button>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div class="drawer hidden" id="editorDrawer">
+    <div class="drawer-panel">
+      <div class="panel-head">
+        <h3 id="drawerTitle">新建图表</h3>
+        <button class="pill" id="closeDrawerBtn">关闭</button>
+      </div>
+      <div class="drawer-tabs" id="drawerTabs">
+        <button type="button" data-tab="basic" class="active">基础配置</button>
+        <button type="button" data-tab="data">字段配置</button>
+        <button type="button" data-tab="filter">筛选与布局</button>
+      </div>
+      <div class="drawer-scroll">
+        <div class="drawer-pane" data-pane="basic">
+          <section class="section">
+            <h4>组件名称</h4>
+            <input id="editTitle" type="text" placeholder="例如：销售与退货趋势" />
+          </section>
+          <section class="section">
+            <h4>图表类型</h4>
+            <div class="option-grid" id="widgetTypeCards"></div>
+          </section>
+          <section class="section">
+            <h4>数据源</h4>
+            <div class="option-grid" id="datasetCards"></div>
+          </section>
+          <section class="section hidden" id="textSection">
+            <h4>文本内容</h4>
+            <textarea id="editTextContent" placeholder="输入看板说明、业务备注或操作指引"></textarea>
+          </section>
+        </div>
+        <div class="drawer-pane hidden" data-pane="data">
+          <section class="section" id="dimensionSection">
+            <div class="panel-head">
+              <h4>分组字段</h4>
+              <span class="helper">图表默认使用第一个字段作为主维度</span>
+            </div>
+            <div class="token-list" id="dimensionTokens"></div>
+          </section>
+          <section class="section" id="metricSection">
+            <div class="toolbar-row">
+              <h4>指标字段</h4>
+              <button class="pill" id="addMetricBtn" type="button">添加指标</button>
+            </div>
+            <div id="metricRows"></div>
+          </section>
+          <section class="section">
+            <h4>排序与条数</h4>
+            <div class="grid-2">
+              <div>
+                <label for="sortField">排序字段</label>
+                <select id="sortField"></select>
+              </div>
+              <div>
+                <label for="sortDirection">排序方向</label>
+                <select id="sortDirection">
+                  <option value="desc">降序</option>
+                  <option value="asc">升序</option>
+                </select>
+              </div>
+            </div>
+            <div style="margin-top:12px;">
+              <label for="editLimit">显示条数</label>
+              <input id="editLimit" type="number" min="1" max="500" value="20" />
+            </div>
+          </section>
+        </div>
+        <div class="drawer-pane hidden" data-pane="filter">
+          <section class="section">
+            <div class="toolbar-row">
+              <h4>组件筛选</h4>
+              <button class="pill" id="addFilterBtn" type="button">添加筛选</button>
+            </div>
+            <div id="filterRows"></div>
+          </section>
+          <section class="section">
+            <h4>卡片尺寸</h4>
+            <div class="option-grid" id="layoutCards"></div>
+          </section>
+        </div>
+      </div>
+      <div class="drawer-footer">
+        <span class="helper">保存后会立即刷新该图表数据。</span>
+        <div class="toolbar-row">
+          <button class="pill" id="cancelDrawerBtn" type="button">取消</button>
+          <button class="primary" id="saveDrawerBtn" type="button">保存图表</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="filterModal">
+    <div class="modal-panel">
+      <div class="panel-head">
+        <h3>全局筛选</h3>
+        <button class="pill" id="closeFilterModalBtn">关闭</button>
+      </div>
+      <p class="helper">全局筛选会作用到当前看板中所有使用对应数据集的图表。</p>
+      <div class="section">
+        <div class="toolbar-row">
+          <h4>筛选条件</h4>
+          <button class="pill" id="addGlobalFilterBtn" type="button">添加筛选</button>
+        </div>
+        <div id="globalFilterRows"></div>
+      </div>
+      <div class="toolbar-row">
+        <span class="helper">支持“属于”和“区间”，多个值请用英文逗号分隔。</span>
+        <button class="primary" id="saveGlobalFiltersBtn" type="button">保存全局筛选</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="layoutTemplateModal">
+    <div class="modal-panel">
+      <div class="panel-head">
+        <h3>布局模板</h3>
+        <button class="pill" id="closeLayoutTemplateModalBtn">关闭</button>
+      </div>
+      <p class="helper">把当前看板的卡片排布保存为模板，后续可以一键套用到其他看板，减少重复摆放成本。</p>
+      <div class="template-shell">
+        <section class="section">
+          <div class="panel-head">
+            <h4>保存当前布局</h4>
+            <button class="primary" id="saveLayoutTemplateBtn" type="button">保存为模板</button>
+          </div>
+          <div>
+            <label for="layoutTemplateName">模板名称</label>
+            <input id="layoutTemplateName" type="text" placeholder="例如：销售复盘双列布局" />
+          </div>
+          <div style="margin-top:12px;">
+            <label for="layoutTemplateDescription">模板说明</label>
+            <textarea id="layoutTemplateDescription" placeholder="说明这个模板适合什么场景，例如：上方指标卡，下方趋势与明细双列布局。"></textarea>
+          </div>
+          <div class="helper">模板会按当前看板中的卡片顺序记录位置与尺寸，并保留 24 列自由栅格信息。</div>
+        </section>
+        <section class="section">
+          <div class="panel-head">
+            <h4>已保存模板</h4>
+            <button class="pill" id="refreshLayoutTemplatesBtn" type="button">刷新列表</button>
+          </div>
+          <div class="template-list" id="layoutTemplateList"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <script>
+    const CURRENT_USER = __BI_CURRENT_USER_JSON__;
+    const LOGIN_PATH = __BI_LOGIN_PATH_JSON__;
+    const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
+    const ATTENDANCE_PATH = "/financial/bi-dashboard/attendance";
+    const PREFERRED_VIEW_NAME = "销售/退货看板";
+    const GRID_COLUMNS = 24;
+    const GRID_ROW_HEIGHT = 56;
+    const WIDGET_TYPE_HELPERS = {
+      metric: "突出展示单一关键指标",
+      bar: "适合横向比较不同分组",
+      stacked_bar: "适合看总量与构成关系",
+      line: "适合观察时间趋势变化",
+      pie: "适合查看占比结构",
+      table: "适合查看明细与字段值",
+      ranking: "适合快速看排名前后",
+      text: "适合补充口径和说明",
+    };
+    const DATASET_HELPERS = {
+      inventory: "按每日现存量快照展示库存明细",
+      sales: "按销售出库原始明细展示，负数数量保留原值",
+      sales_cleaning: "按日汇总销量、退货、在途拦截和拆包人效，适合直接做经营看板",
+    };
+
+    const state = {
+      meta: null,
+      views: [],
+      currentViewId: null,
+      currentView: null,
+      layoutTemplates: [],
+      selectedDate: "",
+      widgetData: {},
+      charts: {},
+      activeWidgetId: null,
+      dragWidgetId: null,
+      dragPreview: null,
+      resizeSession: null,
+      editor: {
+        mode: "create",
+        widgetId: null,
+        tab: "basic",
+        draft: null,
+      },
+      editingGlobalFilters: [],
+    };
+
+    const el = {
+      headerTitle: document.getElementById("headerTitle"),
+      heroTitle: document.getElementById("heroTitle"),
+      heroDescription: document.getElementById("heroDescription"),
+      currentUserChip: document.getElementById("currentUserChip"),
+      viewSelect: document.getElementById("viewSelect"),
+      bizDate: document.getElementById("bizDate"),
+      heroStats: document.getElementById("heroStats"),
+      quickTypeList: document.getElementById("quickTypeList"),
+      globalFilterChipList: document.getElementById("globalFilterChipList"),
+      board: document.getElementById("board"),
+      currentViewName: document.getElementById("currentViewName"),
+      currentViewDescription: document.getElementById("currentViewDescription"),
+      newViewName: document.getElementById("newViewName"),
+      newViewDescription: document.getElementById("newViewDescription"),
+      analysisTitle: document.getElementById("analysisTitle"),
+      analysisMeta: document.getElementById("analysisMeta"),
+      analysisText: document.getElementById("analysisText"),
+      analysisHint: document.getElementById("analysisHint"),
+      closeAiBtn: document.getElementById("closeAiBtn"),
+      rerunAiBtn: document.getElementById("rerunAiBtn"),
+      toast: document.getElementById("toast"),
+      layoutGuide: document.getElementById("layoutGuide"),
+      layoutGuideVertical: document.getElementById("layoutGuideVertical"),
+      layoutGuideHorizontal: document.getElementById("layoutGuideHorizontal"),
+      editorDrawer: document.getElementById("editorDrawer"),
+      drawerTitle: document.getElementById("drawerTitle"),
+      drawerTabs: document.getElementById("drawerTabs"),
+      editTitle: document.getElementById("editTitle"),
+      widgetTypeCards: document.getElementById("widgetTypeCards"),
+      datasetCards: document.getElementById("datasetCards"),
+      textSection: document.getElementById("textSection"),
+      editTextContent: document.getElementById("editTextContent"),
+      dimensionSection: document.getElementById("dimensionSection"),
+      dimensionTokens: document.getElementById("dimensionTokens"),
+      metricSection: document.getElementById("metricSection"),
+      metricRows: document.getElementById("metricRows"),
+      sortField: document.getElementById("sortField"),
+      sortDirection: document.getElementById("sortDirection"),
+      editLimit: document.getElementById("editLimit"),
+      filterRows: document.getElementById("filterRows"),
+      layoutCards: document.getElementById("layoutCards"),
+      filterModal: document.getElementById("filterModal"),
+      globalFilterRows: document.getElementById("globalFilterRows"),
+      layoutTemplateModal: document.getElementById("layoutTemplateModal"),
+      layoutTemplateName: document.getElementById("layoutTemplateName"),
+      layoutTemplateDescription: document.getElementById("layoutTemplateDescription"),
+      layoutTemplateList: document.getElementById("layoutTemplateList"),
+    };
+
+    function toast(message) {
+      el.toast.textContent = message;
+      el.toast.classList.add("show");
+      window.clearTimeout(toast.timer);
+      toast.timer = window.setTimeout(() => el.toast.classList.remove("show"), 2400);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...options,
+      });
+      if (response.status === 401) {
+        const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
+        window.location.href = `${LOGIN_PATH}?next=${next}`;
+        throw new Error("登录已失效");
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `请求失败：${response.status}`);
+      }
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        return response.json();
+      }
+      return response.text();
+    }
+
+    function formatNumber(value) {
+      const number = Number(value ?? 0);
+      return Number.isFinite(number)
+        ? number.toLocaleString(undefined, { maximumFractionDigits: 2 })
+        : "--";
+    }
+
+    function fieldMeta(dataset, field) {
+      return state.meta?.dataset_fields?.[dataset]?.[field] || null;
+    }
+
+    function aggregationLabel(key) {
+      return state.meta?.aggregation_label_map?.[key] || key;
+    }
+
+    function filterOperatorLabel(key) {
+      return state.meta?.filter_operator_label_map?.[key] || key;
+    }
+
+    function aggregationOptions() {
+      return state.meta?.aggregation_options || [];
+    }
+
+    function filterOperatorOptions() {
+      return state.meta?.filter_operator_options || [];
+    }
+
+    function datasetFields(dataset, predicate = () => true) {
+      return Object.entries(state.meta?.dataset_fields?.[dataset] || {}).filter(([, meta]) => predicate(meta));
+    }
+
+    function normalizeFilterValue(operator, value) {
+      if (operator === "between") {
+        if (Array.isArray(value)) return [value[0] ?? "", value[1] ?? ""];
+        const parts = String(value ?? "").split(",").map((item) => item.trim());
+        return [parts[0] || "", parts[1] || ""];
+      }
+      if (operator === "in") {
+        if (Array.isArray(value)) return value.filter((item) => String(item ?? "").trim() !== "");
+        return String(value ?? "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+      if (Array.isArray(value)) return value[0] ?? "";
+      return value ?? "";
+    }
+
+    function filterInputType(dataset, field, operator) {
+      const meta = fieldMeta(dataset, field);
+      if (meta?.type === "date") return "date";
+      if (meta?.numeric && !["in", "like"].includes(operator)) return "number";
+      return "text";
+    }
+
+    function valueIsFilled(operator, value) {
+      if (operator === "between") {
+        return Array.isArray(value) && value.length === 2 && value.every((item) => String(item ?? "").trim() !== "");
+      }
+      if (operator === "in") {
+        return Array.isArray(value) ? value.length > 0 : String(value ?? "").trim() !== "";
+      }
+      return String(value ?? "").trim() !== "";
+    }
+
+    function filterValueMarkup(dataset, item) {
+      const operator = item.op || "eq";
+      const inputType = filterInputType(dataset, item.field, operator);
+      if (operator === "between") {
+        const [startValue, endValue] = normalizeFilterValue(operator, item.value);
+        return `
+          <div class="filter-value-group">
+            <input type="${inputType}" data-role="value-start" value="${escapeHtml(startValue)}" />
+            <span class="filter-range-sep">至</span>
+            <input type="${inputType}" data-role="value-end" value="${escapeHtml(endValue)}" />
+          </div>
+        `;
+      }
+      const normalizedValue = normalizeFilterValue(operator, item.value);
+      const displayValue = Array.isArray(normalizedValue) ? normalizedValue.join(",") : normalizedValue;
+      const placeholder = operator === "in" ? "多个值请用逗号分隔" : "输入筛选值";
+      return `<input type="${inputType}" data-role="value" value="${escapeHtml(displayValue)}" placeholder="${placeholder}" />`;
+    }
+
+    function bindFilterValueInputs(row, item) {
+      if (item.op === "between") {
+        const start = row.querySelector("[data-role=value-start]");
+        const end = row.querySelector("[data-role=value-end]");
+        const sync = () => {
+          item.value = [start.value || "", end.value || ""];
+        };
+        start.addEventListener("input", sync);
+        end.addEventListener("input", sync);
+        return;
+      }
+      const valueInput = row.querySelector("[data-role=value]");
+      if (!valueInput) return;
+      valueInput.addEventListener("input", () => {
+        if (item.op === "in") {
+          item.value = valueInput.value
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean);
+          return;
+        }
+        item.value = valueInput.value;
+      });
+    }
+
+    function resetFilterValue(item) {
+      item.value = normalizeFilterValue(item.op || "eq", item.value);
+    }
+
+    function defaultDimensions(widgetType) {
+      return ["metric", "text"].includes(widgetType) ? [] : ["material_name"];
+    }
+
+    function defaultMetrics(dataset, widgetType) {
+      if (dataset === "sales") {
+        return [{ field: "qty", agg: "sum", label: "原始数量" }];
+      }
+      if (dataset === "sales_cleaning") {
+        if (widgetType === "stacked_bar") {
+          return [
+            { field: "sales_out_xiaoshan", agg: "sum", label: "销售出库（萧山云仓）" },
+            { field: "sales_out_yuhang", agg: "sum", label: "销售出库（余杭云仓）" },
+          ];
+        }
+        return [{ field: "total_sales_qty", agg: "sum", label: "当日总销量" }];
+      }
+      if (widgetType === "stacked_bar") {
+        return [
+          { field: "current_qty", agg: "sum", label: "当前库存" },
+          { field: "available_qty", agg: "sum", label: "可用库存" },
+        ];
+      }
+      return [{ field: "current_qty", agg: "sum", label: "当前库存" }];
+    }
+
+    function makeDraft(widgetType = "bar", dataset = "sales_cleaning") {
+      return {
+        title: "",
+        widget_type: widgetType,
+        dataset,
+        layout: { x: 0, y: 0, w: 12, h: 5, span: 1, height: "normal" },
+        analysis_text: "",
+        config: {
+          dataset,
+          dimensions: defaultDimensions(widgetType),
+          metrics: widgetType === "text" ? [] : defaultMetrics(dataset, widgetType),
+          filters: [],
+          sort: [{ field: "metric_0", direction: "desc" }],
+          limit: 20,
+          text_content: "",
+        },
+      };
+    }
+
+    function widgetById(widgetId) {
+      return state.currentView?.widgets?.find((item) => item.id === widgetId) || null;
+    }
+
+    function heightToRows(height) {
+      if (height === "compact") return 4;
+      if (height === "tall") return 7;
+      return 5;
+    }
+
+    function rowsToHeight(rows) {
+      if (rows >= 7) return "tall";
+      if (rows <= 4) return "compact";
+      return "normal";
+    }
+
+    function normalizeWidgetLayout(layout = {}, index = 0) {
+      const fallbackW = layout.span === 2 ? GRID_COLUMNS : (GRID_COLUMNS / 2);
+      const fallbackH = heightToRows(layout.height || "normal");
+      const w = Math.max(2, Math.min(GRID_COLUMNS, Number(layout.w || fallbackW || (GRID_COLUMNS / 2))));
+      const h = Math.max(3, Math.min(12, Number(layout.h || fallbackH || 5)));
+      const x = Math.max(0, Math.min(GRID_COLUMNS - w, Number(layout.x ?? 0)));
+      const y = Math.max(0, Number(layout.y ?? (index * (h + 1))));
+      return {
+        x,
+        y,
+        w,
+        h,
+        span: w > (GRID_COLUMNS / 2) ? 2 : 1,
+        height: rowsToHeight(h),
+      };
+    }
+
+    function layoutCollides(left, right) {
+      return left.x < right.x + right.w
+        && left.x + left.w > right.x
+        && left.y < right.y + right.h
+        && left.y + left.h > right.y;
+    }
+
+    function layoutSortValue(widget) {
+      const layout = widget.layout || normalizeWidgetLayout({}, 0);
+      return (layout.y * 1000) + (layout.x * 10);
+    }
+
+    function settleWidgetLayouts(preferredWidgetId = null) {
+      if (!state.currentView?.widgets?.length) return;
+      state.currentView.widgets.forEach((widget, index) => {
+        widget.layout = normalizeWidgetLayout(widget.layout, index);
+      });
+      const fixed = preferredWidgetId ? widgetById(preferredWidgetId) : null;
+      const placed = [];
+      if (fixed) {
+        fixed.layout = normalizeWidgetLayout(fixed.layout, 0);
+        placed.push(fixed);
+      }
+      const ordered = [...state.currentView.widgets]
+        .filter((widget) => widget.id !== preferredWidgetId)
+        .sort((left, right) => layoutSortValue(left) - layoutSortValue(right));
+      ordered.forEach((widget) => {
+        const layout = normalizeWidgetLayout(widget.layout, 0);
+        let nextY = layout.y;
+        while (true) {
+          const candidate = { ...layout, y: nextY };
+          const overlap = placed.find((item) => layoutCollides(candidate, item.layout));
+          if (!overlap) {
+            widget.layout = candidate;
+            placed.push(widget);
+            break;
+          }
+          nextY = overlap.layout.y + overlap.layout.h;
+        }
+      });
+      state.currentView.widgets.sort((left, right) => layoutSortValue(left) - layoutSortValue(right));
+      state.currentView.widgets.forEach((widget, index) => {
+        widget.sort_order = (widget.layout.y * 100) + widget.layout.x + index;
+      });
+    }
+
+    function boardMetrics() {
+      const rect = el.board.getBoundingClientRect();
+      const style = window.getComputedStyle(el.board);
+      const gap = Number.parseFloat(style.columnGap || style.gap || "14") || 14;
+      const usableWidth = rect.width - (gap * (GRID_COLUMNS - 1));
+      const cellWidth = usableWidth / GRID_COLUMNS;
+      el.board.style.setProperty("--grid-step-x", `${cellWidth + gap}px`);
+      el.board.style.setProperty("--grid-step-y", `${GRID_ROW_HEIGHT + gap}px`);
+      return { rect, gap, cellWidth };
+    }
+
+    function updateLayoutGuide(layout, guides = null) {
+      if (!layout) {
+        el.layoutGuide.classList.add("hidden");
+        el.layoutGuideVertical.classList.add("hidden");
+        el.layoutGuideHorizontal.classList.add("hidden");
+        return;
+      }
+      const { gap, cellWidth } = boardMetrics();
+      const stepX = cellWidth + gap;
+      const stepY = GRID_ROW_HEIGHT + gap;
+      el.layoutGuide.classList.remove("hidden");
+      el.layoutGuide.style.left = `${stepX * layout.x}px`;
+      el.layoutGuide.style.top = `${stepY * layout.y}px`;
+      el.layoutGuide.style.width = `${(cellWidth * layout.w) + (gap * (layout.w - 1))}px`;
+      el.layoutGuide.style.height = `${(GRID_ROW_HEIGHT * layout.h) + (gap * (layout.h - 1))}px`;
+      el.layoutGuideVertical.classList.remove("hidden");
+      const verticalBoundary = Number.isFinite(guides?.vertical) ? guides.vertical : layout.x;
+      const horizontalBoundary = Number.isFinite(guides?.horizontal) ? guides.horizontal : layout.y;
+      el.layoutGuideVertical.style.left = `${Math.max(0, (stepX * verticalBoundary) - (verticalBoundary > 0 ? gap / 2 : 0))}px`;
+      el.layoutGuideHorizontal.classList.remove("hidden");
+      el.layoutGuideHorizontal.style.top = `${Math.max(0, (stepY * horizontalBoundary) - (horizontalBoundary > 0 ? gap / 2 : 0))}px`;
+    }
+
+    function snapLayoutToWidgets(layout, widgetId = null) {
+      const others = (state.currentView?.widgets || [])
+        .filter((item) => item.id !== widgetId)
+        .map((item) => normalizeWidgetLayout(item.layout, 0));
+      const threshold = 1;
+      let nextX = layout.x;
+      let nextY = layout.y;
+      let vertical = null;
+      let horizontal = null;
+      let bestDx = threshold + 1;
+      let bestDy = threshold + 1;
+
+      others.forEach((other) => {
+        const xPairs = [
+          { source: layout.x, target: other.x, next: other.x, boundary: other.x },
+          { source: layout.x, target: other.x + other.w, next: other.x + other.w, boundary: other.x + other.w },
+          { source: layout.x + layout.w, target: other.x, next: other.x - layout.w, boundary: other.x },
+          { source: layout.x + layout.w, target: other.x + other.w, next: other.x + other.w - layout.w, boundary: other.x + other.w },
+        ];
+        xPairs.forEach((pair) => {
+          const delta = Math.abs(pair.source - pair.target);
+          const candidateX = Math.max(0, Math.min(GRID_COLUMNS - layout.w, pair.next));
+          if (delta <= threshold && delta < bestDx && candidateX === pair.next) {
+            bestDx = delta;
+            nextX = candidateX;
+            vertical = pair.boundary;
+          }
+        });
+
+        const yPairs = [
+          { source: layout.y, target: other.y, next: other.y, boundary: other.y },
+          { source: layout.y, target: other.y + other.h, next: other.y + other.h, boundary: other.y + other.h },
+          { source: layout.y + layout.h, target: other.y, next: other.y - layout.h, boundary: other.y },
+          { source: layout.y + layout.h, target: other.y + other.h, next: other.y + other.h - layout.h, boundary: other.y + other.h },
+        ];
+        yPairs.forEach((pair) => {
+          const delta = Math.abs(pair.source - pair.target);
+          const candidateY = Math.max(0, pair.next);
+          if (delta <= threshold && delta < bestDy) {
+            bestDy = delta;
+            nextY = candidateY;
+            horizontal = pair.boundary;
+          }
+        });
+      });
+
+      return {
+        layout: normalizeWidgetLayout({ ...layout, x: nextX, y: nextY }, 0),
+        guides: { vertical, horizontal },
+      };
+    }
+
+    function snapResizeLayout(layout, widgetId = null) {
+      const others = (state.currentView?.widgets || [])
+        .filter((item) => item.id !== widgetId)
+        .map((item) => normalizeWidgetLayout(item.layout, 0));
+      const threshold = 1;
+      let nextW = layout.w;
+      let nextH = layout.h;
+      let vertical = null;
+      let horizontal = null;
+      let bestDw = threshold + 1;
+      let bestDh = threshold + 1;
+
+      others.forEach((other) => {
+        const rightEdge = layout.x + layout.w;
+        const rightPairs = [other.x, other.x + other.w];
+        rightPairs.forEach((boundary) => {
+          const delta = Math.abs(rightEdge - boundary);
+          const candidateW = boundary - layout.x;
+          if (delta <= threshold && candidateW >= 2 && candidateW <= (GRID_COLUMNS - layout.x) && delta < bestDw) {
+            bestDw = delta;
+            nextW = candidateW;
+            vertical = boundary;
+          }
+        });
+
+        const bottomEdge = layout.y + layout.h;
+        const bottomPairs = [other.y, other.y + other.h];
+        bottomPairs.forEach((boundary) => {
+          const delta = Math.abs(bottomEdge - boundary);
+          const candidateH = boundary - layout.y;
+          if (delta <= threshold && candidateH >= 3 && candidateH <= 12 && delta < bestDh) {
+            bestDh = delta;
+            nextH = candidateH;
+            horizontal = boundary;
+          }
+        });
+      });
+
+      return {
+        layout: normalizeWidgetLayout({ ...layout, w: nextW, h: nextH }, 0),
+        guides: { vertical, horizontal },
+      };
+    }
+
+    function pointerToGrid(event, layout) {
+      const { rect, gap, cellWidth } = boardMetrics();
+      const offsetX = Math.max(0, event.clientX - rect.left);
+      const offsetY = Math.max(0, event.clientY - rect.top);
+      const stepX = cellWidth + gap;
+      const stepY = GRID_ROW_HEIGHT + gap;
+      const x = Math.max(0, Math.min(GRID_COLUMNS - layout.w, Math.round(offsetX / stepX)));
+      const y = Math.max(0, Math.round(offsetY / stepY));
+      return { ...layout, x, y };
+    }
+
+    function sortOptionsForDraft(draft) {
+      const options = [];
+      draft.config.dimensions.forEach((field) => {
+        const meta = fieldMeta(draft.dataset, field);
+        options.push({ value: field, label: meta ? meta.label : field });
+      });
+      (draft.config.metrics || []).forEach((metric, index) => {
+        options.push({ value: `metric_${index}`, label: metric.label || `指标 ${index + 1}` });
+      });
+      return options;
+    }
+
+    function renderHeroStats() {
+      const widgets = state.currentView?.widgets || [];
+      const stats = [
+        { label: "当前看板", value: state.currentView?.name || "--" },
+        { label: "图表数量", value: String(widgets.length) },
+        { label: "业务日期", value: state.selectedDate || state.meta?.latest_overall || "--" },
+        { label: "全局筛选", value: String(state.currentView?.global_filters?.length || 0) },
+      ];
+      el.heroStats.innerHTML = stats.map((item) => `
+        <div class="stat-card">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+        </div>
+      `).join("");
+    }
+
+    function renderQuickTypes() {
+      el.quickTypeList.innerHTML = "";
+      (state.meta?.widget_types || []).forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = `添加${item.label}`;
+        button.addEventListener("click", () => openCreateDrawer(item.key));
+        el.quickTypeList.appendChild(button);
+      });
+    }
+
+    function renderGlobalFilterChips() {
+      const filters = state.currentView?.global_filters || [];
+      if (!filters.length) {
+        el.globalFilterChipList.innerHTML = `<span class="helper">当前看板尚未配置全局筛选。</span>`;
+        return;
+      }
+      el.globalFilterChipList.innerHTML = filters.map((item) => {
+        const datasetLabel = state.meta.dataset_map[item.dataset] || item.dataset;
+        const fieldLabel = fieldMeta(item.dataset, item.field)?.label || item.field;
+        const rawValue = Array.isArray(item.value) ? item.value.join(", ") : item.value;
+        return `<span class="chip">${escapeHtml(datasetLabel)} · ${escapeHtml(fieldLabel)} ${escapeHtml(filterOperatorLabel(item.op))} ${escapeHtml(rawValue)}</span>`;
+      }).join("");
+    }
+
+    function renderViewBasics() {
+      const view = state.currentView;
+      el.currentUserChip.textContent = CURRENT_USER;
+      if (!view) {
+        el.headerTitle.textContent = "供应链运营数据看板";
+        el.heroTitle.textContent = "供应链运营数据看板";
+        el.heroDescription.textContent = "请选择或创建一个看板。";
+        el.currentViewName.value = "";
+        el.currentViewDescription.value = "";
+        return;
+      }
+      el.headerTitle.textContent = view.name;
+      el.heroTitle.textContent = view.name;
+      el.heroDescription.textContent = view.description || "用库存、销售与退货数据支撑日常监控与经营复盘。";
+      el.currentViewName.value = view.name || "";
+      el.currentViewDescription.value = view.description || "";
+      el.viewSelect.innerHTML = state.views.map((item) => `
+        <option value="${item.id}" ${item.id === state.currentViewId ? "selected" : ""}>${escapeHtml(item.name)}</option>
+      `).join("");
+    }
+
+    function renderBoard() {
+      const widgets = state.currentView?.widgets || [];
+      if (!widgets.length) {
+        el.board.innerHTML = `
+          <div class="layout-guide hidden" id="layoutGuide"></div>
+          <div class="guide-line vertical hidden" id="layoutGuideVertical"></div>
+          <div class="guide-line horizontal hidden" id="layoutGuideHorizontal"></div>
+          <div class="card" style="grid-column:1 / span 24;grid-row:1 / span 4;"><div class="empty">当前看板还没有图表。点击“添加图表”开始配置第一张卡片。</div></div>
+        `;
+        el.layoutGuide = document.getElementById("layoutGuide");
+        el.layoutGuideVertical = document.getElementById("layoutGuideVertical");
+        el.layoutGuideHorizontal = document.getElementById("layoutGuideHorizontal");
+        return;
+      }
+      settleWidgetLayouts();
+      el.board.innerHTML = `
+        <div class="layout-guide hidden" id="layoutGuide"></div>
+        <div class="guide-line vertical hidden" id="layoutGuideVertical"></div>
+        <div class="guide-line horizontal hidden" id="layoutGuideHorizontal"></div>
+      `;
+      el.layoutGuide = document.getElementById("layoutGuide");
+      el.layoutGuideVertical = document.getElementById("layoutGuideVertical");
+      el.layoutGuideHorizontal = document.getElementById("layoutGuideHorizontal");
+      widgets.forEach((widget, index) => {
+        const card = document.createElement("article");
+        const layout = normalizeWidgetLayout(widget.layout, index);
+        widget.layout = layout;
+        card.className = `card${state.activeWidgetId === widget.id ? " active" : ""}`;
+        card.draggable = true;
+        card.dataset.widgetId = String(widget.id);
+        card.style.setProperty("--grid-col", String(layout.x + 1));
+        card.style.setProperty("--grid-row", String(layout.y + 1));
+        card.style.setProperty("--grid-w", String(layout.w));
+        card.style.setProperty("--grid-h", String(layout.h));
+        card.innerHTML = `
+          <div class="card-head">
+            <div class="card-title-wrap">
+              <span class="drag-handle" title="拖拽移动">⋮⋮</span>
+              <h3>${escapeHtml(widget.title)}</h3>
+            </div>
+            <div class="card-actions">
+              <button class="mini-btn" data-action="config">配置</button>
+              <button class="mini-btn" data-action="duplicate">复制</button>
+              <button class="mini-btn" data-action="resize-preset">尺寸</button>
+              <button class="mini-btn primary" data-action="ai">${state.activeWidgetId === widget.id ? "收起AI" : "AI 分析"}</button>
+              <button class="mini-btn" data-action="refresh">刷新</button>
+              <button class="mini-btn danger" data-action="delete">删除</button>
+            </div>
+          </div>
+          <div class="card-meta">
+            <span>${escapeHtml(state.meta.widget_type_map[widget.widget_type] || widget.widget_type)} · ${escapeHtml(state.meta.dataset_map[widget.dataset] || widget.dataset)}</span>
+            <span>${layout.w}列 × ${layout.h}行</span>
+          </div>
+          <div class="card-body" id="widget-body-${widget.id}">加载中...</div>
+          <div class="resize-handle" title="拖拽调整尺寸"></div>
+        `;
+
+        card.addEventListener("dragstart", () => {
+          state.dragWidgetId = widget.id;
+          card.classList.add("dragging");
+          updateLayoutGuide(widget.layout);
+          el.board.classList.add("drag-over");
+        });
+        card.addEventListener("dragend", () => {
+          state.dragWidgetId = null;
+          card.classList.remove("dragging");
+          el.board.classList.remove("drag-over");
+          updateLayoutGuide(null);
+        });
+        card.addEventListener("click", async (event) => {
+          const action = event.target?.dataset?.action;
+          if (!action) {
+            return;
+          }
+          if (action === "config") openEditDrawer(widget.id);
+          if (action === "duplicate") await duplicateWidget(widget.id);
+          if (action === "resize-preset") await cycleWidgetLayout(widget.id);
+          if (action === "ai") {
+            if (state.activeWidgetId === widget.id) clearActiveWidget();
+            else await openAi(widget.id, true);
+          }
+          if (action === "refresh") await loadWidgetData(widget.id, true);
+          if (action === "delete") await removeWidget(widget.id);
+        });
+
+        const resizeHandle = card.querySelector(".resize-handle");
+        resizeHandle.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          startResize(widget.id, event);
+        });
+
+        el.board.appendChild(card);
+      });
+      boardMetrics();
+    }
+
+    function disposeChart(widgetId) {
+      const chart = state.charts[widgetId];
+      if (chart) {
+        chart.dispose();
+        delete state.charts[widgetId];
+      }
+    }
+
+    function redrawBoardFromCache() {
+      renderBoard();
+      Object.keys(state.widgetData).forEach((key) => {
+        const body = document.getElementById(`widget-body-${key}`);
+        if (body && state.widgetData[key]) drawWidget(Number(key), state.widgetData[key], body);
+      });
+    }
+
+    function resetWidgetBody(body, widgetType) {
+      body.className = "card-body";
+      if (["table", "ranking", "text"].includes(widgetType)) {
+        body.classList.add("scrollable");
+      }
+      if (widgetType === "metric") {
+        body.classList.add("metric-body");
+      }
+    }
+
+    function metricSizeClass(body) {
+      const shortEdge = Math.min(body.clientWidth || 0, body.clientHeight || 0);
+      if (shortEdge <= 150) return "tiny";
+      if (shortEdge <= 220) return "compact";
+      return "";
+    }
+
+    async function loadWidgetData(widgetId, force = false) {
+      const body = document.getElementById(`widget-body-${widgetId}`);
+      if (!body) return;
+      if (!force && state.widgetData[widgetId]) {
+        drawWidget(widgetId, state.widgetData[widgetId], body);
+        return;
+      }
+      body.innerHTML = `<div class="empty">加载中...</div>`;
+      try {
+        const query = state.selectedDate ? `?biz_date=${encodeURIComponent(state.selectedDate)}` : "";
+        const payload = await api(`/financial/bi-dashboard/api/widgets/${widgetId}/data${query}`);
+        state.widgetData[widgetId] = payload;
+        drawWidget(widgetId, payload, body);
+      } catch (error) {
+        disposeChart(widgetId);
+        body.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function drawWidget(widgetId, payload, body) {
+      const widget = widgetById(widgetId);
+      if (!widget) return;
+      const rows = payload.rows || [];
+      const dimensions = payload.dimensions || [];
+      const metrics = payload.metrics || [];
+      disposeChart(widgetId);
+      resetWidgetBody(body, widget.widget_type);
+
+      if (widget.widget_type === "text") {
+        body.innerHTML = `<div style="white-space:pre-wrap;line-height:1.8;padding:12px;">${escapeHtml(payload.config?.text_content || widget.config?.text_content || "")}</div>`;
+        return;
+      }
+      if (!rows.length) {
+        body.innerHTML = `<div class="empty">当前日期和筛选条件下没有数据。</div>`;
+        return;
+      }
+      if (widget.widget_type === "metric") {
+        const metric = metrics[0];
+        const sizeClass = metricSizeClass(body);
+        body.innerHTML = `
+          <div class="metric-panel${sizeClass ? ` ${sizeClass}` : ""}">
+            <span>${escapeHtml(metric?.label || "指标值")}</span>
+            <strong>${formatNumber(rows[0]?.[metric?.alias || "metric_0"])}</strong>
+          </div>
+        `;
+        return;
+      }
+      if (widget.widget_type === "table") {
+        const columns = [...dimensions, ...metrics.map((metric) => metric.alias)];
+        let html = "<table class='data-table'><thead><tr>";
+        columns.forEach((column) => {
+          const dimMeta = fieldMeta(widget.dataset, column);
+          const metricMeta = metrics.find((item) => item.alias === column);
+          html += `<th>${escapeHtml(dimMeta?.label || metricMeta?.label || column)}</th>`;
+        });
+        html += "</tr></thead><tbody>";
+        rows.forEach((row) => {
+          html += "<tr>";
+          columns.forEach((column) => {
+            html += `<td>${escapeHtml(row[column])}</td>`;
+          });
+          html += "</tr>";
+        });
+        html += "</tbody></table>";
+        body.innerHTML = html;
+        return;
+      }
+      if (widget.widget_type === "ranking") {
+        const dimension = dimensions[0];
+        const metric = metrics[0];
+        const topRows = [...rows]
+          .sort((left, right) => Number(right[metric.alias] || 0) - Number(left[metric.alias] || 0))
+          .slice(0, 12);
+        body.innerHTML = `
+          <ul class="ranking-list">
+            ${topRows.map((row, index) => `
+              <li>
+                <span class="rank-badge">${index + 1}</span>
+                <span>${escapeHtml(row[dimension])}</span>
+                <strong>${formatNumber(row[metric.alias])}</strong>
+              </li>
+            `).join("")}
+          </ul>
+        `;
+        return;
+      }
+      if (typeof echarts === "undefined") {
+        body.innerHTML = `<div class="empty">图表库加载失败，请检查网络环境。</div>`;
+        return;
+      }
+      const chart = echarts.init(body);
+      state.charts[widgetId] = chart;
+      const dimension = dimensions[0];
+      const xAxis = rows.map((row) => String(row[dimension] ?? ""));
+      const palette = ["#5b6cff", "#65c18c", "#f0b429", "#6ec5e9", "#ec5f87"];
+      if (widget.widget_type === "pie") {
+        const metric = metrics[0];
+        chart.setOption({
+          color: palette,
+          tooltip: { trigger: "item" },
+          legend: { bottom: 0 },
+          series: [{
+            type: "pie",
+            radius: ["34%", "70%"],
+            itemStyle: { borderRadius: 10, borderColor: "#fff", borderWidth: 2 },
+            data: rows.map((row) => ({ name: String(row[dimension] ?? ""), value: Number(row[metric.alias] || 0) })),
+          }],
+        });
+        return;
+      }
+      chart.setOption({
+        color: palette,
+        tooltip: { trigger: "axis" },
+        legend: { top: 0, textStyle: { color: "#475467" } },
+        grid: { left: 40, right: 20, top: 40, bottom: 40 },
+        xAxis: {
+          type: "category",
+          data: xAxis,
+          axisLabel: { color: "#667085", rotate: xAxis.length > 8 ? 32 : 0 },
+          axisLine: { lineStyle: { color: "rgba(15,23,42,.1)" } },
+        },
+        yAxis: {
+          type: "value",
+          axisLabel: { color: "#667085" },
+          splitLine: { lineStyle: { color: "rgba(15,23,42,.08)" } },
+        },
+        series: metrics.map((metric) => ({
+          name: metric.label || metric.alias,
+          type: widget.widget_type === "line" ? "line" : "bar",
+          smooth: widget.widget_type === "line",
+          stack: widget.widget_type === "stacked_bar" ? "total" : undefined,
+          barMaxWidth: 36,
+          areaStyle: widget.widget_type === "line" ? { opacity: 0.12 } : undefined,
+          lineStyle: widget.widget_type === "line" ? { width: 3 } : undefined,
+          data: rows.map((row) => Number(row[metric.alias] || 0)),
+        })),
+      });
+    }
+
+    function highlightActiveCard() {
+      document.querySelectorAll(".card[data-widget-id]").forEach((card) => {
+        card.classList.toggle("active", Number(card.dataset.widgetId) === state.activeWidgetId);
+      });
+    }
+
+    function updateAnalysisPanel() {
+      const widget = widgetById(state.activeWidgetId);
+      if (!widget) {
+        el.analysisTitle.textContent = "AI 洞察";
+        el.analysisMeta.textContent = "点击任意图表卡片右上角的“AI 分析”，右侧会自动填充结果。你可以继续手动修改并保存。";
+        el.analysisHint.textContent = "尚未选择图表。";
+        el.analysisText.value = "";
+        el.closeAiBtn.disabled = true;
+        el.rerunAiBtn.disabled = true;
+        highlightActiveCard();
+        return;
+      }
+      el.analysisTitle.textContent = `AI 洞察 · ${widget.title}`;
+      el.analysisMeta.textContent = `${state.meta.widget_type_map[widget.widget_type] || widget.widget_type} · ${state.meta.dataset_map[widget.dataset] || widget.dataset}`;
+      el.analysisHint.textContent = `当前图表：${widget.title}`;
+      el.analysisText.value = widget.analysis_text || "";
+      el.closeAiBtn.disabled = false;
+      el.rerunAiBtn.disabled = false;
+      highlightActiveCard();
+    }
+
+    function setActiveWidget(widgetId) {
+      state.activeWidgetId = widgetId;
+      updateAnalysisPanel();
+      redrawBoardFromCache();
+    }
+
+    function clearActiveWidget() {
+      state.activeWidgetId = null;
+      updateAnalysisPanel();
+      redrawBoardFromCache();
+    }
+
+    function startResize(widgetId, event) {
+      const widget = widgetById(widgetId);
+      if (!widget) return;
+      const layout = normalizeWidgetLayout(widget.layout, 0);
+      state.resizeSession = {
+        widgetId,
+        startX: event.clientX,
+        startY: event.clientY,
+        origin: { ...layout },
+      };
+      updateLayoutGuide(layout, { vertical: layout.x + layout.w, horizontal: layout.y + layout.h });
+      el.board.classList.add("drag-over");
+      window.addEventListener("pointermove", handleResizeMove);
+      window.addEventListener("pointerup", finishResize);
+    }
+
+    function handleResizeMove(event) {
+      if (!state.resizeSession) return;
+      const { widgetId, startX, startY, origin } = state.resizeSession;
+      const widget = widgetById(widgetId);
+      if (!widget) return;
+      const { gap, cellWidth } = boardMetrics();
+      const stepX = cellWidth + gap;
+      const stepY = GRID_ROW_HEIGHT + gap;
+      const deltaW = Math.round((event.clientX - startX) / stepX);
+      const deltaH = Math.round((event.clientY - startY) / stepY);
+      const resized = normalizeWidgetLayout(
+        {
+          ...origin,
+          w: Math.max(2, Math.min(GRID_COLUMNS - origin.x, origin.w + deltaW)),
+          h: Math.max(3, Math.min(12, origin.h + deltaH)),
+        },
+        0,
+      );
+      const snapped = snapResizeLayout(resized, widgetId);
+      widget.layout = snapped.layout;
+      settleWidgetLayouts(widgetId);
+      renderBoard();
+      updateLayoutGuide(widget.layout, snapped.guides);
+      Object.keys(state.widgetData).forEach((key) => {
+        const body = document.getElementById(`widget-body-${key}`);
+        if (body && state.widgetData[key]) drawWidget(Number(key), state.widgetData[key], body);
+      });
+    }
+
+    async function finishResize() {
+      if (!state.resizeSession) return;
+      state.resizeSession = null;
+      window.removeEventListener("pointermove", handleResizeMove);
+      window.removeEventListener("pointerup", finishResize);
+      el.board.classList.remove("drag-over");
+      updateLayoutGuide(null);
+      await persistLayout();
+    }
+
+    function handleBoardDragOver(event) {
+      if (!state.dragWidgetId) return;
+      event.preventDefault();
+      const widget = widgetById(state.dragWidgetId);
+      if (!widget) return;
+      el.board.classList.add("drag-over");
+      const snapped = snapLayoutToWidgets(pointerToGrid(event, normalizeWidgetLayout(widget.layout, 0)), widget.id);
+      state.dragPreview = snapped.layout;
+      updateLayoutGuide(state.dragPreview, snapped.guides);
+    }
+
+    async function handleBoardDrop(event) {
+      if (!state.dragWidgetId) return;
+      event.preventDefault();
+      const widgetId = state.dragWidgetId;
+      const target = state.dragPreview || (() => {
+        const widget = widgetById(widgetId);
+        return widget ? normalizeWidgetLayout(widget.layout, 0) : null;
+      })();
+      state.dragWidgetId = null;
+      state.dragPreview = null;
+      el.board.classList.remove("drag-over");
+      updateLayoutGuide(null);
+      if (target) {
+        await moveWidget(widgetId, target);
+      }
+    }
+
+    async function openAi(widgetId, rerun = true) {
+      const widget = widgetById(widgetId);
+      if (!widget) return;
+      setActiveWidget(widgetId);
+      if (!rerun) {
+        el.analysisText.value = widget.analysis_text || "";
+        return;
+      }
+      try {
+        const query = state.selectedDate ? `?biz_date=${encodeURIComponent(state.selectedDate)}` : "";
+        const payload = await api(`/financial/bi-dashboard/api/widgets/${widgetId}/ai-analysis${query}`, { method: "POST" });
+        widget.analysis_text = payload.analysis_text || "";
+        el.analysisText.value = widget.analysis_text;
+        toast("AI 分析已更新");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    async function saveAnalysis() {
+      const widget = widgetById(state.activeWidgetId);
+      if (!widget) {
+        toast("请先选择一个图表");
+        return;
+      }
+      try {
+        await api(`/financial/bi-dashboard/api/widgets/${widget.id}/analysis`, {
+          method: "PUT",
+          body: JSON.stringify({ analysis_text: el.analysisText.value || "" }),
+        });
+        widget.analysis_text = el.analysisText.value || "";
+        toast("分析备注已保存");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    function setDrawerTab(tab) {
+      state.editor.tab = tab;
+      el.drawerTabs.querySelectorAll("button").forEach((button) => {
+        button.classList.toggle("active", button.dataset.tab === tab);
+      });
+      document.querySelectorAll(".drawer-pane").forEach((pane) => {
+        pane.classList.toggle("hidden", pane.dataset.pane !== tab);
+      });
+    }
+
+    function applyWidgetType(widgetType) {
+      const draft = state.editor.draft;
+      draft.widget_type = widgetType;
+      draft.config.dataset = draft.dataset;
+      if (widgetType === "text") {
+        draft.config.dimensions = [];
+        draft.config.metrics = [];
+      } else if (widgetType === "metric") {
+        draft.config.dimensions = [];
+        draft.config.metrics = defaultMetrics(draft.dataset, widgetType);
+      } else {
+        draft.config.dimensions = draft.config.dimensions.length ? draft.config.dimensions : defaultDimensions(widgetType);
+        if (!draft.config.metrics.length) draft.config.metrics = defaultMetrics(draft.dataset, widgetType);
+      }
+      renderDrawer();
+    }
+
+    function applyDataset(dataset) {
+      const draft = state.editor.draft;
+      draft.dataset = dataset;
+      draft.config.dataset = dataset;
+      draft.config.filters = [];
+      draft.config.sort = [{ field: "metric_0", direction: "desc" }];
+      if (draft.widget_type !== "text") {
+        draft.config.metrics = defaultMetrics(dataset, draft.widget_type);
+      }
+      draft.config.dimensions = defaultDimensions(draft.widget_type);
+      renderDrawer();
+    }
+
+    function renderWidgetTypeCards() {
+      const draft = state.editor.draft;
+      el.widgetTypeCards.innerHTML = state.meta.widget_types.map((item) => `
+        <button type="button" class="option-card ${draft.widget_type === item.key ? "active" : ""}" data-widget-type="${item.key}">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span>${escapeHtml(WIDGET_TYPE_HELPERS[item.key] || "用于搭建业务看板")}</span>
+        </button>
+      `).join("");
+      el.widgetTypeCards.querySelectorAll("[data-widget-type]").forEach((button) => {
+        button.addEventListener("click", () => applyWidgetType(button.dataset.widgetType));
+      });
+    }
+
+    function renderDatasetCards() {
+      const draft = state.editor.draft;
+      el.datasetCards.innerHTML = state.meta.datasets.map((item) => `
+        <button type="button" class="option-card ${draft.dataset === item.key ? "active" : ""}" data-dataset="${item.key}">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span>${escapeHtml(DATASET_HELPERS[item.key] || "按该数据集进行查询")}</span>
+        </button>
+      `).join("");
+      el.datasetCards.querySelectorAll("[data-dataset]").forEach((button) => {
+        button.addEventListener("click", () => applyDataset(button.dataset.dataset));
+      });
+    }
+
+    function renderDimensionTokens() {
+      const draft = state.editor.draft;
+      if (["metric", "text"].includes(draft.widget_type)) {
+        el.dimensionSection.classList.add("hidden");
+        return;
+      }
+      el.dimensionSection.classList.remove("hidden");
+      el.dimensionTokens.innerHTML = datasetFields(draft.dataset, (meta) => meta.groupable).map(([field, meta]) => `
+        <label class="token">
+          <input type="checkbox" value="${field}" ${draft.config.dimensions.includes(field) ? "checked" : ""} />
+          <span>${escapeHtml(meta.label)}</span>
+        </label>
+      `).join("");
+      el.dimensionTokens.querySelectorAll("input").forEach((input) => {
+        input.addEventListener("change", () => {
+          const dims = new Set(draft.config.dimensions);
+          if (input.checked) dims.add(input.value);
+          else dims.delete(input.value);
+          draft.config.dimensions = Array.from(dims);
+          renderSortOptions();
+        });
+      });
+    }
+
+    function metricRowTemplate(dataset, metric, index) {
+      const numericFields = datasetFields(dataset, (meta) => meta.numeric);
+      return `
+        <div class="item-row" data-metric-index="${index}">
+          <select data-role="field">
+            <option value="*">记录数 (*)</option>
+            ${numericFields.map(([field, meta]) => `<option value="${field}" ${metric.field === field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("")}
+          </select>
+          <select data-role="agg">
+            ${aggregationOptions().map((item) => `<option value="${item.key}" ${metric.agg === item.key ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+          </select>
+          <input data-role="label" value="${escapeHtml(metric.label || "")}" placeholder="显示名称" />
+          <button type="button" class="danger-ghost" data-role="remove">删除</button>
+        </div>
+      `;
+    }
+
+    function renderMetricRows() {
+      const draft = state.editor.draft;
+      if (draft.widget_type === "text") {
+        el.metricSection.classList.add("hidden");
+        return;
+      }
+      el.metricSection.classList.remove("hidden");
+      if (!draft.config.metrics.length) {
+        draft.config.metrics = defaultMetrics(draft.dataset, draft.widget_type);
+      }
+      el.metricRows.innerHTML = draft.config.metrics.map((metric, index) => metricRowTemplate(draft.dataset, metric, index)).join("");
+      el.metricRows.querySelectorAll("[data-metric-index]").forEach((row) => {
+        const index = Number(row.dataset.metricIndex);
+        const metric = draft.config.metrics[index];
+        const field = row.querySelector("[data-role=field]");
+        const agg = row.querySelector("[data-role=agg]");
+        const label = row.querySelector("[data-role=label]");
+        field.value = metric.field || "*";
+        if (metric.field === "*") agg.value = "count";
+        field.addEventListener("change", () => {
+          metric.field = field.value;
+          if (metric.field === "*") metric.agg = "count";
+          if (!label.value.trim()) {
+            metric.label = metric.field === "*" ? "记录数" : (fieldMeta(draft.dataset, metric.field)?.label || "");
+          }
+          renderMetricRows();
+          renderSortOptions();
+        });
+        agg.addEventListener("change", () => {
+          metric.agg = agg.value;
+          renderSortOptions();
+        });
+        label.addEventListener("input", () => {
+          metric.label = label.value;
+          renderSortOptions();
+        });
+        row.querySelector("[data-role=remove]").addEventListener("click", () => {
+          draft.config.metrics.splice(index, 1);
+          renderMetricRows();
+          renderSortOptions();
+        });
+      });
+    }
+
+    function renderSortOptions() {
+      const draft = state.editor.draft;
+      const sortItems = sortOptionsForDraft(draft);
+      const current = draft.config.sort[0] || { field: sortItems[0]?.value || "metric_0", direction: "desc" };
+      el.sortField.innerHTML = sortItems.map((item) => `<option value="${item.value}" ${item.value === current.field ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
+      el.sortDirection.value = current.direction || "desc";
+    }
+
+    function renderFilterRows() {
+      const draft = state.editor.draft;
+      el.filterRows.innerHTML = "";
+      draft.config.filters.forEach((item, index) => {
+        const row = document.createElement("div");
+        row.className = "item-row filter";
+        const fieldOptions = datasetFields(draft.dataset, (meta) => meta.filterable).map(([field, meta]) => ({ value: field, label: meta.label }));
+        row.innerHTML = `
+          <div class="helper">${escapeHtml(state.meta.dataset_map[draft.dataset] || draft.dataset)}</div>
+          <select data-role="field">${fieldOptions.map((option) => `<option value="${option.value}" ${option.value === item.field ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          <input data-role="value" value="${escapeHtml(Array.isArray(item.value) ? item.value.join(",") : (item.value ?? ""))}" placeholder="输入筛选值" />
+          <button type="button" class="danger-ghost" data-role="remove">删除</button>
+        `;
+        const field = row.querySelector("[data-role=field]");
+        const op = row.querySelector("[data-role=op]");
+        const value = row.querySelector("[data-role=value]");
+        row.querySelector("[data-role=remove]").addEventListener("click", () => {
+          draft.config.filters.splice(index, 1);
+          renderFilterRows();
+        });
+        field.addEventListener("change", () => { item.field = field.value; });
+        op.addEventListener("change", () => { item.op = op.value; });
+        value.addEventListener("input", () => { item.value = value.value; });
+        el.filterRows.appendChild(row);
+      });
+      if (!draft.config.filters.length) {
+        el.filterRows.innerHTML = `<div class="empty">当前组件没有额外筛选。</div>`;
+      }
+    }
+
+    function renderLayoutCards() {
+      const draft = state.editor.draft;
+      const presets = [
+        { key: "compact", label: "轻量", desc: "6列 × 4行", layout: { w: 6, h: 4 } },
+        { key: "normal", label: "标准", desc: "8列 × 5行", layout: { w: 8, h: 5 } },
+        { key: "mid", label: "半宽", desc: "12列 × 5行", layout: { w: 12, h: 5 } },
+        { key: "wide", label: "宽版", desc: "16列 × 6行", layout: { w: 16, h: 6 } },
+        { key: "focus", label: "高版", desc: "12列 × 7行", layout: { w: 12, h: 7 } },
+        { key: "hero", label: "横幅", desc: "24列 × 8行", layout: { w: 24, h: 8 } },
+      ];
+      const currentLayout = normalizeWidgetLayout(draft.layout, 0);
+      el.layoutCards.innerHTML = presets.map((preset) => {
+        const active = currentLayout.w === preset.layout.w && currentLayout.h === preset.layout.h;
+        return `
+          <button type="button" class="option-card ${active ? "active" : ""}" data-layout='${JSON.stringify(preset.layout)}'>
+            <strong>${escapeHtml(preset.label)}</strong>
+            <span>${escapeHtml(preset.desc)}</span>
+          </button>
+        `;
+      }).join("");
+      el.layoutCards.querySelectorAll("[data-layout]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.editor.draft.layout = normalizeWidgetLayout({ ...currentLayout, ...JSON.parse(button.dataset.layout) }, 0);
+          renderLayoutCards();
+        });
+      });
+    }
+
+    function renderDrawer() {
+      const draft = state.editor.draft;
+      if (!draft) return;
+      el.drawerTitle.textContent = state.editor.mode === "create" ? "新建图表" : `编辑图表 · ${draft.title}`;
+      el.editTitle.value = draft.title || "";
+      el.editTextContent.value = draft.config.text_content || "";
+      el.editLimit.value = draft.config.limit || 20;
+      el.textSection.classList.toggle("hidden", draft.widget_type !== "text");
+      renderWidgetTypeCards();
+      renderDatasetCards();
+      renderDimensionTokens();
+      renderMetricRows();
+      renderSortOptions();
+      renderFilterRows();
+      renderLayoutCards();
+    }
+
+    function openCreateDrawer(presetType = "bar") {
+      if (!state.currentViewId) {
+        toast("请先创建看板");
+        return;
+      }
+      const defaultDataset = "sales_cleaning";
+      state.editor.mode = "create";
+      state.editor.widgetId = null;
+      state.editor.draft = makeDraft(presetType, defaultDataset);
+      setDrawerTab("basic");
+      renderDrawer();
+      el.editorDrawer.classList.remove("hidden");
+    }
+
+    function openEditDrawer(widgetId) {
+      const widget = widgetById(widgetId);
+      if (!widget) return;
+      state.editor.mode = "edit";
+      state.editor.widgetId = widgetId;
+      state.editor.draft = JSON.parse(JSON.stringify(widget));
+      setDrawerTab("basic");
+      renderDrawer();
+      el.editorDrawer.classList.remove("hidden");
+    }
+
+    function closeDrawer() {
+      state.editor.draft = null;
+      el.editorDrawer.classList.add("hidden");
+    }
+
+    function collectDraft() {
+      const draft = state.editor.draft;
+      draft.title = el.editTitle.value.trim() || (state.meta.widget_type_map[draft.widget_type] || "新图表");
+      draft.config.text_content = el.editTextContent.value || "";
+      draft.config.limit = Math.max(1, Math.min(500, Number(el.editLimit.value || 20)));
+      draft.config.sort = el.sortField.value
+        ? [{ field: el.sortField.value, direction: el.sortDirection.value || "desc" }]
+        : [];
+      draft.layout = normalizeWidgetLayout(draft.layout, 0);
+      draft.analysis_text = draft.analysis_text || "";
+      return draft;
+    }
+
+    async function saveDrawer() {
+      if (!state.currentViewId) return;
+      const draft = collectDraft();
+      try {
+        if (state.editor.mode === "create") {
+          const created = await api(`/financial/bi-dashboard/api/views/${state.currentViewId}/widgets`, {
+            method: "POST",
+            body: JSON.stringify({
+              title: draft.title,
+              widget_type: draft.widget_type,
+              dataset: draft.dataset,
+            }),
+          });
+          await api(`/financial/bi-dashboard/api/widgets/${created.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              title: draft.title,
+              widget_type: draft.widget_type,
+              dataset: draft.dataset,
+              config: draft.config,
+              layout: draft.layout,
+              analysis_text: draft.analysis_text || "",
+            }),
+          });
+          state.activeWidgetId = created.id;
+        } else {
+          await api(`/financial/bi-dashboard/api/widgets/${state.editor.widgetId}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              title: draft.title,
+              widget_type: draft.widget_type,
+              dataset: draft.dataset,
+              config: draft.config,
+              layout: draft.layout,
+              analysis_text: draft.analysis_text || "",
+            }),
+          });
+          state.activeWidgetId = state.editor.widgetId;
+        }
+        closeDrawer();
+        await loadViewDetail(state.currentViewId);
+        toast("图表已保存");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    async function duplicateWidget(widgetId) {
+      try {
+        await api(`/financial/bi-dashboard/api/widgets/${widgetId}/duplicate`, { method: "POST" });
+        await loadViewDetail(state.currentViewId);
+        toast("图表已复制");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    async function removeWidget(widgetId) {
+      if (!window.confirm("确认删除这个图表吗？")) return;
+      try {
+        await api(`/financial/bi-dashboard/api/widgets/${widgetId}`, { method: "DELETE" });
+        delete state.widgetData[widgetId];
+        disposeChart(widgetId);
+        if (state.activeWidgetId === widgetId) {
+          state.activeWidgetId = null;
+          updateAnalysisPanel();
+        }
+        await loadViewDetail(state.currentViewId);
+        toast("图表已删除");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    async function persistLayout() {
+      settleWidgetLayouts();
+      await api(`/financial/bi-dashboard/api/views/${state.currentViewId}/layout`, {
+        method: "PUT",
+        body: JSON.stringify({
+          widgets: (state.currentView?.widgets || []).map((item, index) => ({
+            id: item.id,
+            sort_order: item.sort_order || ((item.layout?.y || index) * 100) + (item.layout?.x || 0),
+            layout: item.layout,
+          })),
+        }),
+      });
+    }
+
+    async function resetLayout() {
+      if (!state.currentView?.widgets?.length) {
+        toast("当前没有可重置的图表");
+        return;
+      }
+      let cursorX = 0;
+      let cursorY = 0;
+      let rowHeight = 0;
+      state.currentView.widgets
+        .sort((left, right) => (left.sort_order || 0) - (right.sort_order || 0) || left.id - right.id)
+        .forEach((widget) => {
+          const layout = normalizeWidgetLayout(widget.layout, 0);
+          if (cursorX + layout.w > GRID_COLUMNS) {
+            cursorX = 0;
+            cursorY += rowHeight;
+            rowHeight = 0;
+          }
+          widget.layout = normalizeWidgetLayout({ ...layout, x: cursorX, y: cursorY }, 0);
+          cursorX += widget.layout.w;
+          rowHeight = Math.max(rowHeight, widget.layout.h);
+        });
+      redrawBoardFromCache();
+      await persistLayout();
+      toast("布局已重置为紧凑排列");
+    }
+
+    async function moveWidget(sourceId, layoutTarget) {
+      const widget = widgetById(sourceId);
+      if (!widget) return;
+      widget.layout = normalizeWidgetLayout(layoutTarget, 0);
+      settleWidgetLayouts(sourceId);
+      renderBoard();
+      Object.keys(state.widgetData).forEach((key) => {
+        const body = document.getElementById(`widget-body-${key}`);
+        if (body && state.widgetData[key]) drawWidget(Number(key), state.widgetData[key], body);
+      });
+      await persistLayout();
+    }
+
+    async function cycleWidgetLayout(widgetId) {
+      const widget = widgetById(widgetId);
+      if (!widget) return;
+      const cycle = [
+        { w: 6, h: 4 },
+        { w: 8, h: 5 },
+        { w: 12, h: 5 },
+        { w: 16, h: 6 },
+        { w: 12, h: 7 },
+        { w: 24, h: 8 },
+      ];
+      const currentLayout = normalizeWidgetLayout(widget.layout, 0);
+      const currentIndex = cycle.findIndex((item) => item.w === currentLayout.w && item.h === currentLayout.h);
+      widget.layout = normalizeWidgetLayout({ ...currentLayout, ...(cycle[(currentIndex + 1) % cycle.length]) }, 0);
+      settleWidgetLayouts(widgetId);
+      renderBoard();
+      Object.keys(state.widgetData).forEach((key) => loadWidgetData(Number(key)));
+      await persistLayout();
+    }
+
+    async function loadMeta() {
+      state.meta = await api("/financial/bi-dashboard/api/meta");
+      if (!state.selectedDate) {
+        state.selectedDate = state.meta.latest_overall || "";
+        el.bizDate.value = state.selectedDate;
+      }
+      renderQuickTypes();
+    }
+
+    async function loadViews() {
+      const payload = await api("/financial/bi-dashboard/api/views");
+      state.views = payload.views || [];
+      if (!state.views.length) {
+        state.currentViewId = null;
+        state.currentView = null;
+        renderViewBasics();
+        renderHeroStats();
+        renderBoard();
+        updateAnalysisPanel();
+        return;
+      }
+      if (!state.currentViewId || !state.views.some((item) => item.id === state.currentViewId)) {
+        state.currentViewId = (state.views.find((item) => item.name === PREFERRED_VIEW_NAME) || state.views[0]).id;
+      }
+      await loadViewDetail(state.currentViewId);
+    }
+
+    async function loadViewDetail(viewId) {
+      Object.keys(state.charts).forEach((key) => disposeChart(Number(key)));
+      state.widgetData = {};
+      state.currentView = await api(`/financial/bi-dashboard/api/views/${viewId}`);
+      state.currentViewId = viewId;
+      renderViewBasics();
+      renderHeroStats();
+      renderGlobalFilterChips();
+      renderBoard();
+      const widgetIds = (state.currentView.widgets || []).map((item) => item.id);
+      if (!widgetIds.includes(state.activeWidgetId)) {
+        state.activeWidgetId = null;
+      }
+      updateAnalysisPanel();
+      await Promise.all(widgetIds.map((widgetId) => loadWidgetData(widgetId)));
+    }
+
+    async function saveCurrentView() {
+      if (!state.currentViewId || !state.currentView) return;
+      try {
+        await api(`/financial/bi-dashboard/api/views/${state.currentViewId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: el.currentViewName.value.trim() || state.currentView.name,
+            description: el.currentViewDescription.value.trim(),
+            global_filters: state.currentView.global_filters || [],
+          }),
+        });
+        await loadViews();
+        toast("看板信息已保存");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    async function createView() {
+      const name = el.newViewName.value.trim();
+      if (!name) {
+        toast("请输入看板名称");
+        return;
+      }
+      try {
+        const payload = await api("/financial/bi-dashboard/api/views", {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            description: document.getElementById("newViewDescription").value.trim(),
+            global_filters: [],
+          }),
+        });
+        el.newViewName.value = "";
+        el.newViewDescription.value = "";
+        state.currentViewId = payload.id;
+        await loadViews();
+        toast("看板已创建");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    function renderGlobalFilterEditor() {
+      el.globalFilterRows.innerHTML = "";
+      state.editingGlobalFilters.forEach((item, index) => {
+        const row = document.createElement("div");
+        row.className = "item-row filter";
+        const datasetOptions = state.meta.datasets.map((dataset) => `<option value="${dataset.key}" ${dataset.key === item.dataset ? "selected" : ""}>${escapeHtml(dataset.label)}</option>`).join("");
+        const fieldOptions = datasetFields(item.dataset, (meta) => meta.filterable).map(([field, meta]) => `<option value="${field}" ${field === item.field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("");
+        row.innerHTML = `
+          <select data-role="dataset">${datasetOptions}</select>
+          <select data-role="field">${fieldOptions}</select>
+          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          <input data-role="value" value="${escapeHtml(Array.isArray(item.value) ? item.value.join(",") : (item.value ?? ""))}" placeholder="输入筛选值" />
+          <button type="button" class="danger-ghost" data-role="remove">删除</button>
+        `;
+        const dataset = row.querySelector("[data-role=dataset]");
+        const field = row.querySelector("[data-role=field]");
+        const op = row.querySelector("[data-role=op]");
+        const value = row.querySelector("[data-role=value]");
+        dataset.addEventListener("change", () => {
+          item.dataset = dataset.value;
+          item.field = datasetFields(item.dataset, (meta) => meta.filterable)[0]?.[0] || "";
+          renderGlobalFilterEditor();
+        });
+        field.addEventListener("change", () => { item.field = field.value; });
+        op.addEventListener("change", () => { item.op = op.value; });
+        value.addEventListener("input", () => { item.value = value.value; });
+        row.querySelector("[data-role=remove]").addEventListener("click", () => {
+          state.editingGlobalFilters.splice(index, 1);
+          renderGlobalFilterEditor();
+        });
+        el.globalFilterRows.appendChild(row);
+      });
+      if (!state.editingGlobalFilters.length) {
+        el.globalFilterRows.innerHTML = `<div class="empty">当前看板没有全局筛选。</div>`;
+      }
+    }
+
+    function openFilterModal() {
+      state.editingGlobalFilters = JSON.parse(JSON.stringify(state.currentView?.global_filters || []));
+      renderGlobalFilterEditor();
+      el.filterModal.classList.remove("hidden");
+    }
+
+    function closeFilterModal() {
+      el.filterModal.classList.add("hidden");
+    }
+
+    async function saveGlobalFilters() {
+      if (!state.currentViewId || !state.currentView) return;
+      try {
+        const payload = state.editingGlobalFilters
+          .filter((item) => item.dataset && item.field && item.op && item.value !== "")
+          .map((item) => ({ dataset: item.dataset, field: item.field, op: item.op, value: item.value }));
+        await api(`/financial/bi-dashboard/api/views/${state.currentViewId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: state.currentView.name,
+            description: state.currentView.description || "",
+            global_filters: payload,
+          }),
+        });
+        closeFilterModal();
+        await loadViewDetail(state.currentViewId);
+        toast("全局筛选已保存");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    function renderGlobalFilterChips() {
+      const filters = state.currentView?.global_filters || [];
+      if (!filters.length) {
+        el.globalFilterChipList.innerHTML = `<span class="helper">当前看板尚未配置全局筛选。</span>`;
+        return;
+      }
+      el.globalFilterChipList.innerHTML = filters.map((item) => {
+        const datasetLabel = state.meta.dataset_map[item.dataset] || item.dataset;
+        const fieldLabel = fieldMeta(item.dataset, item.field)?.label || item.field;
+        const rawValue = item.op === "between" && Array.isArray(item.value)
+          ? `${item.value[0] || "--"} 至 ${item.value[1] || "--"}`
+          : Array.isArray(item.value)
+            ? item.value.join(", ")
+            : item.value;
+        return `<span class="chip">${escapeHtml(datasetLabel)} · ${escapeHtml(fieldLabel)} ${escapeHtml(filterOperatorLabel(item.op))} ${escapeHtml(rawValue)}</span>`;
+      }).join("");
+    }
+
+    function renderFilterRows() {
+      const draft = state.editor.draft;
+      el.filterRows.innerHTML = "";
+      draft.config.filters.forEach((item, index) => {
+        resetFilterValue(item);
+        const row = document.createElement("div");
+        row.className = "item-row filter";
+        const fieldOptions = datasetFields(draft.dataset, (meta) => meta.filterable).map(([field, meta]) => ({ value: field, label: meta.label }));
+        row.innerHTML = `
+          <div class="helper">${escapeHtml(state.meta.dataset_map[draft.dataset] || draft.dataset)}</div>
+          <select data-role="field">${fieldOptions.map((option) => `<option value="${option.value}" ${option.value === item.field ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          ${filterValueMarkup(draft.dataset, item)}
+          <button type="button" class="danger-ghost" data-role="remove">删除</button>
+        `;
+        const field = row.querySelector("[data-role=field]");
+        const op = row.querySelector("[data-role=op]");
+        row.querySelector("[data-role=remove]").addEventListener("click", () => {
+          draft.config.filters.splice(index, 1);
+          renderFilterRows();
+        });
+        field.addEventListener("change", () => {
+          item.field = field.value;
+          resetFilterValue(item);
+          renderFilterRows();
+        });
+        op.addEventListener("change", () => {
+          item.op = op.value;
+          resetFilterValue(item);
+          renderFilterRows();
+        });
+        bindFilterValueInputs(row, item);
+        el.filterRows.appendChild(row);
+      });
+      if (!draft.config.filters.length) {
+        el.filterRows.innerHTML = `<div class="empty">当前组件没有额外筛选。</div>`;
+      }
+    }
+
+    function renderGlobalFilterEditor() {
+      el.globalFilterRows.innerHTML = "";
+      state.editingGlobalFilters.forEach((item, index) => {
+        resetFilterValue(item);
+        const row = document.createElement("div");
+        row.className = "item-row filter";
+        const datasetOptions = state.meta.datasets.map((dataset) => `<option value="${dataset.key}" ${dataset.key === item.dataset ? "selected" : ""}>${escapeHtml(dataset.label)}</option>`).join("");
+        const fieldOptions = datasetFields(item.dataset, (meta) => meta.filterable).map(([field, meta]) => `<option value="${field}" ${field === item.field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("");
+        row.innerHTML = `
+          <select data-role="dataset">${datasetOptions}</select>
+          <select data-role="field">${fieldOptions}</select>
+          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          ${filterValueMarkup(item.dataset, item)}
+          <button type="button" class="danger-ghost" data-role="remove">删除</button>
+        `;
+        const dataset = row.querySelector("[data-role=dataset]");
+        const field = row.querySelector("[data-role=field]");
+        const op = row.querySelector("[data-role=op]");
+        dataset.addEventListener("change", () => {
+          item.dataset = dataset.value;
+          item.field = datasetFields(item.dataset, (meta) => meta.filterable)[0]?.[0] || "";
+          resetFilterValue(item);
+          renderGlobalFilterEditor();
+        });
+        field.addEventListener("change", () => {
+          item.field = field.value;
+          resetFilterValue(item);
+          renderGlobalFilterEditor();
+        });
+        op.addEventListener("change", () => {
+          item.op = op.value;
+          resetFilterValue(item);
+          renderGlobalFilterEditor();
+        });
+        bindFilterValueInputs(row, item);
+        row.querySelector("[data-role=remove]").addEventListener("click", () => {
+          state.editingGlobalFilters.splice(index, 1);
+          renderGlobalFilterEditor();
+        });
+        el.globalFilterRows.appendChild(row);
+      });
+      if (!state.editingGlobalFilters.length) {
+        el.globalFilterRows.innerHTML = `<div class="empty">当前看板没有全局筛选。</div>`;
+      }
+    }
+
+    async function saveGlobalFilters() {
+      if (!state.currentViewId || !state.currentView) return;
+      try {
+        const payload = state.editingGlobalFilters
+          .filter((item) => item.dataset && item.field && item.op && valueIsFilled(item.op, item.value))
+          .map((item) => ({ dataset: item.dataset, field: item.field, op: item.op, value: normalizeFilterValue(item.op, item.value) }));
+        await api(`/financial/bi-dashboard/api/views/${state.currentViewId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: state.currentView.name,
+            description: state.currentView.description || "",
+            global_filters: payload,
+          }),
+        });
+        closeFilterModal();
+        await loadViewDetail(state.currentViewId);
+        toast("全局筛选已保存");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "--";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN", { hour12: false });
+    }
+
+    function renderLayoutTemplateList() {
+      if (!state.layoutTemplates.length) {
+        el.layoutTemplateList.innerHTML = `<div class="empty">还没有布局模板。先把当前看板排好版，再保存第一套模板。</div>`;
+        return;
+      }
+      el.layoutTemplateList.innerHTML = state.layoutTemplates.map((item) => `
+        <article class="template-card">
+          <h5>${escapeHtml(item.name)}</h5>
+          <p>${escapeHtml(item.description || "未填写模板说明")}</p>
+          <div class="template-meta">
+            <span class="template-tag">${escapeHtml(String(item.widget_count || 0))} 张卡片</span>
+            <span class="template-tag">纵向跨度 ${escapeHtml(String(item.max_rows || 0))} 行</span>
+            <span class="template-tag">更新于 ${escapeHtml(formatDateTime(item.updated_at))}</span>
+          </div>
+          <div class="template-actions">
+            <span class="helper">会按当前看板的卡片顺序进行套用。</span>
+            <div class="toolbar-row">
+              <button type="button" class="pill" data-template-apply="${item.id}">套用模板</button>
+              <button type="button" class="danger-ghost" data-template-delete="${item.id}">删除模板</button>
+            </div>
+          </div>
+        </article>
+      `).join("");
+      el.layoutTemplateList.querySelectorAll("[data-template-apply]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          await applyLayoutTemplate(Number(button.dataset.templateApply));
+        });
+      });
+      el.layoutTemplateList.querySelectorAll("[data-template-delete]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          await removeLayoutTemplate(Number(button.dataset.templateDelete));
+        });
+      });
+    }
+
+    async function loadLayoutTemplates() {
+      const payload = await api("/financial/bi-dashboard/api/layout-templates");
+      state.layoutTemplates = payload.templates || [];
+      renderLayoutTemplateList();
+    }
+
+    function openLayoutTemplateModal() {
+      if (!state.currentViewId || !state.currentView) {
+        toast("请先选择一个看板");
+        return;
+      }
+      el.layoutTemplateName.value = `${state.currentView.name || "当前看板"}布局模板`;
+      el.layoutTemplateDescription.value = state.currentView.description || "";
+      renderLayoutTemplateList();
+      el.layoutTemplateModal.classList.remove("hidden");
+    }
+
+    function closeLayoutTemplateModal() {
+      el.layoutTemplateModal.classList.add("hidden");
+    }
+
+    async function saveLayoutTemplate() {
+      if (!state.currentViewId || !state.currentView) {
+        toast("请先选择一个看板");
+        return;
+      }
+      const name = el.layoutTemplateName.value.trim();
+      if (!name) {
+        toast("请输入模板名称");
+        return;
+      }
+      try {
+        await api("/financial/bi-dashboard/api/layout-templates", {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            description: el.layoutTemplateDescription.value.trim(),
+            view_id: state.currentViewId,
+          }),
+        });
+        await loadLayoutTemplates();
+        toast("布局模板已保存");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    async function applyLayoutTemplate(templateId) {
+      if (!state.currentViewId) return;
+      try {
+        await api(`/financial/bi-dashboard/api/layout-templates/${templateId}/apply`, {
+          method: "POST",
+          body: JSON.stringify({ view_id: state.currentViewId }),
+        });
+        closeLayoutTemplateModal();
+        await loadViewDetail(state.currentViewId);
+        await loadLayoutTemplates();
+        toast("布局模板已套用");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    async function removeLayoutTemplate(templateId) {
+      if (!window.confirm("确认删除这个布局模板吗？")) return;
+      try {
+        await api(`/financial/bi-dashboard/api/layout-templates/${templateId}`, {
+          method: "DELETE",
+        });
+        await loadLayoutTemplates();
+        toast("布局模板已删除");
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    function exportView() {
+      if (!state.currentViewId) return;
+      const query = state.selectedDate ? `?biz_date=${encodeURIComponent(state.selectedDate)}` : "";
+      window.open(`/financial/bi-dashboard/api/views/${state.currentViewId}/export${query}`, "_blank");
+    }
+
+    function openAttendanceEntry() {
+      window.location.href = ATTENDANCE_PATH;
+    }
+
+    async function logout() {
+      try {
+        const payload = await api(LOGOUT_PATH, { method: "POST" });
+        window.location.href = payload.redirect_to || LOGIN_PATH;
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    function bindEvents() {
+      document.getElementById("refreshBtn").addEventListener("click", async () => {
+        await loadViewDetail(state.currentViewId);
+      });
+      document.getElementById("globalFilterBtn").addEventListener("click", openFilterModal);
+      document.getElementById("layoutTemplateBtn").addEventListener("click", openLayoutTemplateModal);
+      document.getElementById("exportBtn").addEventListener("click", exportView);
+      document.getElementById("attendanceEntryBtn").addEventListener("click", openAttendanceEntry);
+      document.getElementById("resetLayoutBtn").addEventListener("click", resetLayout);
+      document.getElementById("openCreateDrawerBtn").addEventListener("click", () => openCreateDrawer("bar"));
+      document.getElementById("logoutBtn").addEventListener("click", logout);
+      document.getElementById("saveViewBtn").addEventListener("click", saveCurrentView);
+      document.getElementById("saveCurrentViewBtn").addEventListener("click", saveCurrentView);
+      document.getElementById("createViewBtn").addEventListener("click", createView);
+      document.getElementById("saveAnalysisBtn").addEventListener("click", saveAnalysis);
+      el.closeAiBtn.addEventListener("click", clearActiveWidget);
+      el.rerunAiBtn.addEventListener("click", async () => {
+        if (state.activeWidgetId) await openAi(state.activeWidgetId, true);
+      });
+      el.viewSelect.addEventListener("change", async () => {
+        state.currentViewId = Number(el.viewSelect.value);
+        await loadViewDetail(state.currentViewId);
+      });
+      el.bizDate.addEventListener("change", async () => {
+        state.selectedDate = el.bizDate.value || "";
+        await loadViewDetail(state.currentViewId);
+      });
+      el.drawerTabs.addEventListener("click", (event) => {
+        const tab = event.target?.dataset?.tab;
+        if (tab) setDrawerTab(tab);
+      });
+      document.getElementById("addMetricBtn").addEventListener("click", () => {
+        state.editor.draft.config.metrics.push({ field: "*", agg: "count", label: "记录数" });
+        renderMetricRows();
+        renderSortOptions();
+      });
+      document.getElementById("addFilterBtn").addEventListener("click", () => {
+        const field = datasetFields(state.editor.draft.dataset, (meta) => meta.filterable)[0]?.[0] || "";
+        state.editor.draft.config.filters.push({ field, op: "eq", value: "" });
+        renderFilterRows();
+      });
+      document.getElementById("closeDrawerBtn").addEventListener("click", closeDrawer);
+      document.getElementById("cancelDrawerBtn").addEventListener("click", closeDrawer);
+      document.getElementById("saveDrawerBtn").addEventListener("click", saveDrawer);
+      el.editorDrawer.addEventListener("click", (event) => {
+        if (event.target === el.editorDrawer) closeDrawer();
+      });
+      document.getElementById("closeFilterModalBtn").addEventListener("click", closeFilterModal);
+      document.getElementById("addGlobalFilterBtn").addEventListener("click", () => {
+        state.editingGlobalFilters.push({
+          dataset: "inventory",
+          field: datasetFields("inventory", (meta) => meta.filterable)[0]?.[0] || "",
+          op: "eq",
+          value: "",
+        });
+        renderGlobalFilterEditor();
+      });
+      document.getElementById("saveGlobalFiltersBtn").addEventListener("click", saveGlobalFilters);
+      el.filterModal.addEventListener("click", (event) => {
+        if (event.target === el.filterModal) closeFilterModal();
+      });
+      document.getElementById("closeLayoutTemplateModalBtn").addEventListener("click", closeLayoutTemplateModal);
+      document.getElementById("saveLayoutTemplateBtn").addEventListener("click", saveLayoutTemplate);
+      document.getElementById("refreshLayoutTemplatesBtn").addEventListener("click", loadLayoutTemplates);
+      el.layoutTemplateModal.addEventListener("click", (event) => {
+        if (event.target === el.layoutTemplateModal) closeLayoutTemplateModal();
+      });
+      el.board.addEventListener("dragover", handleBoardDragOver);
+      el.board.addEventListener("drop", handleBoardDrop);
+      el.board.addEventListener("dragleave", (event) => {
+        if (event.target === el.board) {
+          el.board.classList.remove("drag-over");
+          updateLayoutGuide(null);
+        }
+      });
+      window.addEventListener("resize", () => {
+        boardMetrics();
+        Object.values(state.charts).forEach((chart) => chart.resize());
+      });
+    }
+
+    async function bootstrap() {
+      try {
+        bindEvents();
+        await loadMeta();
+        await loadLayoutTemplates();
+        await loadViews();
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>
