@@ -33,6 +33,29 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WAREHOUSE_XIAOSHAN = "精准学乾盛萧山云仓"
 WAREHOUSE_YUHANG = "精准学余杭速豪盒马云仓"
 WAREHOUSE_RETURN = "精准学销退仓"
+INVENTORY_WAREHOUSE_DEFAULTS: List[Tuple[str, str, int]] = [
+    ("精准学二级不良品仓", "不良品仓", 10),
+    ("精准学良品仓", "良品仓", 20),
+    ("精准学乾盛萧山云仓", "萧山云仓", 30),
+    ("精准学生产仓", "生产仓", 40),
+    ("精准学委外仓", "委外仓", 50),
+    ("精准学销退仓", "销退仓", 60),
+    ("精准学余杭速豪盒马云仓", "余杭云仓", 70),
+    ("精准学自营仓", "自营仓", 80),
+]
+INVENTORY_STATUS_DEFAULTS: List[Tuple[str, str, int]] = [
+    ("2180202022719455294", "采购良品", 10),
+    ("2417568647360806923", "翻新良品", 20),
+    ("2180202022719455297", "不良品", 30),
+    ("2417569283025403913", "翻新不良品", 40),
+    ("2180202022719455295", "待检", 50),
+    ("2356902801270898695", "屏幕不良", 60),
+    ("2356903127684743177", "背壳不良", 70),
+    ("2356903454106976287", "屏幕+背壳不良", 80),
+    ("2356903711803965479", "原厂不良", 90),
+    ("2417570013176659968", "采购不良品", 100),
+    ("2423691157621964803", "后摄镜头不良", 110),
+]
 
 
 class InventorySnapshotDaily(Base):
@@ -192,6 +215,55 @@ class ReturnUnpackAttendanceDaily(Base):
     attendance_count = Column(DECIMAL(12, 2), nullable=False, default=Decimal("0"), comment="退货拆包出勤人数")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class InventoryWarehouseMap(Base):
+    __tablename__ = "bi_inventory_warehouse_map"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_warehouse_name = Column(String(128), nullable=False, default="", comment="原始仓库名称", unique=True)
+    warehouse_name_clean = Column(String(64), nullable=False, default="", comment="清洗后仓库名称")
+    sort_order = Column(Integer, nullable=False, default=100, comment="排序值")
+    is_enabled = Column(Integer, nullable=False, default=1, comment="是否启用")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class InventoryStatusMap(Base):
+    __tablename__ = "bi_inventory_status_map"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    stock_status_id = Column(String(64), nullable=False, default="", comment="原始库存状态ID", unique=True)
+    stock_status_name = Column(String(64), nullable=False, default="", comment="清洗后库存状态")
+    sort_order = Column(Integer, nullable=False, default=100, comment="排序值")
+    is_enabled = Column(Integer, nullable=False, default=1, comment="是否启用")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class InventorySnapshotDailyCleaning(Base):
+    __tablename__ = "bi_inventory_snapshot_daily_cleaning"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(Date, nullable=False, comment="日期")
+    warehouse_name_clean = Column(String(64), nullable=False, default="", comment="仓库")
+    material_code = Column(String(64), nullable=False, default="", comment="物料编码")
+    material_name = Column(String(256), nullable=False, default="", comment="物料名称")
+    stock_status_name = Column(String(64), nullable=False, default="", comment="物料状态")
+    qty = Column(DECIMAL(20, 6), nullable=False, default=Decimal("0"), comment="数量")
+    source_row_count = Column(Integer, nullable=False, default=0, comment="原始聚合行数")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_date",
+            "warehouse_name_clean",
+            "material_code",
+            "stock_status_name",
+            name="uq_bi_inventory_snapshot_daily_cleaning",
+        ),
+    )
 
 
 @dataclass
@@ -511,6 +583,63 @@ def build_sales_cleaning_rows(
     return cleaned_rows
 
 
+def build_inventory_cleaning_rows(
+    raw_rows: Iterable[Any],
+    *,
+    warehouse_map: Dict[str, str] | None = None,
+    status_map: Dict[str, str] | None = None,
+) -> List[Dict[str, Any]]:
+    warehouse_name_map = warehouse_map or {}
+    stock_status_map = status_map or {}
+    grouped: Dict[Tuple[date, str, str, str], Dict[str, Any]] = {}
+
+    for row in raw_rows:
+        snapshot_date = row_value(row, "snapshot_date")
+        if snapshot_date is None:
+            continue
+        raw_warehouse_name = str(row_value(row, "warehouse_name", "") or "").strip()
+        warehouse_name_clean = warehouse_name_map.get(raw_warehouse_name)
+        if not warehouse_name_clean:
+            continue
+
+        stock_status_id = str(row_value(row, "stock_status_id", "") or "").strip()
+        stock_status_name = stock_status_map.get(stock_status_id)
+        if not stock_status_name:
+            continue
+
+        qty = to_decimal(row_value(row, "current_qty"))
+        if qty <= 0:
+            continue
+
+        material_code = normalize_material_code(row)
+        if not material_code:
+            continue
+
+        key = (snapshot_date, warehouse_name_clean, material_code, stock_status_name)
+        material_name = str(row_value(row, "material_name", "") or "").strip()
+        holder = grouped.setdefault(
+            key,
+            {
+                "snapshot_date": snapshot_date,
+                "warehouse_name_clean": warehouse_name_clean,
+                "material_code": material_code,
+                "material_name": material_name,
+                "stock_status_name": stock_status_name,
+                "qty": Decimal("0"),
+                "source_row_count": 0,
+            },
+        )
+        if material_name and not holder["material_name"]:
+            holder["material_name"] = material_name
+        holder["qty"] += qty
+        holder["source_row_count"] += 1
+
+    cleaned_rows: List[Dict[str, Any]] = []
+    for key in sorted(grouped.keys()):
+        cleaned_rows.append(grouped[key])
+    return cleaned_rows
+
+
 def upsert_rows(session: Session, model: Any, rows: List[Dict[str, Any]]) -> None:
     if not rows:
         return
@@ -550,6 +679,55 @@ def ensure_sales_processing_schema(engine_obj: Any) -> None:
             ReturnUnpackAttendanceDaily.__table__,
         ],
     )
+
+
+def ensure_inventory_processing_schema(engine_obj: Any) -> None:
+    Base.metadata.create_all(
+        engine_obj,
+        tables=[
+            InventoryWarehouseMap.__table__,
+            InventoryStatusMap.__table__,
+            InventorySnapshotDailyCleaning.__table__,
+        ],
+    )
+    with Session(bind=engine_obj, future=True) as session:
+        existing_warehouses = {
+            str(item[0])
+            for item in session.query(InventoryWarehouseMap.source_warehouse_name).all()
+            if item[0] not in (None, "")
+        }
+        existing_statuses = {
+            str(item[0])
+            for item in session.query(InventoryStatusMap.stock_status_id).all()
+            if item[0] not in (None, "")
+        }
+
+        warehouse_rows = [
+            {
+                "source_warehouse_name": source_name,
+                "warehouse_name_clean": clean_name,
+                "sort_order": sort_order,
+                "is_enabled": 1,
+            }
+            for source_name, clean_name, sort_order in INVENTORY_WAREHOUSE_DEFAULTS
+            if source_name not in existing_warehouses
+        ]
+        status_rows = [
+            {
+                "stock_status_id": stock_status_id,
+                "stock_status_name": stock_status_name,
+                "sort_order": sort_order,
+                "is_enabled": 1,
+            }
+            for stock_status_id, stock_status_name, sort_order in INVENTORY_STATUS_DEFAULTS
+            if stock_status_id not in existing_statuses
+        ]
+
+        if warehouse_rows:
+            upsert_rows(session, InventoryWarehouseMap, warehouse_rows)
+        if status_rows:
+            upsert_rows(session, InventoryStatusMap, status_rows)
+        session.commit()
 
 
 def save_return_unpack_attendance(engine_obj: Any, biz_date: date, attendance_count: Any) -> Decimal:
@@ -601,6 +779,58 @@ def refresh_sales_cleaning(
         cleaning_query.delete(synchronize_session=False)
         if cleaned_rows:
             upsert_rows(session, MaterialSalesDailyCleaning, cleaned_rows)
+        session.commit()
+    return len(cleaned_rows)
+
+
+def refresh_inventory_cleaning(
+    engine_obj: Any,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> int:
+    ensure_inventory_processing_schema(engine_obj)
+    with Session(bind=engine_obj, future=True) as session:
+        raw_query = session.query(InventorySnapshotDaily)
+        cleaning_query = session.query(InventorySnapshotDailyCleaning)
+
+        if start_date is not None:
+            raw_query = raw_query.filter(InventorySnapshotDaily.snapshot_date >= start_date)
+            cleaning_query = cleaning_query.filter(InventorySnapshotDailyCleaning.snapshot_date >= start_date)
+        if end_date is not None:
+            raw_query = raw_query.filter(InventorySnapshotDaily.snapshot_date <= end_date)
+            cleaning_query = cleaning_query.filter(InventorySnapshotDailyCleaning.snapshot_date <= end_date)
+
+        warehouse_map = {
+            str(row.source_warehouse_name): str(row.warehouse_name_clean)
+            for row in session.query(InventoryWarehouseMap)
+            .filter(InventoryWarehouseMap.is_enabled == 1)
+            .order_by(InventoryWarehouseMap.sort_order, InventoryWarehouseMap.id)
+            .all()
+        }
+        status_map = {
+            str(row.stock_status_id): str(row.stock_status_name)
+            for row in session.query(InventoryStatusMap)
+            .filter(InventoryStatusMap.is_enabled == 1)
+            .order_by(InventoryStatusMap.sort_order, InventoryStatusMap.id)
+            .all()
+        }
+
+        raw_rows = raw_query.order_by(
+            InventorySnapshotDaily.snapshot_date,
+            InventorySnapshotDaily.warehouse_name,
+            InventorySnapshotDaily.material_code,
+            InventorySnapshotDaily.stock_status_id,
+        ).all()
+        cleaned_rows = build_inventory_cleaning_rows(
+            raw_rows,
+            warehouse_map=warehouse_map,
+            status_map=status_map,
+        )
+
+        cleaning_query.delete(synchronize_session=False)
+        if cleaned_rows:
+            upsert_rows(session, InventorySnapshotDailyCleaning, cleaned_rows)
         session.commit()
     return len(cleaned_rows)
 
@@ -987,6 +1217,8 @@ class DatabaseWriter:
 
     def init_schema(self) -> None:
         Base.metadata.create_all(self.engine)
+        ensure_sales_processing_schema(self.engine)
+        ensure_inventory_processing_schema(self.engine)
 
     def session(self) -> Session:
         return self.session_factory()
@@ -1009,6 +1241,9 @@ class DatabaseWriter:
 
     def refresh_sales_cleaning(self, start_date: date | None = None, end_date: date | None = None) -> int:
         return refresh_sales_cleaning(self.engine, start_date=start_date, end_date=end_date)
+
+    def refresh_inventory_cleaning(self, start_date: date | None = None, end_date: date | None = None) -> int:
+        return refresh_inventory_cleaning(self.engine, start_date=start_date, end_date=end_date)
 
 
 class InventorySyncService:
@@ -1034,6 +1269,7 @@ class InventorySyncService:
         results = {
             "inventory_raw": 0,
             "inventory_saved": 0,
+            "inventory_cleaned": 0,
             "sales_raw": 0,
             "sales_saved": 0,
             "sales_cleaned": 0,
@@ -1050,10 +1286,12 @@ class InventorySyncService:
             results["inventory_raw"] = len(inventory_rows)
             if not dry_run:
                 results["inventory_saved"] = self.db.upsert_inventory_rows(transformed_inventory)
+                results["inventory_cleaned"] = self.db.refresh_inventory_cleaning(snapshot_date, snapshot_date)
             self.logger.info(
-                "Inventory snapshot completed. raw_rows=%s saved_rows=%s snapshot_date=%s",
+                "Inventory snapshot completed. raw_rows=%s saved_rows=%s cleaned_rows=%s snapshot_date=%s",
                 results["inventory_raw"],
                 results["inventory_saved"],
+                results["inventory_cleaned"],
                 snapshot_date,
             )
 
@@ -1091,6 +1329,7 @@ class InventorySyncService:
         totals = {
             "inventory_raw": 0,
             "inventory_saved": 0,
+            "inventory_cleaned": 0,
             "sales_raw": 0,
             "sales_saved": 0,
             "sales_cleaned": 0,
@@ -1191,7 +1430,19 @@ def main() -> int:
             dry_run=args.dry_run,
         )
 
+    manual_dates_requested = any(
+        value is not None
+        for value in (
+            args.snapshot_date,
+            args.sales_start_date,
+            args.sales_end_date,
+            args.backfill_start_date,
+            args.backfill_end_date,
+        )
+    )
     cron_expression = args.cron if args.cron is not None else config.job.cron
+    if manual_dates_requested and args.cron is None:
+        cron_expression = None
     if args.backfill_start_date or args.backfill_end_date:
         if not args.backfill_start_date or not args.backfill_end_date:
             raise ValueError("Both --backfill-start-date and --backfill-end-date are required.")
@@ -1209,8 +1460,6 @@ def main() -> int:
             dry_run=args.dry_run,
             sleep_seconds=args.backfill_sleep_seconds,
         )
-        if args.cron is None:
-            cron_expression = None
 
     if cron_expression:
         scheduler = BlockingScheduler()

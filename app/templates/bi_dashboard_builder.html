@@ -589,7 +589,7 @@
       border: 1px solid rgba(255,255,255,.82);
     }
     .drawer-panel {
-      width: min(560px, 100vw);
+      width: min(480px, 100vw);
       height: 100%;
       padding: 18px;
       display: flex;
@@ -649,6 +649,9 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+    }
+    .option-grid.single-column {
+      grid-template-columns: 1fr;
     }
     .option-card,
     .token {
@@ -720,18 +723,100 @@
       font-size: 12px;
       font-weight: 600;
     }
-    .token-list {
+    .field-stack {
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
       gap: 10px;
     }
-    .token {
-      padding: 8px 12px;
-      display: inline-flex;
+    .field-row-card {
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(15,23,42,.08);
+      background: rgba(255,255,255,.86);
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr) auto;
+      gap: 10px;
       align-items: center;
-      gap: 8px;
     }
-    .token input { width: auto; }
+    .field-row-card span {
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .field-row-card.compact {
+      grid-template-columns: 72px minmax(0, 1fr) auto;
+    }
+    .field-row-card .pill,
+    .field-row-card .danger-ghost {
+      padding: 8px 12px;
+    }
+    .field-row-card select,
+    .field-row-card input,
+    .field-row-card textarea {
+      min-width: 0;
+    }
+    .dimension-row-card .helper {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .metric-row-card {
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(15,23,42,.08);
+      background: rgba(255,255,255,.88);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .metric-row-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .metric-row-head strong {
+      font-size: 14px;
+      color: var(--text);
+    }
+    .metric-row-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) 150px minmax(0, .9fr);
+      gap: 10px;
+      align-items: end;
+    }
+    .metric-row-grid label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .metric-row-grid label span {
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .date-filter-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .date-filter-grid label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .date-filter-grid label span {
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .date-filter-grid .date-filter-mode,
+    .date-filter-grid .date-filter-single,
+    .date-filter-grid .date-filter-note {
+      grid-column: 1 / -1;
+    }
     .item-row {
       display: grid;
       grid-template-columns: minmax(0, 1.2fr) 140px minmax(0, .9fr) auto;
@@ -740,7 +825,36 @@
       align-items: center;
     }
     .item-row.filter {
-      grid-template-columns: 130px 1fr 130px 1fr auto;
+      grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
+      grid-template-areas:
+        "context field remove"
+        "op value remove";
+      align-items: start;
+    }
+    .item-row.filter > * {
+      min-width: 0;
+    }
+    .item-row.filter > :nth-child(1) {
+      grid-area: context;
+    }
+    .item-row.filter > :nth-child(2) {
+      grid-area: field;
+    }
+    .item-row.filter > :nth-child(3) {
+      grid-area: op;
+    }
+    .item-row.filter > :nth-child(4) {
+      grid-area: value;
+    }
+    .item-row.filter > :nth-child(5) {
+      grid-area: remove;
+      justify-self: end;
+      align-self: center;
+    }
+    .item-row.filter select,
+    .item-row.filter .filter-select-wrap,
+    .item-row.filter .filter-value-group {
+      width: 100%;
     }
     .filter-value-group {
       display: flex;
@@ -750,6 +864,160 @@
     }
     .filter-value-group input {
       min-width: 0;
+    }
+    .filter-select-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .filter-picker {
+      position: relative;
+      min-width: 0;
+      width: 100%;
+    }
+    .filter-picker > summary {
+      list-style: none;
+    }
+    .filter-picker > summary::-webkit-details-marker {
+      display: none;
+    }
+    .filter-picker-trigger {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 11px 14px;
+      background: rgba(248, 250, 252, 0.96);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .filter-picker-trigger::after {
+      content: "▾";
+      color: var(--sub);
+      font-size: 12px;
+      flex: 0 0 auto;
+    }
+    .filter-picker-panel {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 8px);
+      right: 0;
+      left: auto;
+      width: min(360px, calc(100vw - 72px));
+      min-width: min(100%, 280px);
+      max-width: min(360px, calc(100vw - 72px));
+      border: 1px solid rgba(15,23,42,.08);
+      border-radius: 16px;
+      background: rgba(255,255,255,.98);
+      box-shadow: 0 18px 32px rgba(24, 32, 56, 0.12);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .filter-picker-toolbar {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .filter-picker-toolbar .filter-picker-search {
+      flex: none;
+      width: 100%;
+    }
+    .filter-picker-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+    }
+    .filter-picker-link {
+      padding: 0;
+      background: transparent;
+      color: #1757cc;
+      border: 0;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .filter-picker-search {
+      padding: 9px 12px;
+    }
+    .filter-picker-options {
+      max-height: 220px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .filter-picker-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(247, 249, 253, 0.88);
+      cursor: pointer;
+    }
+    .filter-picker-option:hover {
+      background: rgba(31,109,255,.08);
+    }
+    .filter-picker-option[hidden],
+    .filter-picker-empty[hidden] {
+      display: none !important;
+    }
+    .filter-picker-option.is-selected {
+      order: -1;
+      background: rgba(31,109,255,.08);
+      border: 1px solid rgba(31,109,255,.12);
+    }
+    .filter-picker-option input {
+      width: auto;
+      margin: 0;
+    }
+    .filter-picker-empty {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(247, 249, 253, 0.88);
+      color: var(--sub);
+      font-size: 13px;
+    }
+    .picker-tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .picker-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(31,109,255,.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+      border: 0;
+      cursor: pointer;
+    }
+    .picker-tag span:last-child {
+      font-size: 11px;
+      opacity: .75;
+    }
+    .filter-select-wrap .helper {
+      font-size: 12px;
+    }
+    .config-select-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .config-select-shell select {
+      font-size: 14px;
     }
     .filter-range-sep {
       color: var(--sub);
@@ -791,6 +1059,10 @@
       .card { grid-column: auto / auto; grid-row: auto / auto; min-height: 300px; }
       .hero-stats, .template-shell { grid-template-columns: 1fr; }
       .item-row, .item-row.filter, .grid-2, .option-grid { grid-template-columns: 1fr; }
+      .field-row-card,
+      .field-row-card.compact,
+      .metric-row-grid,
+      .date-filter-grid { grid-template-columns: 1fr; }
       .drawer-panel { width: 100vw; }
     }
   </style>
@@ -811,6 +1083,7 @@
         <button class="pill" id="layoutTemplateBtn">布局模板</button>
         <button class="pill" id="exportBtn">导出</button>
         <button class="pill" id="attendanceEntryBtn">出勤录入</button>
+        <button class="pill" id="inventoryMappingBtn">库存映射</button>
         <button class="pill" id="resetLayoutBtn">重置布局</button>
         <button class="primary" id="openCreateDrawerBtn">添加图表</button>
         <span class="density-pill" id="gridDensityBadge">24列自由栅格</span>
@@ -912,16 +1185,16 @@
       <div class="drawer-scroll">
         <div class="drawer-pane" data-pane="basic">
           <section class="section">
-            <h4>组件名称</h4>
+            <h4>名称</h4>
             <input id="editTitle" type="text" placeholder="例如：销售与退货趋势" />
           </section>
           <section class="section">
-            <h4>图表类型</h4>
-            <div class="option-grid" id="widgetTypeCards"></div>
+            <h4>源数据表</h4>
+            <div class="option-grid single-column" id="datasetCards"></div>
           </section>
           <section class="section">
-            <h4>数据源</h4>
-            <div class="option-grid" id="datasetCards"></div>
+            <h4>图表</h4>
+            <div class="option-grid single-column" id="widgetTypeCards"></div>
           </section>
           <section class="section hidden" id="textSection">
             <h4>文本内容</h4>
@@ -931,17 +1204,29 @@
         <div class="drawer-pane hidden" data-pane="data">
           <section class="section" id="dimensionSection">
             <div class="panel-head">
-              <h4>分组字段</h4>
-              <span class="helper">图表默认使用第一个字段作为主维度</span>
+              <h4>横轴 (X轴)</h4>
+              <span class="helper">选择分组字段，趋势图通常使用日期，分布图通常使用仓库或物料</span>
             </div>
-            <div class="token-list" id="dimensionTokens"></div>
+            <div class="toolbar-row" style="margin-bottom:10px;">
+              <span class="helper">可添加多个分组字段，让图表按更多维度展示</span>
+              <button class="pill" id="addDimensionBtn" type="button">添加分组</button>
+            </div>
+            <div class="field-stack" id="dimensionTokens"></div>
+          </section>
+          <section class="section hidden" id="seriesSection">
+            <div class="panel-head">
+              <h4>系列字段</h4>
+              <span class="helper">用于按状态、仓库等分类拆成不同颜色分段，适合堆积柱状图和堆积条形图</span>
+            </div>
+            <div id="seriesFieldEditor"></div>
           </section>
           <section class="section" id="metricSection">
             <div class="toolbar-row">
-              <h4>指标字段</h4>
+              <h4>纵轴 (Y轴)</h4>
               <button class="pill" id="addMetricBtn" type="button">添加指标</button>
             </div>
-            <div id="metricRows"></div>
+            <div class="helper" style="margin-bottom:10px;">可同时添加多个指标，每个指标都可单独配置统计方式与显示名称</div>
+            <div class="field-stack" id="metricRows"></div>
           </section>
           <section class="section">
             <h4>排序与条数</h4>
@@ -965,6 +1250,13 @@
           </section>
         </div>
         <div class="drawer-pane hidden" data-pane="filter">
+          <section class="section">
+            <div class="panel-head">
+              <h4>日期范围</h4>
+              <span class="helper">优先决定这张图查询哪一天或哪一段时间</span>
+            </div>
+            <div id="dateFilterEditor"></div>
+          </section>
           <section class="section">
             <div class="toolbar-row">
               <h4>组件筛选</h4>
@@ -1003,7 +1295,7 @@
         <div id="globalFilterRows"></div>
       </div>
       <div class="toolbar-row">
-        <span class="helper">支持“属于”和“区间”，多个值请用英文逗号分隔。</span>
+        <span class="helper">字符串和日期字段会提供下拉可选值，支持直接多选；数值区间仍使用输入方式。</span>
         <button class="primary" id="saveGlobalFiltersBtn" type="button">保存全局筛选</button>
       </div>
     </div>
@@ -1050,6 +1342,7 @@
     const LOGIN_PATH = __BI_LOGIN_PATH_JSON__;
     const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
     const ATTENDANCE_PATH = "/financial/bi-dashboard/attendance";
+    const INVENTORY_MAPPING_PATH = "/financial/bi-dashboard/inventory-mappings";
     const PREFERRED_VIEW_NAME = "销售/退货看板";
     const GRID_COLUMNS = 24;
     const GRID_ROW_HEIGHT = 56;
@@ -1057,6 +1350,7 @@
       metric: "突出展示单一关键指标",
       bar: "适合横向比较不同分组",
       stacked_bar: "适合看总量与构成关系",
+      stacked_hbar: "适合分类较多时横向查看堆积构成",
       line: "适合观察时间趋势变化",
       pie: "适合查看占比结构",
       table: "适合查看明细与字段值",
@@ -1065,9 +1359,14 @@
     };
     const DATASET_HELPERS = {
       inventory: "按每日现存量快照展示库存明细",
+      inventory_cleaning: "按日期、仓库、物料、物料状态聚合后的库存清洗明细，适合直接做库存看板",
       sales: "按销售出库原始明细展示，负数数量保留原值",
       sales_cleaning: "按日汇总销量、退货、在途拦截和拆包人效，适合直接做经营看板",
     };
+
+    function widgetSupportsSeriesField(widgetType) {
+      return ["bar", "stacked_bar", "stacked_hbar", "line"].includes(widgetType);
+    }
 
     const state = {
       meta: null,
@@ -1082,6 +1381,8 @@
       dragWidgetId: null,
       dragPreview: null,
       resizeSession: null,
+      filterOptionsCache: {},
+      filterOptionsPending: {},
       editor: {
         mode: "create",
         widgetId: null,
@@ -1126,11 +1427,14 @@
       editTextContent: document.getElementById("editTextContent"),
       dimensionSection: document.getElementById("dimensionSection"),
       dimensionTokens: document.getElementById("dimensionTokens"),
+      seriesSection: document.getElementById("seriesSection"),
+      seriesFieldEditor: document.getElementById("seriesFieldEditor"),
       metricSection: document.getElementById("metricSection"),
       metricRows: document.getElementById("metricRows"),
       sortField: document.getElementById("sortField"),
       sortDirection: document.getElementById("sortDirection"),
       editLimit: document.getElementById("editLimit"),
+      dateFilterEditor: document.getElementById("dateFilterEditor"),
       filterRows: document.getElementById("filterRows"),
       layoutCards: document.getElementById("layoutCards"),
       filterModal: document.getElementById("filterModal"),
@@ -1185,6 +1489,29 @@
         : "--";
     }
 
+    function formatChartLabel(value) {
+      const number = Number(value ?? 0);
+      if (!Number.isFinite(number)) return "--";
+      return number.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+    }
+
+    function chartSeriesLabel(widgetType) {
+      if (!["line", "bar", "stacked_bar", "stacked_hbar"].includes(widgetType)) return { show: false };
+      return {
+        show: true,
+        position: widgetType === "line" ? "top" : (widgetType === "stacked_hbar" ? "insideRight" : (widgetType === "stacked_bar" ? "inside" : "top")),
+        distance: 6,
+        color: "#44506b",
+        fontSize: 12,
+        formatter: (params) => {
+          const value = Array.isArray(params.value) ? params.value[1] : params.value;
+          const numeric = Number(value ?? 0);
+          if (!Number.isFinite(numeric) || numeric === 0) return "";
+          return formatChartLabel(numeric);
+        },
+      };
+    }
+
     function fieldMeta(dataset, field) {
       return state.meta?.dataset_fields?.[dataset]?.[field] || null;
     }
@@ -1207,6 +1534,139 @@
 
     function datasetFields(dataset, predicate = () => true) {
       return Object.entries(state.meta?.dataset_fields?.[dataset] || {}).filter(([, meta]) => predicate(meta));
+    }
+
+    function filterOperatorsForField(dataset, field) {
+      const meta = fieldMeta(dataset, field);
+      const allowed = meta?.numeric
+        ? ["eq", "ne", "gt", "gte", "lt", "lte", "between", "in"]
+        : meta?.type === "date"
+          ? ["eq", "gte", "lte", "between", "in"]
+          : ["eq", "ne", "in"];
+      return filterOperatorOptions().filter((item) => allowed.includes(item.key));
+    }
+
+    function normalizeFilterOperator(dataset, field, operator) {
+      const candidates = filterOperatorsForField(dataset, field);
+      const matched = candidates.find((item) => item.key === operator);
+      return matched?.key || candidates[0]?.key || "eq";
+    }
+
+    function normalizeDateFilterConfig(raw = {}) {
+      const mode = ["follow_page", "single", "range", "all"].includes(raw?.mode) ? raw.mode : "follow_page";
+      const date = String(raw?.date || "").trim();
+      const startDate = String(raw?.start_date || "").trim();
+      const endDate = String(raw?.end_date || "").trim();
+      return { mode, date, start_date: startDate, end_date: endDate };
+    }
+
+    function activeDateFilterQuery(dataset) {
+      const draft = state.editor.draft;
+      if (draft && draft.dataset === dataset) {
+        const dateFilter = normalizeDateFilterConfig(draft.config?.date_filter || {});
+        if (dateFilter.mode === "single" && dateFilter.date) {
+          return { biz_date: dateFilter.date };
+        }
+        if (dateFilter.mode === "range") {
+          const query = {};
+          if (dateFilter.start_date) query.start_date = dateFilter.start_date;
+          if (dateFilter.end_date) query.end_date = dateFilter.end_date;
+          return query;
+        }
+        if (dateFilter.mode === "all") {
+          return {};
+        }
+      }
+      return state.selectedDate ? { biz_date: state.selectedDate } : {};
+    }
+
+    function filterOptionsCacheKey(dataset, field, keyword = "") {
+      const dateQuery = activeDateFilterQuery(dataset);
+      return JSON.stringify({ dataset, field, keyword: String(keyword || "").trim(), ...dateQuery });
+    }
+
+    function cachedFilterOptions(dataset, field, keyword = "") {
+      return state.filterOptionsCache[filterOptionsCacheKey(dataset, field, keyword)] || null;
+    }
+
+    function requestFilterOptions(dataset, field, keyword = "") {
+      const meta = fieldMeta(dataset, field);
+      if (!meta || meta.numeric) return;
+      const key = filterOptionsCacheKey(dataset, field, keyword);
+      if (state.filterOptionsCache[key] || state.filterOptionsPending[key]) return;
+      const query = new URLSearchParams({ dataset, field, limit: "300" });
+      const dateQuery = activeDateFilterQuery(dataset);
+      Object.entries(dateQuery).forEach(([name, value]) => {
+        if (value) query.set(name, value);
+      });
+      if (keyword) query.set("keyword", keyword);
+      state.filterOptionsPending[key] = api(`/financial/bi-dashboard/api/filter-options?${query.toString()}`)
+        .then((payload) => {
+          state.filterOptionsCache[key] = payload.options || [];
+        })
+        .catch(() => {
+          state.filterOptionsCache[key] = [];
+        })
+        .finally(() => {
+          delete state.filterOptionsPending[key];
+          if (state.editor.draft) renderFilterRows();
+          if (!el.filterModal.classList.contains("hidden")) renderGlobalFilterEditor();
+        });
+    }
+
+    function shouldUseOptionSelector(dataset, field, operator) {
+      const meta = fieldMeta(dataset, field);
+      if (!meta || meta.numeric) return false;
+      return operator !== "between";
+    }
+
+    function summarizePickerValues(dataset, field, values) {
+      const normalizedValues = values
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean);
+      if (!normalizedValues.length) return "请选择";
+      const options = mergedFilterOptions(dataset, field, normalizedValues, "") || [];
+      const labels = normalizedValues.map((value) => options.find((option) => String(option.value) === value)?.label || value);
+      if (labels.length === 1) return labels[0];
+      return `已选择 ${labels.length} 项`;
+    }
+
+    function mergedFilterOptions(dataset, field, selectedValues, keyword = "") {
+      const normalizedKeyword = String(keyword || "").trim();
+      let cached = cachedFilterOptions(dataset, field, normalizedKeyword);
+      if (cached === null && normalizedKeyword) {
+        const baseOptions = cachedFilterOptions(dataset, field, "");
+        if (baseOptions !== null) {
+          const lookup = normalizedKeyword.toLocaleLowerCase();
+          cached = baseOptions.filter((option) => {
+            const label = String(option.label ?? option.value ?? "").toLocaleLowerCase();
+            const value = String(option.value ?? "").toLocaleLowerCase();
+            return label.includes(lookup) || value.includes(lookup);
+          });
+        }
+      }
+      if (cached === null) return null;
+      const merged = [...cached];
+      selectedValues
+        .map((item) => String(item ?? "").trim())
+        .filter(Boolean)
+        .forEach((value) => {
+          if (!merged.some((option) => String(option.value) === value)) {
+            merged.unshift({ value, label: value });
+          }
+        });
+      return merged;
+    }
+
+    function selectedPickerOptions(dataset, field, values) {
+      const normalizedValues = values
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean);
+      const options = mergedFilterOptions(dataset, field, normalizedValues, "") || [];
+      return normalizedValues.map((value) => ({
+        value,
+        label: options.find((option) => String(option.value) === value)?.label || value,
+      }));
     }
 
     function normalizeFilterValue(operator, value) {
@@ -1244,8 +1704,64 @@
     }
 
     function filterValueMarkup(dataset, item) {
-      const operator = item.op || "eq";
+      const operator = normalizeFilterOperator(dataset, item.field, item.op || "eq");
+      item.op = operator;
       const inputType = filterInputType(dataset, item.field, operator);
+      if (shouldUseOptionSelector(dataset, item.field, operator)) {
+        const pickerKeyword = String(item._picker_keyword || "").trim();
+        const normalizedValue = normalizeFilterValue(operator, item.value);
+        const selectedValues = (Array.isArray(normalizedValue) ? normalizedValue : [normalizedValue])
+          .map((value) => String(value ?? "").trim())
+          .filter(Boolean);
+        const options = mergedFilterOptions(dataset, item.field, selectedValues, pickerKeyword);
+        if (options === null) requestFilterOptions(dataset, item.field, pickerKeyword);
+        const selectedOptions = selectedPickerOptions(dataset, item.field, selectedValues);
+        const renderedOptions = (options || []).slice().sort((left, right) => {
+          const leftValue = String(left.value ?? "");
+          const rightValue = String(right.value ?? "");
+          const leftSelected = selectedValues.includes(leftValue);
+          const rightSelected = selectedValues.includes(rightValue);
+          if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+          return String(left.label ?? leftValue).localeCompare(String(right.label ?? rightValue), "zh-CN");
+        }).map((option) => {
+          const value = String(option.value ?? "");
+          return `
+            <label class="filter-picker-option ${selectedValues.includes(value) ? "is-selected" : ""}" data-role="picker-option" data-label="${escapeHtml(option.label ?? value)}" data-value="${escapeHtml(value)}">
+              <input type="checkbox" data-role="picker-check" value="${escapeHtml(value)}" ${selectedValues.includes(value) ? "checked" : ""} />
+              <span>${escapeHtml(option.label ?? value)}</span>
+            </label>
+          `;
+        }).join("");
+        return `
+          <div class="filter-select-wrap">
+            <details class="filter-picker" data-role="picker">
+              <summary class="filter-picker-trigger" data-role="picker-trigger">${escapeHtml(summarizePickerValues(dataset, item.field, selectedValues))}</summary>
+              <div class="filter-picker-panel">
+                <div class="filter-picker-toolbar">
+                  <input class="filter-picker-search" data-role="picker-search" type="text" placeholder="搜索可选值" ${options === null ? "disabled" : ""} />
+                  <div class="filter-picker-actions">
+                    <button type="button" class="filter-picker-link" data-role="picker-select-visible" ${options === null || !options.length ? "disabled" : ""}>选当前</button>
+                    <button type="button" class="filter-picker-link" data-role="picker-invert-visible" ${options === null || !options.length ? "disabled" : ""}>反选</button>
+                    <button type="button" class="filter-picker-link" data-role="picker-clear">清空</button>
+                  </div>
+                </div>
+                <div class="picker-tag-list ${selectedOptions.length ? "" : "hidden"}" data-role="picker-tags">
+                  ${selectedOptions.map((option) => `
+                    <button type="button" class="picker-tag" data-role="picker-tag" data-value="${escapeHtml(option.value)}">
+                      <span>${escapeHtml(option.label)}</span>
+                      <span>×</span>
+                    </button>
+                  `).join("")}
+                </div>
+                <div class="filter-picker-options" data-role="picker-options">
+                  ${renderedOptions || `<div class="filter-picker-empty">${options === null ? "正在加载可选值..." : "暂无可选值"}</div>`}
+                </div>
+              </div>
+            </details>
+            <span class="helper">${options === null ? "正在加载可选值..." : "支持搜索结果批量勾选、反选，已选项会自动置顶"}</span>
+          </div>
+        `;
+      }
       if (operator === "between") {
         const [startValue, endValue] = normalizeFilterValue(operator, item.value);
         return `
@@ -1262,7 +1778,7 @@
       return `<input type="${inputType}" data-role="value" value="${escapeHtml(displayValue)}" placeholder="${placeholder}" />`;
     }
 
-    function bindFilterValueInputs(row, item) {
+    function bindFilterValueInputs(row, item, rerender) {
       if (item.op === "between") {
         const start = row.querySelector("[data-role=value-start]");
         const end = row.querySelector("[data-role=value-end]");
@@ -1271,6 +1787,143 @@
         };
         start.addEventListener("input", sync);
         end.addEventListener("input", sync);
+        return;
+      }
+      const picker = row.querySelector("[data-role=picker]");
+      if (picker) {
+        const searchInput = row.querySelector("[data-role=picker-search]");
+        const optionsHost = row.querySelector("[data-role=picker-options]");
+        const optionItems = Array.from(row.querySelectorAll("[data-role=picker-option]"));
+        let emptyState = row.querySelector("[data-role=picker-empty]");
+        const selectVisibleButton = row.querySelector("[data-role=picker-select-visible]");
+        const invertVisibleButton = row.querySelector("[data-role=picker-invert-visible]");
+        const clearButton = row.querySelector("[data-role=picker-clear]");
+        const tagsHost = row.querySelector("[data-role=picker-tags]");
+        const datasetKey = item.dataset || state.editor.draft?.dataset;
+        const visibleOptions = () => optionItems.filter((optionRow) => !optionRow.hidden);
+        const reorderOptions = () => {
+          if (!optionsHost) return;
+          optionItems
+            .sort((left, right) => {
+              const leftChecked = left.querySelector("[data-role=picker-check]")?.checked ? 0 : 1;
+              const rightChecked = right.querySelector("[data-role=picker-check]")?.checked ? 0 : 1;
+              if (leftChecked !== rightChecked) return leftChecked - rightChecked;
+              return String(left.dataset.label || "").localeCompare(String(right.dataset.label || ""), "zh-CN");
+            })
+            .forEach((optionRow) => optionsHost.appendChild(optionRow));
+          optionItems.forEach((optionRow) => {
+            optionRow.classList.toggle("is-selected", Boolean(optionRow.querySelector("[data-role=picker-check]")?.checked));
+          });
+        };
+        const applySearchFilter = () => {
+          const keyword = String(searchInput?.value || item._picker_keyword || "").trim().toLocaleLowerCase();
+          optionItems.forEach((optionRow) => {
+            const label = String(optionRow.dataset.label || "").toLocaleLowerCase();
+            const value = String(optionRow.dataset.value || "").toLocaleLowerCase();
+            const matched = !keyword || label.includes(keyword) || value.includes(keyword);
+            optionRow.hidden = !matched;
+          });
+          const visibleCount = visibleOptions().length;
+          if (!emptyState && optionsHost) {
+            emptyState = document.createElement("div");
+            emptyState.className = "filter-picker-empty";
+            emptyState.dataset.role = "picker-empty";
+            optionsHost.appendChild(emptyState);
+          }
+          if (emptyState) {
+            emptyState.textContent = keyword ? "未找到匹配项" : "暂无可选值";
+            emptyState.hidden = visibleCount > 0;
+          }
+          if (selectVisibleButton) selectVisibleButton.disabled = visibleCount === 0;
+          if (invertVisibleButton) invertVisibleButton.disabled = visibleCount === 0;
+        };
+        const bindTagButtons = () => {
+          tagsHost?.querySelectorAll("[data-role=picker-tag]").forEach((button) => {
+            button.addEventListener("click", (event) => {
+              event.preventDefault();
+              const targetValue = button.dataset.value || "";
+              optionItems.forEach((optionRow) => {
+                const checkbox = optionRow.querySelector("[data-role=picker-check]");
+                if (checkbox && checkbox.value === targetValue) checkbox.checked = false;
+              });
+              syncSelection();
+            });
+          });
+        };
+        const renderTags = (values) => {
+          if (!tagsHost) return;
+          const selectedOptions = selectedPickerOptions(datasetKey, item.field, values);
+          tagsHost.classList.toggle("hidden", !selectedOptions.length);
+          tagsHost.innerHTML = selectedOptions.map((option) => `
+            <button type="button" class="picker-tag" data-role="picker-tag" data-value="${escapeHtml(option.value)}">
+              <span>${escapeHtml(option.label)}</span>
+              <span>×</span>
+            </button>
+          `).join("");
+          bindTagButtons();
+        };
+        const syncSelection = () => {
+          const values = optionItems
+            .map((optionRow) => optionRow.querySelector("[data-role=picker-check]"))
+            .filter((input) => input?.checked)
+            .map((input) => input.value)
+            .filter((value) => String(value ?? "").trim() !== "");
+          if (values.length > 1 && item.op !== "in") {
+            item.op = "in";
+            item.value = values;
+            item._picker_keyword = searchInput?.value || item._picker_keyword || "";
+            rerender?.();
+            return;
+          }
+          item.value = item.op === "in" ? values : (values[0] ?? "");
+          const trigger = row.querySelector("[data-role=picker-trigger]");
+          if (trigger) trigger.textContent = summarizePickerValues(
+            datasetKey,
+            item.field,
+            item.op === "in" ? values : [item.value],
+          );
+          renderTags(item.op === "in" ? values : [item.value]);
+          reorderOptions();
+          applySearchFilter();
+        };
+        optionItems.forEach((optionRow) => {
+          optionRow.querySelector("[data-role=picker-check]")?.addEventListener("change", syncSelection);
+        });
+        if (searchInput) {
+          searchInput.value = item._picker_keyword || "";
+          searchInput.placeholder = "搜索可选值";
+        }
+        searchInput?.addEventListener("input", () => {
+          item._picker_keyword = searchInput.value || "";
+          applySearchFilter();
+        });
+        selectVisibleButton?.addEventListener("click", (event) => {
+          event.preventDefault();
+          visibleOptions().forEach((optionRow) => {
+            const checkbox = optionRow.querySelector("[data-role=picker-check]");
+            if (checkbox) checkbox.checked = true;
+          });
+          syncSelection();
+        });
+        invertVisibleButton?.addEventListener("click", (event) => {
+          event.preventDefault();
+          visibleOptions().forEach((optionRow) => {
+            const checkbox = optionRow.querySelector("[data-role=picker-check]");
+            if (checkbox) checkbox.checked = !checkbox.checked;
+          });
+          syncSelection();
+        });
+        clearButton?.addEventListener("click", (event) => {
+          event.preventDefault();
+          optionItems.forEach((optionRow) => {
+            const checkbox = optionRow.querySelector("[data-role=picker-check]");
+            if (checkbox) checkbox.checked = false;
+          });
+          syncSelection();
+        });
+        bindTagButtons();
+        reorderOptions();
+        applySearchFilter();
         return;
       }
       const valueInput = row.querySelector("[data-role=value]");
@@ -1287,20 +1940,37 @@
       });
     }
 
-    function resetFilterValue(item) {
+    function resetFilterValue(item, dataset) {
+      item.op = normalizeFilterOperator(dataset, item.field, item.op || "eq");
       item.value = normalizeFilterValue(item.op || "eq", item.value);
     }
 
-    function defaultDimensions(widgetType) {
-      return ["metric", "text"].includes(widgetType) ? [] : ["material_name"];
+    function firstGroupableField(dataset) {
+      return datasetFields(dataset, (meta) => meta.groupable)[0]?.[0] || "";
+    }
+
+    function defaultDimensions(widgetType, dataset) {
+      const firstField = firstGroupableField(dataset);
+      return ["metric", "text"].includes(widgetType) ? [] : (firstField ? [firstField] : []);
+    }
+
+    function defaultSeriesField(dataset, widgetType) {
+      if (!widgetSupportsSeriesField(widgetType)) return "";
+      if (dataset === "inventory_cleaning" && ["stacked_bar", "stacked_hbar"].includes(widgetType)) {
+        return fieldMeta(dataset, "stock_status_name") ? "stock_status_name" : "";
+      }
+      return "";
     }
 
     function defaultMetrics(dataset, widgetType) {
       if (dataset === "sales") {
         return [{ field: "qty", agg: "sum", label: "原始数量" }];
       }
+      if (dataset === "inventory_cleaning") {
+        return [{ field: "qty", agg: "sum", label: "数量" }];
+      }
       if (dataset === "sales_cleaning") {
-        if (widgetType === "stacked_bar") {
+        if (["stacked_bar", "stacked_hbar"].includes(widgetType)) {
           return [
             { field: "sales_out_xiaoshan", agg: "sum", label: "销售出库（萧山云仓）" },
             { field: "sales_out_yuhang", agg: "sum", label: "销售出库（余杭云仓）" },
@@ -1308,7 +1978,7 @@
         }
         return [{ field: "total_sales_qty", agg: "sum", label: "当日总销量" }];
       }
-      if (widgetType === "stacked_bar") {
+      if (["stacked_bar", "stacked_hbar"].includes(widgetType)) {
         return [
           { field: "current_qty", agg: "sum", label: "当前库存" },
           { field: "available_qty", agg: "sum", label: "可用库存" },
@@ -1326,8 +1996,10 @@
         analysis_text: "",
         config: {
           dataset,
-          dimensions: defaultDimensions(widgetType),
+          dimensions: defaultDimensions(widgetType, dataset),
+          series_field: defaultSeriesField(dataset, widgetType),
           metrics: widgetType === "text" ? [] : defaultMetrics(dataset, widgetType),
+          date_filter: { mode: "follow_page", date: "", start_date: "", end_date: "" },
           filters: [],
           sort: [{ field: "metric_0", direction: "desc" }],
           limit: 20,
@@ -1852,7 +2524,11 @@
       const chart = echarts.init(body);
       state.charts[widgetId] = chart;
       const dimension = dimensions[0];
-      const xAxis = rows.map((row) => String(row[dimension] ?? ""));
+      const categories = rows.map((row) => String(row[dimension] ?? ""));
+      const seriesField = payload.series_field || "";
+      const seriesGroups = payload.series_groups || [];
+      const hasSeriesBreakdown = Boolean(seriesField && seriesGroups.length);
+      const isHorizontal = widget.widget_type === "stacked_hbar";
       const palette = ["#5b6cff", "#65c18c", "#f0b429", "#6ec5e9", "#ec5f87"];
       if (widget.widget_type === "pie") {
         const metric = metrics[0];
@@ -1869,32 +2545,67 @@
         });
         return;
       }
+      const chartSeries = hasSeriesBreakdown
+        ? seriesGroups.flatMap((group) => metrics.map((metric) => ({
+          name: metrics.length > 1 ? `${group.label} · ${metric.label || metric.alias}` : group.label,
+          type: widget.widget_type === "line" ? "line" : "bar",
+          smooth: widget.widget_type === "line",
+          showSymbol: widget.widget_type === "line",
+          symbolSize: widget.widget_type === "line" ? 8 : undefined,
+          stack: ["stacked_bar", "stacked_hbar"].includes(widget.widget_type) ? (metrics.length > 1 ? metric.alias : "total") : undefined,
+          barMaxWidth: 36,
+          areaStyle: widget.widget_type === "line" ? { opacity: 0.12 } : undefined,
+          lineStyle: widget.widget_type === "line" ? { width: 3 } : undefined,
+          label: chartSeriesLabel(widget.widget_type),
+          labelLayout: { hideOverlap: true },
+          emphasis: { focus: "series" },
+          data: rows.map((row) => Number(row.series_values?.[group.key]?.[metric.alias] || 0)),
+        })))
+        : metrics.map((metric) => ({
+          name: metric.label || metric.alias,
+          type: widget.widget_type === "line" ? "line" : "bar",
+          smooth: widget.widget_type === "line",
+          showSymbol: widget.widget_type === "line",
+          symbolSize: widget.widget_type === "line" ? 8 : undefined,
+          stack: ["stacked_bar", "stacked_hbar"].includes(widget.widget_type) ? "total" : undefined,
+          barMaxWidth: 36,
+          areaStyle: widget.widget_type === "line" ? { opacity: 0.12 } : undefined,
+          lineStyle: widget.widget_type === "line" ? { width: 3 } : undefined,
+          label: chartSeriesLabel(widget.widget_type),
+          labelLayout: { hideOverlap: true },
+          emphasis: { focus: "series" },
+          data: rows.map((row) => Number(row[metric.alias] || 0)),
+        }));
       chart.setOption({
         color: palette,
         tooltip: { trigger: "axis" },
         legend: { top: 0, textStyle: { color: "#475467" } },
-        grid: { left: 40, right: 20, top: 40, bottom: 40 },
-        xAxis: {
-          type: "category",
-          data: xAxis,
-          axisLabel: { color: "#667085", rotate: xAxis.length > 8 ? 32 : 0 },
-          axisLine: { lineStyle: { color: "rgba(15,23,42,.1)" } },
-        },
-        yAxis: {
-          type: "value",
-          axisLabel: { color: "#667085" },
-          splitLine: { lineStyle: { color: "rgba(15,23,42,.08)" } },
-        },
-        series: metrics.map((metric) => ({
-          name: metric.label || metric.alias,
-          type: widget.widget_type === "line" ? "line" : "bar",
-          smooth: widget.widget_type === "line",
-          stack: widget.widget_type === "stacked_bar" ? "total" : undefined,
-          barMaxWidth: 36,
-          areaStyle: widget.widget_type === "line" ? { opacity: 0.12 } : undefined,
-          lineStyle: widget.widget_type === "line" ? { width: 3 } : undefined,
-          data: rows.map((row) => Number(row[metric.alias] || 0)),
-        })),
+        grid: { left: 28, right: 20, top: 56, bottom: 52, containLabel: true },
+        xAxis: isHorizontal
+          ? {
+            type: "value",
+            axisLabel: { color: "#667085" },
+            splitLine: { lineStyle: { color: "rgba(15,23,42,.08)" } },
+          }
+          : {
+            type: "category",
+            data: categories,
+            axisLabel: { color: "#667085", rotate: categories.length > 8 ? 32 : 0 },
+            axisLine: { lineStyle: { color: "rgba(15,23,42,.1)" } },
+          },
+        yAxis: isHorizontal
+          ? {
+            type: "category",
+            data: categories,
+            axisLabel: { color: "#667085" },
+            axisLine: { lineStyle: { color: "rgba(15,23,42,.1)" } },
+          }
+          : {
+            type: "value",
+            axisLabel: { color: "#667085" },
+            splitLine: { lineStyle: { color: "rgba(15,23,42,.08)" } },
+          },
+        series: chartSeries,
       });
     }
 
@@ -2071,6 +2782,9 @@
       const draft = state.editor.draft;
       draft.widget_type = widgetType;
       draft.config.dataset = draft.dataset;
+      draft.config.series_field = widgetSupportsSeriesField(widgetType)
+        ? (draft.config.series_field || defaultSeriesField(draft.dataset, widgetType))
+        : "";
       if (widgetType === "text") {
         draft.config.dimensions = [];
         draft.config.metrics = [];
@@ -2078,7 +2792,7 @@
         draft.config.dimensions = [];
         draft.config.metrics = defaultMetrics(draft.dataset, widgetType);
       } else {
-        draft.config.dimensions = draft.config.dimensions.length ? draft.config.dimensions : defaultDimensions(widgetType);
+        draft.config.dimensions = draft.config.dimensions.length ? draft.config.dimensions : defaultDimensions(widgetType, draft.dataset);
         if (!draft.config.metrics.length) draft.config.metrics = defaultMetrics(draft.dataset, widgetType);
       }
       renderDrawer();
@@ -2088,38 +2802,43 @@
       const draft = state.editor.draft;
       draft.dataset = dataset;
       draft.config.dataset = dataset;
+      draft.config.series_field = defaultSeriesField(dataset, draft.widget_type);
       draft.config.filters = [];
       draft.config.sort = [{ field: "metric_0", direction: "desc" }];
       if (draft.widget_type !== "text") {
         draft.config.metrics = defaultMetrics(dataset, draft.widget_type);
       }
-      draft.config.dimensions = defaultDimensions(draft.widget_type);
+      draft.config.dimensions = defaultDimensions(draft.widget_type, dataset);
       renderDrawer();
     }
 
     function renderWidgetTypeCards() {
       const draft = state.editor.draft;
-      el.widgetTypeCards.innerHTML = state.meta.widget_types.map((item) => `
-        <button type="button" class="option-card ${draft.widget_type === item.key ? "active" : ""}" data-widget-type="${item.key}">
-          <strong>${escapeHtml(item.label)}</strong>
-          <span>${escapeHtml(WIDGET_TYPE_HELPERS[item.key] || "用于搭建业务看板")}</span>
-        </button>
-      `).join("");
-      el.widgetTypeCards.querySelectorAll("[data-widget-type]").forEach((button) => {
-        button.addEventListener("click", () => applyWidgetType(button.dataset.widgetType));
+      el.widgetTypeCards.innerHTML = `
+        <div class="config-select-shell">
+          <select id="widgetTypeSelect">
+            ${state.meta.widget_types.map((item) => `<option value="${item.key}" ${draft.widget_type === item.key ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+          </select>
+          <span class="helper">${escapeHtml(WIDGET_TYPE_HELPERS[draft.widget_type] || "用于搭建业务看板")}</span>
+        </div>
+      `;
+      el.widgetTypeCards.querySelector("#widgetTypeSelect")?.addEventListener("change", (event) => {
+        applyWidgetType(event.target.value);
       });
     }
 
     function renderDatasetCards() {
       const draft = state.editor.draft;
-      el.datasetCards.innerHTML = state.meta.datasets.map((item) => `
-        <button type="button" class="option-card ${draft.dataset === item.key ? "active" : ""}" data-dataset="${item.key}">
-          <strong>${escapeHtml(item.label)}</strong>
-          <span>${escapeHtml(DATASET_HELPERS[item.key] || "按该数据集进行查询")}</span>
-        </button>
-      `).join("");
-      el.datasetCards.querySelectorAll("[data-dataset]").forEach((button) => {
-        button.addEventListener("click", () => applyDataset(button.dataset.dataset));
+      el.datasetCards.innerHTML = `
+        <div class="config-select-shell">
+          <select id="datasetSelect">
+            ${state.meta.datasets.map((item) => `<option value="${item.key}" ${draft.dataset === item.key ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+          </select>
+          <span class="helper">${escapeHtml(DATASET_HELPERS[draft.dataset] || "按该数据集进行查询")}</span>
+        </div>
+      `;
+      el.datasetCards.querySelector("#datasetSelect")?.addEventListener("change", (event) => {
+        applyDataset(event.target.value);
       });
     }
 
@@ -2129,37 +2848,132 @@
         el.dimensionSection.classList.add("hidden");
         return;
       }
+      const groupableFields = datasetFields(draft.dataset, (meta) => meta.groupable);
+      if (!groupableFields.length) {
+        el.dimensionSection.classList.add("hidden");
+        return;
+      }
       el.dimensionSection.classList.remove("hidden");
-      el.dimensionTokens.innerHTML = datasetFields(draft.dataset, (meta) => meta.groupable).map(([field, meta]) => `
-        <label class="token">
-          <input type="checkbox" value="${field}" ${draft.config.dimensions.includes(field) ? "checked" : ""} />
-          <span>${escapeHtml(meta.label)}</span>
-        </label>
+      const allowedFields = new Set(groupableFields.map(([field]) => field));
+      draft.config.dimensions = draft.config.dimensions.filter((field) => allowedFields.has(field));
+      if (!draft.config.dimensions.length) {
+        draft.config.dimensions = defaultDimensions(draft.widget_type, draft.dataset);
+      }
+      el.dimensionTokens.innerHTML = draft.config.dimensions.map((field, index) => `
+        <div class="field-row-card compact dimension-row-card" data-dimension-index="${index}">
+          <span>${index === 0 ? "主分组" : `分组 ${index + 1}`}</span>
+          <select data-role="dimension-field">
+            ${groupableFields.map(([candidate, meta]) => {
+              const duplicated = draft.config.dimensions.includes(candidate) && candidate !== field;
+              return `<option value="${candidate}" ${candidate === field ? "selected" : ""} ${duplicated ? "disabled" : ""}>${escapeHtml(meta.label)}</option>`;
+            }).join("")}
+          </select>
+          ${draft.config.dimensions.length > 1
+            ? `<button type="button" class="danger-ghost" data-role="remove">删除</button>`
+            : `<span class="helper">至少保留一个</span>`}
+        </div>
       `).join("");
-      el.dimensionTokens.querySelectorAll("input").forEach((input) => {
-        input.addEventListener("change", () => {
-          const dims = new Set(draft.config.dimensions);
-          if (input.checked) dims.add(input.value);
-          else dims.delete(input.value);
-          draft.config.dimensions = Array.from(dims);
+      el.dimensionTokens.querySelectorAll("[data-dimension-index]").forEach((row) => {
+        const index = Number(row.dataset.dimensionIndex);
+        row.querySelector("[data-role=dimension-field]")?.addEventListener("change", (event) => {
+          draft.config.dimensions[index] = event.target.value;
+          renderDimensionTokens();
+          renderSeriesFieldEditor();
+          renderSortOptions();
+        });
+        row.querySelector("[data-role=remove]")?.addEventListener("click", () => {
+          draft.config.dimensions.splice(index, 1);
+          renderDimensionTokens();
+          renderSeriesFieldEditor();
           renderSortOptions();
         });
       });
     }
 
+    function renderSeriesFieldEditor() {
+      const draft = state.editor.draft;
+      if (!draft || !widgetSupportsSeriesField(draft.widget_type) || !draft.config.dimensions.length) {
+        el.seriesSection.classList.add("hidden");
+        el.seriesFieldEditor.innerHTML = "";
+        return;
+      }
+      const candidates = datasetFields(draft.dataset, (meta) => meta.groupable)
+        .filter(([field]) => !draft.config.dimensions.includes(field));
+      if (!candidates.length) {
+        draft.config.series_field = "";
+        el.seriesSection.classList.add("hidden");
+        el.seriesFieldEditor.innerHTML = "";
+        return;
+      }
+      if (!candidates.some(([field]) => field === draft.config.series_field)) {
+        draft.config.series_field = defaultSeriesField(draft.dataset, draft.widget_type);
+        if (!candidates.some(([field]) => field === draft.config.series_field)) {
+          draft.config.series_field = "";
+        }
+      }
+      el.seriesSection.classList.remove("hidden");
+      el.seriesFieldEditor.innerHTML = `
+        <div class="config-select-shell">
+          <select id="seriesFieldSelect">
+            <option value="">不拆分系列</option>
+            ${candidates.map(([field, meta]) => `<option value="${field}" ${draft.config.series_field === field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("")}
+          </select>
+          <span class="helper">${draft.config.series_field
+            ? `当前按“${escapeHtml(fieldMeta(draft.dataset, draft.config.series_field)?.label || draft.config.series_field)}”拆分颜色系列。`
+            : "未设置时，图表将按多个指标或单指标直接展示，不按状态/仓库拆分。"}
+          </span>
+        </div>
+      `;
+      el.seriesFieldEditor.querySelector("#seriesFieldSelect")?.addEventListener("change", (event) => {
+        draft.config.series_field = event.target.value || "";
+        renderSeriesFieldEditor();
+      });
+    }
+
     function metricRowTemplate(dataset, metric, index) {
       const numericFields = datasetFields(dataset, (meta) => meta.numeric);
+      const aggItems = metric.field === "*"
+        ? aggregationOptions().filter((item) => item.key === "count")
+        : aggregationOptions();
+      const fieldLabel = metric.field === "*"
+        ? "\u8bb0\u5f55\u6570"
+        : (fieldMeta(dataset, metric.field)?.label || metric.field || "\u672a\u9009\u62e9\u5b57\u6bb5");
+      const aggLabel = metric.field === "*"
+        ? "\u8ba1\u6570"
+        : aggregationLabel(metric.agg || "sum");
+      const metricTitle = (metric.label || "").trim() || fieldLabel;
       return `
-        <div class="item-row" data-metric-index="${index}">
-          <select data-role="field">
-            <option value="*">记录数 (*)</option>
-            ${numericFields.map(([field, meta]) => `<option value="${field}" ${metric.field === field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("")}
-          </select>
-          <select data-role="agg">
-            ${aggregationOptions().map((item) => `<option value="${item.key}" ${metric.agg === item.key ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
-          </select>
-          <input data-role="label" value="${escapeHtml(metric.label || "")}" placeholder="显示名称" />
-          <button type="button" class="danger-ghost" data-role="remove">删除</button>
+        <div class="metric-row-card" data-metric-index="${index}">
+          <div class="metric-row-head">
+            <div>
+              <span class="helper">指标 ${index + 1}</span>
+              <strong>${escapeHtml(metricTitle)}</strong>
+            </div>
+            <button type="button" class="danger-ghost" data-role="remove">删除</button>
+          </div>
+          <div class="picker-tag-list">
+            <span class="picker-tag">${escapeHtml(fieldLabel)}</span>
+            <span class="picker-tag">${escapeHtml(aggLabel)}</span>
+          </div>
+          <div class="metric-row-grid">
+            <label>
+              <span>字段</span>
+              <select data-role="field">
+                <option value="*">记录数 (*)</option>
+                ${numericFields.map(([field, meta]) => `<option value="${field}" ${metric.field === field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("")}
+              </select>
+            </label>
+            <label>
+              <span>统计方式</span>
+              <select data-role="agg">
+                ${aggItems.map((item) => `<option value="${item.key}" ${metric.agg === item.key ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+              </select>
+            </label>
+            <label>
+              <span>显示名称</span>
+              <input data-role="label" value="${escapeHtml(metric.label || "")}" placeholder="不填则跟随字段名称" />
+            </label>
+          </div>
         </div>
       `;
     }
@@ -2208,43 +3022,112 @@
       });
     }
 
+    function renderDateFilterEditor() {
+      const draft = state.editor.draft;
+      if (!draft) return;
+      const dateFilter = normalizeDateFilterConfig(draft.config?.date_filter || {});
+      draft.config.date_filter = dateFilter;
+      el.dateFilterEditor.innerHTML = `
+        <div class="date-filter-grid">
+          <label class="date-filter-mode">
+            <span>日期模式</span>
+            <select id="dateFilterMode">
+              <option value="follow_page" ${dateFilter.mode === "follow_page" ? "selected" : ""}>跟随页面业务日期</option>
+              <option value="single" ${dateFilter.mode === "single" ? "selected" : ""}>指定单日</option>
+              <option value="range" ${dateFilter.mode === "range" ? "selected" : ""}>指定日期区间</option>
+              <option value="all" ${dateFilter.mode === "all" ? "selected" : ""}>全部日期</option>
+            </select>
+          </label>
+          <label class="date-filter-single ${dateFilter.mode === "single" ? "" : "hidden"}">
+            <span>指定日期</span>
+            <input id="dateFilterSingle" type="date" value="${escapeHtml(dateFilter.date)}" />
+          </label>
+          <label class="date-filter-note ${dateFilter.mode === "single" ? "" : "hidden"}">
+            <span>当前说明</span>
+            <input type="text" value="仅统计指定日期的数据" disabled />
+          </label>
+          <label class="${dateFilter.mode === "range" ? "" : "hidden"}">
+            <span>开始日期</span>
+            <input id="dateFilterStart" type="date" value="${escapeHtml(dateFilter.start_date)}" />
+          </label>
+          <label class="${dateFilter.mode === "range" ? "" : "hidden"}">
+            <span>结束日期</span>
+            <input id="dateFilterEnd" type="date" value="${escapeHtml(dateFilter.end_date)}" />
+          </label>
+          <label class="date-filter-note">
+            <span>说明</span>
+            <input
+              type="text"
+              value="${escapeHtml(
+                dateFilter.mode === "follow_page"
+                  ? "图表跟随页面顶部的业务日期"
+                  : dateFilter.mode === "single"
+                    ? "图表固定查询某一天"
+                    : dateFilter.mode === "range"
+                      ? "图表固定查询一段时间"
+                      : "图表不限制日期"
+              )}"
+              disabled
+            />
+          </label>
+        </div>
+      `;
+
+      const modeInput = document.getElementById("dateFilterMode");
+      const singleInput = document.getElementById("dateFilterSingle");
+      const startInput = document.getElementById("dateFilterStart");
+      const endInput = document.getElementById("dateFilterEnd");
+
+      modeInput?.addEventListener("change", () => {
+        draft.config.date_filter = normalizeDateFilterConfig({
+          ...dateFilter,
+          mode: modeInput.value,
+          date: singleInput?.value || dateFilter.date,
+          start_date: startInput?.value || dateFilter.start_date,
+          end_date: endInput?.value || dateFilter.end_date,
+        });
+        renderDateFilterEditor();
+        state.filterOptionsCache = {};
+        state.filterOptionsPending = {};
+        renderFilterRows();
+      });
+      singleInput?.addEventListener("change", () => {
+        draft.config.date_filter = normalizeDateFilterConfig({ ...dateFilter, date: singleInput.value });
+        state.filterOptionsCache = {};
+        state.filterOptionsPending = {};
+        renderDateFilterEditor();
+        renderFilterRows();
+      });
+      startInput?.addEventListener("change", () => {
+        draft.config.date_filter = normalizeDateFilterConfig({
+          ...dateFilter,
+          start_date: startInput.value,
+          end_date: endInput?.value || dateFilter.end_date,
+        });
+        state.filterOptionsCache = {};
+        state.filterOptionsPending = {};
+        renderDateFilterEditor();
+        renderFilterRows();
+      });
+      endInput?.addEventListener("change", () => {
+        draft.config.date_filter = normalizeDateFilterConfig({
+          ...dateFilter,
+          start_date: startInput?.value || dateFilter.start_date,
+          end_date: endInput.value,
+        });
+        state.filterOptionsCache = {};
+        state.filterOptionsPending = {};
+        renderDateFilterEditor();
+        renderFilterRows();
+      });
+    }
+
     function renderSortOptions() {
       const draft = state.editor.draft;
       const sortItems = sortOptionsForDraft(draft);
       const current = draft.config.sort[0] || { field: sortItems[0]?.value || "metric_0", direction: "desc" };
       el.sortField.innerHTML = sortItems.map((item) => `<option value="${item.value}" ${item.value === current.field ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
       el.sortDirection.value = current.direction || "desc";
-    }
-
-    function renderFilterRows() {
-      const draft = state.editor.draft;
-      el.filterRows.innerHTML = "";
-      draft.config.filters.forEach((item, index) => {
-        const row = document.createElement("div");
-        row.className = "item-row filter";
-        const fieldOptions = datasetFields(draft.dataset, (meta) => meta.filterable).map(([field, meta]) => ({ value: field, label: meta.label }));
-        row.innerHTML = `
-          <div class="helper">${escapeHtml(state.meta.dataset_map[draft.dataset] || draft.dataset)}</div>
-          <select data-role="field">${fieldOptions.map((option) => `<option value="${option.value}" ${option.value === item.field ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
-          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
-          <input data-role="value" value="${escapeHtml(Array.isArray(item.value) ? item.value.join(",") : (item.value ?? ""))}" placeholder="输入筛选值" />
-          <button type="button" class="danger-ghost" data-role="remove">删除</button>
-        `;
-        const field = row.querySelector("[data-role=field]");
-        const op = row.querySelector("[data-role=op]");
-        const value = row.querySelector("[data-role=value]");
-        row.querySelector("[data-role=remove]").addEventListener("click", () => {
-          draft.config.filters.splice(index, 1);
-          renderFilterRows();
-        });
-        field.addEventListener("change", () => { item.field = field.value; });
-        op.addEventListener("change", () => { item.op = op.value; });
-        value.addEventListener("input", () => { item.value = value.value; });
-        el.filterRows.appendChild(row);
-      });
-      if (!draft.config.filters.length) {
-        el.filterRows.innerHTML = `<div class="empty">当前组件没有额外筛选。</div>`;
-      }
     }
 
     function renderLayoutCards() {
@@ -2286,8 +3169,10 @@
       renderWidgetTypeCards();
       renderDatasetCards();
       renderDimensionTokens();
+      renderSeriesFieldEditor();
       renderMetricRows();
       renderSortOptions();
+      renderDateFilterEditor();
       renderFilterRows();
       renderLayoutCards();
     }
@@ -2326,6 +3211,8 @@
       const draft = state.editor.draft;
       draft.title = el.editTitle.value.trim() || (state.meta.widget_type_map[draft.widget_type] || "新图表");
       draft.config.text_content = el.editTextContent.value || "";
+      draft.config.date_filter = normalizeDateFilterConfig(draft.config.date_filter || {});
+      draft.config.series_field = widgetSupportsSeriesField(draft.widget_type) ? (draft.config.series_field || "") : "";
       draft.config.limit = Math.max(1, Math.min(500, Number(el.editLimit.value || 20)));
       draft.config.sort = el.sortField.value
         ? [{ field: el.sortField.value, direction: el.sortDirection.value || "desc" }]
@@ -2569,43 +3456,6 @@
       }
     }
 
-    function renderGlobalFilterEditor() {
-      el.globalFilterRows.innerHTML = "";
-      state.editingGlobalFilters.forEach((item, index) => {
-        const row = document.createElement("div");
-        row.className = "item-row filter";
-        const datasetOptions = state.meta.datasets.map((dataset) => `<option value="${dataset.key}" ${dataset.key === item.dataset ? "selected" : ""}>${escapeHtml(dataset.label)}</option>`).join("");
-        const fieldOptions = datasetFields(item.dataset, (meta) => meta.filterable).map(([field, meta]) => `<option value="${field}" ${field === item.field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("");
-        row.innerHTML = `
-          <select data-role="dataset">${datasetOptions}</select>
-          <select data-role="field">${fieldOptions}</select>
-          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
-          <input data-role="value" value="${escapeHtml(Array.isArray(item.value) ? item.value.join(",") : (item.value ?? ""))}" placeholder="输入筛选值" />
-          <button type="button" class="danger-ghost" data-role="remove">删除</button>
-        `;
-        const dataset = row.querySelector("[data-role=dataset]");
-        const field = row.querySelector("[data-role=field]");
-        const op = row.querySelector("[data-role=op]");
-        const value = row.querySelector("[data-role=value]");
-        dataset.addEventListener("change", () => {
-          item.dataset = dataset.value;
-          item.field = datasetFields(item.dataset, (meta) => meta.filterable)[0]?.[0] || "";
-          renderGlobalFilterEditor();
-        });
-        field.addEventListener("change", () => { item.field = field.value; });
-        op.addEventListener("change", () => { item.op = op.value; });
-        value.addEventListener("input", () => { item.value = value.value; });
-        row.querySelector("[data-role=remove]").addEventListener("click", () => {
-          state.editingGlobalFilters.splice(index, 1);
-          renderGlobalFilterEditor();
-        });
-        el.globalFilterRows.appendChild(row);
-      });
-      if (!state.editingGlobalFilters.length) {
-        el.globalFilterRows.innerHTML = `<div class="empty">当前看板没有全局筛选。</div>`;
-      }
-    }
-
     function openFilterModal() {
       state.editingGlobalFilters = JSON.parse(JSON.stringify(state.currentView?.global_filters || []));
       renderGlobalFilterEditor();
@@ -2660,14 +3510,15 @@
       const draft = state.editor.draft;
       el.filterRows.innerHTML = "";
       draft.config.filters.forEach((item, index) => {
-        resetFilterValue(item);
+        resetFilterValue(item, draft.dataset);
         const row = document.createElement("div");
         row.className = "item-row filter";
         const fieldOptions = datasetFields(draft.dataset, (meta) => meta.filterable).map(([field, meta]) => ({ value: field, label: meta.label }));
+        const operatorOptions = filterOperatorsForField(draft.dataset, item.field);
         row.innerHTML = `
           <div class="helper">${escapeHtml(state.meta.dataset_map[draft.dataset] || draft.dataset)}</div>
           <select data-role="field">${fieldOptions.map((option) => `<option value="${option.value}" ${option.value === item.field ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
-          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          <select data-role="op">${operatorOptions.map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
           ${filterValueMarkup(draft.dataset, item)}
           <button type="button" class="danger-ghost" data-role="remove">删除</button>
         `;
@@ -2679,15 +3530,15 @@
         });
         field.addEventListener("change", () => {
           item.field = field.value;
-          resetFilterValue(item);
+          resetFilterValue(item, draft.dataset);
           renderFilterRows();
         });
         op.addEventListener("change", () => {
           item.op = op.value;
-          resetFilterValue(item);
+          resetFilterValue(item, draft.dataset);
           renderFilterRows();
         });
-        bindFilterValueInputs(row, item);
+        bindFilterValueInputs(row, item, renderFilterRows);
         el.filterRows.appendChild(row);
       });
       if (!draft.config.filters.length) {
@@ -2698,15 +3549,16 @@
     function renderGlobalFilterEditor() {
       el.globalFilterRows.innerHTML = "";
       state.editingGlobalFilters.forEach((item, index) => {
-        resetFilterValue(item);
+        resetFilterValue(item, item.dataset);
         const row = document.createElement("div");
         row.className = "item-row filter";
         const datasetOptions = state.meta.datasets.map((dataset) => `<option value="${dataset.key}" ${dataset.key === item.dataset ? "selected" : ""}>${escapeHtml(dataset.label)}</option>`).join("");
         const fieldOptions = datasetFields(item.dataset, (meta) => meta.filterable).map(([field, meta]) => `<option value="${field}" ${field === item.field ? "selected" : ""}>${escapeHtml(meta.label)}</option>`).join("");
+        const operatorOptions = filterOperatorsForField(item.dataset, item.field);
         row.innerHTML = `
           <select data-role="dataset">${datasetOptions}</select>
           <select data-role="field">${fieldOptions}</select>
-          <select data-role="op">${filterOperatorOptions().map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
+          <select data-role="op">${operatorOptions.map((option) => `<option value="${option.key}" ${option.key === item.op ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>
           ${filterValueMarkup(item.dataset, item)}
           <button type="button" class="danger-ghost" data-role="remove">删除</button>
         `;
@@ -2716,20 +3568,20 @@
         dataset.addEventListener("change", () => {
           item.dataset = dataset.value;
           item.field = datasetFields(item.dataset, (meta) => meta.filterable)[0]?.[0] || "";
-          resetFilterValue(item);
+          resetFilterValue(item, item.dataset);
           renderGlobalFilterEditor();
         });
         field.addEventListener("change", () => {
           item.field = field.value;
-          resetFilterValue(item);
+          resetFilterValue(item, item.dataset);
           renderGlobalFilterEditor();
         });
         op.addEventListener("change", () => {
           item.op = op.value;
-          resetFilterValue(item);
+          resetFilterValue(item, item.dataset);
           renderGlobalFilterEditor();
         });
-        bindFilterValueInputs(row, item);
+        bindFilterValueInputs(row, item, renderGlobalFilterEditor);
         row.querySelector("[data-role=remove]").addEventListener("click", () => {
           state.editingGlobalFilters.splice(index, 1);
           renderGlobalFilterEditor();
@@ -2890,6 +3742,10 @@
       window.location.href = ATTENDANCE_PATH;
     }
 
+    function openInventoryMappingEntry() {
+      window.location.href = INVENTORY_MAPPING_PATH;
+    }
+
     async function logout() {
       try {
         const payload = await api(LOGOUT_PATH, { method: "POST" });
@@ -2907,6 +3763,7 @@
       document.getElementById("layoutTemplateBtn").addEventListener("click", openLayoutTemplateModal);
       document.getElementById("exportBtn").addEventListener("click", exportView);
       document.getElementById("attendanceEntryBtn").addEventListener("click", openAttendanceEntry);
+      document.getElementById("inventoryMappingBtn").addEventListener("click", openInventoryMappingEntry);
       document.getElementById("resetLayoutBtn").addEventListener("click", resetLayout);
       document.getElementById("openCreateDrawerBtn").addEventListener("click", () => openCreateDrawer("bar"));
       document.getElementById("logoutBtn").addEventListener("click", logout);
@@ -2924,6 +3781,8 @@
       });
       el.bizDate.addEventListener("change", async () => {
         state.selectedDate = el.bizDate.value || "";
+        if (state.editor.draft) renderFilterRows();
+        if (!el.filterModal.classList.contains("hidden")) renderGlobalFilterEditor();
         await loadViewDetail(state.currentViewId);
       });
       el.drawerTabs.addEventListener("click", (event) => {
@@ -2935,9 +3794,24 @@
         renderMetricRows();
         renderSortOptions();
       });
+      document.getElementById("addDimensionBtn").addEventListener("click", () => {
+        const groupableFields = datasetFields(state.editor.draft.dataset, (meta) => meta.groupable);
+        const nextField = groupableFields.find(([field]) => !state.editor.draft.config.dimensions.includes(field))?.[0];
+        if (!nextField) {
+          toast("当前数据源没有更多可用的分组字段了");
+          return;
+        }
+        state.editor.draft.config.dimensions.push(nextField);
+        renderDimensionTokens();
+        renderSortOptions();
+      });
       document.getElementById("addFilterBtn").addEventListener("click", () => {
         const field = datasetFields(state.editor.draft.dataset, (meta) => meta.filterable)[0]?.[0] || "";
-        state.editor.draft.config.filters.push({ field, op: "eq", value: "" });
+        state.editor.draft.config.filters.push({
+          field,
+          op: normalizeFilterOperator(state.editor.draft.dataset, field, "eq"),
+          value: "",
+        });
         renderFilterRows();
       });
       document.getElementById("closeDrawerBtn").addEventListener("click", closeDrawer);
@@ -2948,10 +3822,12 @@
       });
       document.getElementById("closeFilterModalBtn").addEventListener("click", closeFilterModal);
       document.getElementById("addGlobalFilterBtn").addEventListener("click", () => {
+        const defaultDataset = "inventory";
+        const defaultField = datasetFields(defaultDataset, (meta) => meta.filterable)[0]?.[0] || "";
         state.editingGlobalFilters.push({
-          dataset: "inventory",
-          field: datasetFields("inventory", (meta) => meta.filterable)[0]?.[0] || "",
-          op: "eq",
+          dataset: defaultDataset,
+          field: defaultField,
+          op: normalizeFilterOperator(defaultDataset, defaultField, "eq"),
           value: "",
         });
         renderGlobalFilterEditor();

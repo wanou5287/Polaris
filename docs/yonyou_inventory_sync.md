@@ -25,6 +25,22 @@
 - 保留 `qty` 原始正负值，不在落库时拆分退货
 - 保留完整 `raw_json` 原始载荷，便于后续加工表重算口径
 
+3. `bi_inventory_warehouse_map`
+
+- 维护原始仓库到看板展示仓库的映射
+- 只会自动补齐缺失的默认映射，不会覆盖人工维护结果
+
+4. `bi_inventory_status_map`
+
+- 维护 `stock_status_id` 到库存状态中文名称的映射
+- 只会自动补齐缺失的默认映射，不会覆盖人工维护结果
+
+5. `bi_inventory_snapshot_daily_cleaning`
+
+- 基于 `bi_inventory_snapshot_daily` 原始表按日期、仓库、物料、物料状态聚合
+- 仅保留启用仓库映射、启用状态映射且 `current_qty > 0` 的记录
+- 同步库存原始数据后会自动刷新对应日期的清洗结果
+
 ## 配置
 
 复制并修改示例文件：

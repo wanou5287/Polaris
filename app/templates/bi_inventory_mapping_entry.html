@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>库存映射维护</title>
+  <style>
+    :root {
+      --bg: #eef3ec;
+      --panel: rgba(255, 255, 255, 0.94);
+      --line: rgba(15, 23, 42, 0.08);
+      --text: #111827;
+      --sub: #667085;
+      --accent: #1f6dff;
+      --accent-soft: rgba(31, 109, 255, 0.1);
+      --shadow-lg: 0 28px 60px rgba(24, 32, 56, 0.14);
+      --shadow-md: 0 18px 36px rgba(24, 32, 56, 0.08);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(31, 109, 255, 0.12), transparent 26%),
+        radial-gradient(circle at 100% 12%, rgba(18, 183, 106, 0.1), transparent 22%),
+        linear-gradient(180deg, #f5f8f3 0%, var(--bg) 100%);
+    }
+    button, input { font: inherit; }
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: rgba(248, 250, 252, 0.96);
+      color: var(--text);
+      outline: none;
+    }
+    input[type="checkbox"] { width: 18px; height: 18px; }
+    .shell {
+      min-height: 100vh;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .glass {
+      background: var(--panel);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow-md);
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-radius: var(--radius-xl);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #cfe8ff, #87b8ff);
+      color: #1447aa;
+      font-weight: 700;
+    }
+    .brand h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+    .brand p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+    }
+    .pill, .primary, .ghost {
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .pill, .ghost {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+    .primary {
+      color: #fff;
+      background: linear-gradient(180deg, #2c77ff, #1558d8);
+      box-shadow: 0 14px 28px rgba(31, 109, 255, 0.2);
+    }
+    .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(31, 109, 255, 0.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric-card {
+      padding: 16px;
+      border-radius: 18px;
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.78));
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      box-shadow: 0 12px 24px rgba(24, 32, 56, 0.05);
+    }
+    .metric-card strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+    .metric-card span {
+      color: var(--sub);
+      font-size: 12px;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      padding: 18px;
+      border-radius: var(--radius-lg);
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .panel h2 {
+      margin: 0 0 6px;
+      letter-spacing: -0.03em;
+    }
+    .panel p, .helper {
+      margin: 0;
+      color: var(--sub);
+      line-height: 1.7;
+      font-size: 13px;
+    }
+    .table-wrap {
+      overflow: auto;
+      border-radius: 18px;
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      background: rgba(255, 255, 255, 0.76);
+      max-height: 640px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      text-align: left;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: rgba(247, 249, 253, 0.95);
+      color: var(--sub);
+      font-weight: 600;
+    }
+    .table-wrap input[type="text"], .table-wrap input[type="number"] {
+      min-width: 120px;
+    }
+    .cell-check {
+      display: grid;
+      place-items: center;
+    }
+    .cell-remove {
+      color: #d92d20;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(217, 45, 32, 0.18);
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .notice {
+      min-height: 22px;
+      color: #1558d8;
+      font-size: 13px;
+    }
+    .notice.error { color: #d92d20; }
+    .empty {
+      min-height: 180px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      border-radius: 18px;
+      border: 1px dashed rgba(15, 23, 42, 0.12);
+      background: rgba(255, 255, 255, 0.64);
+      color: var(--sub);
+      padding: 18px;
+    }
+    @media (max-width: 1200px) {
+      .workspace, .metric-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .shell { padding: 14px; }
+      .topbar { grid-template-columns: 1fr; }
+      .top-actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar glass">
+      <div class="brand">
+        <div class="brand-mark">映射</div>
+        <div>
+          <h1>库存映射维护</h1>
+          <p>维护库存清洗表的仓库映射和库存状态映射。保存后会自动重算库存清洗表，供看板直接使用。</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="pill" id="backBtn" type="button">返回看板</button>
+        <button class="pill" id="refreshBtn" type="button">刷新</button>
+        <button class="primary" id="saveBtn" type="button">保存并重算</button>
+        <span class="user-chip" id="currentUserChip"></span>
+        <button class="ghost" id="logoutBtn" type="button">退出</button>
+      </div>
+    </header>
+
+    <section class="metric-grid">
+      <article class="metric-card glass">
+        <span>最新原始库存日期</span>
+        <strong id="latestRawDate">--</strong>
+      </article>
+      <article class="metric-card glass">
+        <span>最新清洗库存日期</span>
+        <strong id="latestCleaningDate">--</strong>
+      </article>
+      <article class="metric-card glass">
+        <span>启用仓库映射数</span>
+        <strong id="warehouseEnabledCount">0</strong>
+      </article>
+      <article class="metric-card glass">
+        <span>启用状态映射数</span>
+        <strong id="statusEnabledCount">0</strong>
+      </article>
+    </section>
+
+    <div class="notice" id="notice"></div>
+
+    <section class="workspace">
+      <section class="panel glass">
+        <div class="panel-head">
+          <div>
+            <h2>仓库映射</h2>
+            <p>建议通过启用/停用来控制是否纳入清洗，避免默认映射在后续初始化时被重新补回。</p>
+          </div>
+          <button class="pill" id="addWarehouseBtn" type="button">新增仓库映射</button>
+        </div>
+        <div class="table-wrap" id="warehouseWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>启用</th>
+                <th>原始仓库</th>
+                <th>清洗后仓库</th>
+                <th>排序</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="warehouseRows"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="warehouseEmpty" hidden>当前没有仓库映射。</div>
+      </section>
+
+      <section class="panel glass">
+        <div class="panel-head">
+          <div>
+            <h2>库存状态映射</h2>
+            <p>库存状态名用于看板展示。未启用的状态不会进入库存清洗表。</p>
+          </div>
+          <button class="pill" id="addStatusBtn" type="button">新增状态映射</button>
+        </div>
+        <div class="table-wrap" id="statusWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>启用</th>
+                <th>状态ID</th>
+                <th>状态名称</th>
+                <th>排序</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="statusRows"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="statusEmpty" hidden>当前没有库存状态映射。</div>
+      </section>
+    </section>
+  </div>
+
+  <script>
+    const CURRENT_USER = __BI_CURRENT_USER_JSON__;
+    const DASHBOARD_PATH = __BI_DASHBOARD_PATH_JSON__;
+    const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
+    const LIST_API = "/financial/bi-dashboard/api/inventory-mappings";
+    const SAVE_API = "/financial/bi-dashboard/api/inventory-mappings";
+
+    const state = {
+      warehouses: [],
+      statuses: [],
+    };
+
+    const el = {
+      currentUserChip: document.getElementById("currentUserChip"),
+      latestRawDate: document.getElementById("latestRawDate"),
+      latestCleaningDate: document.getElementById("latestCleaningDate"),
+      warehouseEnabledCount: document.getElementById("warehouseEnabledCount"),
+      statusEnabledCount: document.getElementById("statusEnabledCount"),
+      warehouseRows: document.getElementById("warehouseRows"),
+      statusRows: document.getElementById("statusRows"),
+      warehouseWrap: document.getElementById("warehouseWrap"),
+      statusWrap: document.getElementById("statusWrap"),
+      warehouseEmpty: document.getElementById("warehouseEmpty"),
+      statusEmpty: document.getElementById("statusEmpty"),
+      notice: document.getElementById("notice"),
+    };
+
+    function toast(message, isError = false) {
+      el.notice.textContent = message || "";
+      el.notice.classList.toggle("error", Boolean(isError));
+    }
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        credentials: "same-origin",
+        ...options,
+      });
+      if (response.status === 401) {
+        window.location.href = DASHBOARD_PATH;
+        throw new Error("登录已失效");
+      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `请求失败：${response.status}`);
+      }
+      return payload;
+    }
+
+    function makeWarehouseRow() {
+      return {
+        id: 0,
+        source_warehouse_name: "",
+        warehouse_name_clean: "",
+        sort_order: (state.warehouses.length + 1) * 10,
+        is_enabled: true,
+      };
+    }
+
+    function makeStatusRow() {
+      return {
+        id: 0,
+        stock_status_id: "",
+        stock_status_name: "",
+        sort_order: (state.statuses.length + 1) * 10,
+        is_enabled: true,
+      };
+    }
+
+    function bindWarehouseInputs(rowEl, row, index) {
+      rowEl.querySelector("[data-role=enabled]").addEventListener("change", (event) => {
+        row.is_enabled = event.target.checked;
+        renderSummary();
+      });
+      rowEl.querySelector("[data-role=source]").addEventListener("input", (event) => {
+        row.source_warehouse_name = event.target.value;
+      });
+      rowEl.querySelector("[data-role=clean]").addEventListener("input", (event) => {
+        row.warehouse_name_clean = event.target.value;
+      });
+      rowEl.querySelector("[data-role=sort]").addEventListener("input", (event) => {
+        row.sort_order = Number(event.target.value || 0);
+      });
+      rowEl.querySelector("[data-role=remove]").addEventListener("click", () => {
+        state.warehouses.splice(index, 1);
+        renderWarehouses();
+        renderSummary();
+      });
+    }
+
+    function bindStatusInputs(rowEl, row, index) {
+      rowEl.querySelector("[data-role=enabled]").addEventListener("change", (event) => {
+        row.is_enabled = event.target.checked;
+        renderSummary();
+      });
+      rowEl.querySelector("[data-role=source]").addEventListener("input", (event) => {
+        row.stock_status_id = event.target.value;
+      });
+      rowEl.querySelector("[data-role=clean]").addEventListener("input", (event) => {
+        row.stock_status_name = event.target.value;
+      });
+      rowEl.querySelector("[data-role=sort]").addEventListener("input", (event) => {
+        row.sort_order = Number(event.target.value || 0);
+      });
+      rowEl.querySelector("[data-role=remove]").addEventListener("click", () => {
+        state.statuses.splice(index, 1);
+        renderStatuses();
+        renderSummary();
+      });
+    }
+
+    function renderWarehouses() {
+      el.warehouseRows.innerHTML = "";
+      if (!state.warehouses.length) {
+        el.warehouseWrap.hidden = true;
+        el.warehouseEmpty.hidden = false;
+        return;
+      }
+      el.warehouseWrap.hidden = false;
+      el.warehouseEmpty.hidden = true;
+      state.warehouses.forEach((row, index) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="cell-check"><input data-role="enabled" type="checkbox" ${row.is_enabled ? "checked" : ""} /></td>
+          <td><input data-role="source" type="text" value="${String(row.source_warehouse_name || "").replaceAll('"', "&quot;")}" placeholder="例如 精准学良品仓" /></td>
+          <td><input data-role="clean" type="text" value="${String(row.warehouse_name_clean || "").replaceAll('"', "&quot;")}" placeholder="例如 良品仓" /></td>
+          <td><input data-role="sort" type="number" min="0" step="1" value="${Number(row.sort_order || 0)}" /></td>
+          <td><button class="cell-remove" data-role="remove" type="button">移除</button></td>
+        `;
+        bindWarehouseInputs(tr, row, index);
+        el.warehouseRows.appendChild(tr);
+      });
+    }
+
+    function renderStatuses() {
+      el.statusRows.innerHTML = "";
+      if (!state.statuses.length) {
+        el.statusWrap.hidden = true;
+        el.statusEmpty.hidden = false;
+        return;
+      }
+      el.statusWrap.hidden = false;
+      el.statusEmpty.hidden = true;
+      state.statuses.forEach((row, index) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="cell-check"><input data-role="enabled" type="checkbox" ${row.is_enabled ? "checked" : ""} /></td>
+          <td><input data-role="source" type="text" value="${String(row.stock_status_id || "").replaceAll('"', "&quot;")}" placeholder="例如 2180202022719455294" /></td>
+          <td><input data-role="clean" type="text" value="${String(row.stock_status_name || "").replaceAll('"', "&quot;")}" placeholder="例如 采购良品" /></td>
+          <td><input data-role="sort" type="number" min="0" step="1" value="${Number(row.sort_order || 0)}" /></td>
+          <td><button class="cell-remove" data-role="remove" type="button">移除</button></td>
+        `;
+        bindStatusInputs(tr, row, index);
+        el.statusRows.appendChild(tr);
+      });
+    }
+
+    function renderSummary() {
+      el.warehouseEnabledCount.textContent = String(state.warehouses.filter((item) => item.is_enabled).length);
+      el.statusEnabledCount.textContent = String(state.statuses.filter((item) => item.is_enabled).length);
+    }
+
+    async function loadMappings() {
+      const payload = await api(LIST_API);
+      state.warehouses = (payload.warehouses || []).map((item) => ({ ...item }));
+      state.statuses = (payload.statuses || []).map((item) => ({ ...item }));
+      el.latestRawDate.textContent = payload.latest_raw_date || "--";
+      el.latestCleaningDate.textContent = payload.latest_cleaning_date || "--";
+      renderWarehouses();
+      renderStatuses();
+      renderSummary();
+    }
+
+    async function saveMappings() {
+      try {
+        const payload = {
+          warehouses: state.warehouses,
+          statuses: state.statuses,
+        };
+        const result = await api(SAVE_API, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        toast(`已保存并重算完成，共刷新 ${result.refreshed_rows || 0} 行库存清洗数据`);
+        await loadMappings();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    }
+
+    async function logout() {
+      try {
+        const payload = await api(LOGOUT_PATH, { method: "POST" });
+        window.location.href = payload.redirect_to || `${DASHBOARD_PATH}/login`;
+      } catch (error) {
+        toast(error.message, true);
+      }
+    }
+
+    function bindEvents() {
+      document.getElementById("backBtn").addEventListener("click", () => { window.location.href = DASHBOARD_PATH; });
+      document.getElementById("refreshBtn").addEventListener("click", async () => {
+        try {
+          await loadMappings();
+          toast("映射数据已刷新");
+        } catch (error) {
+          toast(error.message, true);
+        }
+      });
+      document.getElementById("saveBtn").addEventListener("click", saveMappings);
+      document.getElementById("addWarehouseBtn").addEventListener("click", () => {
+        state.warehouses.push(makeWarehouseRow());
+        renderWarehouses();
+        renderSummary();
+      });
+      document.getElementById("addStatusBtn").addEventListener("click", () => {
+        state.statuses.push(makeStatusRow());
+        renderStatuses();
+        renderSummary();
+      });
+      document.getElementById("logoutBtn").addEventListener("click", logout);
+    }
+
+    async function bootstrap() {
+      el.currentUserChip.textContent = CURRENT_USER;
+      bindEvents();
+      try {
+        await loadMappings();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>

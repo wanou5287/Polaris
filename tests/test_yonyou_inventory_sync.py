@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.yonyou_inventory_sync import (
+    build_inventory_cleaning_rows,
     build_sales_cleaning_rows,
     quote_mysql_url,
     transform_inventory_rows,
@@ -169,6 +170,72 @@ class YonyouInventorySyncTests(unittest.TestCase):
         self.assertEqual(row["return_unpack_efficiency"], Decimal("1.5"))
         self.assertEqual(row["total_return_qty"], Decimal("6"))
         self.assertEqual(row["total_sales_qty"], Decimal("16"))
+
+    def test_build_inventory_cleaning_rows_filters_and_aggregates_expected_dimensions(self) -> None:
+        raw_rows = [
+            {
+                "snapshot_date": date(2026, 3, 13),
+                "warehouse_name": "精准学良品仓",
+                "material_code": "M-001",
+                "material_name": "整机A",
+                "stock_status_id": "2180202022719455294",
+                "current_qty": Decimal("10"),
+            },
+            {
+                "snapshot_date": date(2026, 3, 13),
+                "warehouse_name": "精准学良品仓",
+                "material_code": "M-001",
+                "material_name": "整机A",
+                "stock_status_id": "2180202022719455294",
+                "current_qty": Decimal("5"),
+            },
+            {
+                "snapshot_date": date(2026, 3, 13),
+                "warehouse_name": "精准学良品仓",
+                "material_code": "M-001",
+                "material_name": "整机A",
+                "stock_status_id": "0",
+                "current_qty": Decimal("8"),
+            },
+            {
+                "snapshot_date": date(2026, 3, 13),
+                "warehouse_name": "行政资产仓",
+                "material_code": "M-001",
+                "material_name": "整机A",
+                "stock_status_id": "2180202022719455294",
+                "current_qty": Decimal("7"),
+            },
+            {
+                "snapshot_date": date(2026, 3, 13),
+                "warehouse_name": "精准学销退仓",
+                "material_code": "M-002",
+                "material_name": "整机B",
+                "stock_status_id": "2180202022719455297",
+                "current_qty": Decimal("0"),
+            },
+        ]
+
+        result = build_inventory_cleaning_rows(
+            raw_rows,
+            warehouse_map={
+                "精准学良品仓": "良品仓",
+                "精准学销退仓": "销退仓",
+            },
+            status_map={
+                "2180202022719455294": "采购良品",
+                "2180202022719455297": "不良品",
+            },
+        )
+
+        self.assertEqual(len(result), 1)
+        row = result[0]
+        self.assertEqual(row["snapshot_date"], date(2026, 3, 13))
+        self.assertEqual(row["warehouse_name_clean"], "良品仓")
+        self.assertEqual(row["material_code"], "M-001")
+        self.assertEqual(row["material_name"], "整机A")
+        self.assertEqual(row["stock_status_name"], "采购良品")
+        self.assertEqual(row["qty"], Decimal("15"))
+        self.assertEqual(row["source_row_count"], 2)
 
     def test_quote_mysql_url_handles_at_symbol_in_password(self) -> None:
         raw_url = "mysql+pymysql://finvis_etl:LocalDb@Pass!@127.0.0.1:3306/bi_center?charset=utf8mb4"

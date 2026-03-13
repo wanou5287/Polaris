@@ -21,6 +21,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from sqlalchemy import create_engine, text
 
 from scripts.yonyou_inventory_sync import (
+    refresh_inventory_cleaning,
+    ensure_inventory_processing_schema,
     ensure_sales_processing_schema,
     quote_mysql_url,
     save_return_unpack_attendance,
@@ -37,11 +39,14 @@ DASHBOARD_SESSION_MAX_AGE = 60 * 60 * 24 * 14
 DASHBOARD_DEFAULT_PATH = "/financial/bi-dashboard"
 PREFERRED_SALES_VIEW_NAME = "销售/退货看板"
 PREFERRED_SALES_VIEW_DESCRIPTION = "基于销售清洗表预置的销售与退货经营看板"
+PREFERRED_INVENTORY_VIEW_NAME = "库存清洗看板"
+PREFERRED_INVENTORY_VIEW_DESCRIPTION = "基于库存清洗表预置的库存结构与明细看板"
 
 WIDGET_TYPES: Dict[str, str] = {
     "metric": "指标卡",
     "bar": "柱状图",
     "stacked_bar": "堆积柱状图",
+    "stacked_hbar": "堆积条形图",
     "line": "折线图",
     "pie": "饼图",
     "table": "表格",
@@ -99,6 +104,20 @@ DATASETS: Dict[str, Dict[str, Any]] = {
             "available_qty": {"label": "可用库存", "type": "number", "numeric": True, "filterable": True, "sortable": True},
             "plan_available_qty": {"label": "计划可用库存", "type": "number", "numeric": True, "filterable": True, "sortable": True},
             "incoming_notice_qty": {"label": "在途通知数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+        },
+    },
+    "inventory_cleaning": {
+        "label": "库存清洗明细",
+        "table": "bi_inventory_snapshot_daily_cleaning",
+        "date_col": "snapshot_date",
+        "fields": {
+            "snapshot_date": {"label": "日期", "type": "date", "groupable": True, "filterable": True, "sortable": True},
+            "warehouse_name_clean": {"label": "仓库", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "material_code": {"label": "物料编码", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "material_name": {"label": "物料名称", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "stock_status_name": {"label": "物料状态", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "qty": {"label": "数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "source_row_count": {"label": "原始聚合行数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
         },
     },
     "sales": {
@@ -335,6 +354,66 @@ def parse_decimal_or_raise(raw_value: Any, field_name: str) -> Decimal:
     return value
 
 
+def parse_int_or_default(raw_value: Any, default: int = 0) -> int:
+    try:
+        return int(str(raw_value).strip())
+    except Exception:
+        return default
+
+
+def normalize_inventory_mapping_payload(
+    rows: Sequence[Dict[str, Any]] | None,
+    *,
+    mapping_type: str,
+) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(rows or []):
+        if not isinstance(item, dict):
+            continue
+        normalized_item = {
+            "id": parse_int_or_default(item.get("id"), 0),
+            "sort_order": max(0, parse_int_or_default(item.get("sort_order"), (index + 1) * 10)),
+            "is_enabled": 1 if bool(item.get("is_enabled", True)) else 0,
+        }
+        if mapping_type == "warehouse":
+            source_name = str(item.get("source_warehouse_name") or "").strip()
+            clean_name = str(item.get("warehouse_name_clean") or "").strip()
+            if not source_name and not clean_name:
+                continue
+            if not source_name or not clean_name:
+                raise HTTPException(status_code=400, detail="仓库映射的原始仓库和清洗后仓库都不能为空")
+            if source_name in seen:
+                raise HTTPException(status_code=400, detail=f"仓库映射重复：{source_name}")
+            seen.add(source_name)
+            normalized_item.update(
+                {
+                    "source_warehouse_name": source_name,
+                    "warehouse_name_clean": clean_name,
+                }
+            )
+        elif mapping_type == "status":
+            stock_status_id = str(item.get("stock_status_id") or "").strip()
+            stock_status_name = str(item.get("stock_status_name") or "").strip()
+            if not stock_status_id and not stock_status_name:
+                continue
+            if not stock_status_id or not stock_status_name:
+                raise HTTPException(status_code=400, detail="库存状态映射的状态ID和状态名称都不能为空")
+            if stock_status_id in seen:
+                raise HTTPException(status_code=400, detail=f"库存状态映射重复：{stock_status_id}")
+            seen.add(stock_status_id)
+            normalized_item.update(
+                {
+                    "stock_status_id": stock_status_id,
+                    "stock_status_name": stock_status_name,
+                }
+            )
+        else:
+            raise ValueError(mapping_type)
+        normalized.append(normalized_item)
+    return normalized
+
+
 def metric_label(dataset: str, field: str, agg: str) -> str:
     if agg == "count" and field == "*":
         return AGGREGATION_LABELS["count"]
@@ -351,17 +430,31 @@ def default_dimensions(widget_type: str) -> List[str]:
     return [] if widget_type in {"metric", "text"} else ["material_name"]
 
 
+def supports_series_field(widget_type: str) -> bool:
+    return widget_type in {"bar", "stacked_bar", "stacked_hbar", "line"}
+
+
+def default_series_field(dataset: str, widget_type: str) -> str:
+    if not supports_series_field(widget_type):
+        return ""
+    if dataset == "inventory_cleaning" and widget_type in {"stacked_bar", "stacked_hbar"}:
+        return "stock_status_name" if "stock_status_name" in DATASETS[dataset]["fields"] else ""
+    return ""
+
+
 def default_metrics(dataset: str, widget_type: str) -> List[Dict[str, Any]]:
     if dataset == "sales":
         return [{"field": "qty", "agg": "sum", "label": "原始数量"}]
+    if dataset == "inventory_cleaning":
+        return [{"field": "qty", "agg": "sum", "label": "数量"}]
     if dataset == "sales_cleaning":
-        if widget_type == "stacked_bar":
+        if widget_type in {"stacked_bar", "stacked_hbar"}:
             return [
                 {"field": "sales_out_xiaoshan", "agg": "sum", "label": "销售出库（萧山云仓）"},
                 {"field": "sales_out_yuhang", "agg": "sum", "label": "销售出库（余杭云仓）"},
             ]
         return [{"field": "total_sales_qty", "agg": "sum", "label": "当日总销量"}]
-    if widget_type == "stacked_bar":
+    if widget_type in {"stacked_bar", "stacked_hbar"}:
         return [
             {"field": "current_qty", "agg": "sum", "label": "当前库存"},
             {"field": "available_qty", "agg": "sum", "label": "可用库存"},
@@ -389,7 +482,9 @@ def default_widget_config(widget_type: str, dataset: str) -> Dict[str, Any]:
     return {
         "dataset": dataset,
         "dimensions": default_dimensions(widget_type),
+        "series_field": default_series_field(dataset, widget_type),
         "metrics": default_metrics(dataset, widget_type),
+        "date_filter": {"mode": "follow_page", "date": "", "start_date": "", "end_date": ""},
         "filters": [],
         "sort": [{"field": "metric_0", "direction": "desc"}],
         "limit": 20,
@@ -583,7 +678,11 @@ def ensure_preset_sales_view(conn) -> None:
     if widget_count > 0:
         return
 
-    for item in preset_sales_view_widgets():
+    insert_preset_widgets(conn, view_id, preset_sales_view_widgets())
+
+
+def insert_preset_widgets(conn, view_id: int, items: Sequence[Dict[str, Any]]) -> None:
+    for item in items:
         config = normalize_widget_config(item["widget_type"], item["config"])
         layout = normalize_layout(item["layout"])
         conn.execute(
@@ -607,6 +706,202 @@ def ensure_preset_sales_view(conn) -> None:
                 "analysis_text": "",
             },
         )
+
+
+def insert_missing_preset_widgets(conn, view_id: int, items: Sequence[Dict[str, Any]]) -> None:
+    existing_titles = {
+        str(row["title"])
+        for row in conn.execute(
+            text("SELECT title FROM bi_dashboard_widget WHERE view_id = :view_id"),
+            {"view_id": view_id},
+        ).mappings().all()
+    }
+    missing_items = [item for item in items if str(item["title"]) not in existing_titles]
+    if missing_items:
+        insert_preset_widgets(conn, view_id, missing_items)
+
+
+def preset_inventory_view_widgets() -> List[Dict[str, Any]]:
+    dataset = "inventory_cleaning"
+    return [
+        {
+            "title": "当日总库存",
+            "widget_type": "metric",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": [],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "当日总库存"}],
+                "filters": [],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 1,
+            },
+            "layout": {"x": 0, "y": 0, "w": 6, "h": 4},
+            "sort_order": 0,
+        },
+        {
+            "title": "良品仓库存",
+            "widget_type": "metric",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": [],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "良品仓库存"}],
+                "filters": [{"field": "warehouse_name_clean", "op": "eq", "value": "良品仓"}],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 1,
+            },
+            "layout": {"x": 6, "y": 0, "w": 6, "h": 4},
+            "sort_order": 10,
+        },
+        {
+            "title": "不良品仓库存",
+            "widget_type": "metric",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": [],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "不良品仓库存"}],
+                "filters": [{"field": "warehouse_name_clean", "op": "eq", "value": "不良品仓"}],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 1,
+            },
+            "layout": {"x": 12, "y": 0, "w": 6, "h": 4},
+            "sort_order": 20,
+        },
+        {
+            "title": "销退仓库存",
+            "widget_type": "metric",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": [],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "销退仓库存"}],
+                "filters": [{"field": "warehouse_name_clean", "op": "eq", "value": "销退仓"}],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 1,
+            },
+            "layout": {"x": 18, "y": 0, "w": 6, "h": 4},
+            "sort_order": 30,
+        },
+        {
+            "title": "库存趋势",
+            "widget_type": "line",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": ["snapshot_date"],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "库存数量"}],
+                "filters": [],
+                "sort": [{"field": "snapshot_date", "direction": "asc"}],
+                "limit": 31,
+            },
+            "layout": {"x": 0, "y": 4, "w": 12, "h": 6},
+            "sort_order": 100,
+        },
+        {
+            "title": "库存状态分布",
+            "widget_type": "pie",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": ["stock_status_name"],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "库存数量"}],
+                "filters": [],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 12,
+            },
+            "layout": {"x": 12, "y": 4, "w": 12, "h": 6},
+            "sort_order": 110,
+        },
+        {
+            "title": "仓库库存分布",
+            "widget_type": "bar",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": ["warehouse_name_clean"],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "库存数量"}],
+                "filters": [],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 10,
+            },
+            "layout": {"x": 0, "y": 10, "w": 12, "h": 6},
+            "sort_order": 200,
+        },
+        {
+            "title": "高库存物料 TOP15",
+            "widget_type": "ranking",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": ["material_name"],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "库存数量"}],
+                "filters": [],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 15,
+            },
+            "layout": {"x": 12, "y": 10, "w": 12, "h": 6},
+            "sort_order": 210,
+        },
+        {
+            "title": "翻新物料库存分布",
+            "widget_type": "stacked_hbar",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": ["material_name"],
+                "series_field": "stock_status_name",
+                "metrics": [{"field": "qty", "agg": "sum", "label": "库存数量"}],
+                "filters": [{"field": "stock_status_name", "op": "in", "value": ["翻新良品", "翻新不良品", "不良品", "采购良品"]}],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 12,
+            },
+            "layout": {"x": 0, "y": 16, "w": 24, "h": 7},
+            "sort_order": 250,
+        },
+        {
+            "title": "库存清洗明细",
+            "widget_type": "table",
+            "dataset": dataset,
+            "config": {
+                "dataset": dataset,
+                "dimensions": ["warehouse_name_clean", "material_code", "material_name", "stock_status_name"],
+                "metrics": [{"field": "qty", "agg": "sum", "label": "库存数量"}],
+                "filters": [],
+                "sort": [{"field": "metric_0", "direction": "desc"}],
+                "limit": 30,
+            },
+            "layout": {"x": 0, "y": 23, "w": 24, "h": 8},
+            "sort_order": 300,
+        },
+    ]
+
+
+def ensure_preset_inventory_view(conn) -> None:
+    row = conn.execute(
+        text("SELECT id FROM bi_dashboard_view WHERE name = :name LIMIT 1"),
+        {"name": PREFERRED_INVENTORY_VIEW_NAME},
+    ).mappings().first()
+    if row:
+        view_id = int(row["id"])
+    else:
+        result = conn.execute(
+            text(
+                """
+                INSERT INTO bi_dashboard_view(name, description, global_filters_json)
+                VALUES (:name, :description, :global_filters_json)
+                """
+            ),
+            {
+                "name": PREFERRED_INVENTORY_VIEW_NAME,
+                "description": PREFERRED_INVENTORY_VIEW_DESCRIPTION,
+                "global_filters_json": "[]",
+            },
+        )
+        view_id = int(result.lastrowid)
+
+    insert_missing_preset_widgets(conn, view_id, preset_inventory_view_widgets())
 
 
 def normalize_layout(raw_layout: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -717,6 +1012,33 @@ def normalize_widget_filters(dataset: str, raw_filters: Sequence[Dict[str, Any]]
     return normalized
 
 
+def normalize_widget_date_filter(dataset: str, raw_filter: Dict[str, Any] | None) -> Dict[str, Any]:
+    raw = raw_filter if isinstance(raw_filter, dict) else {}
+    mode = str(raw.get("mode") or "follow_page").lower()
+    if mode not in {"follow_page", "single", "range", "all"}:
+        mode = "follow_page"
+
+    date_value = parse_date_or_none(str(raw.get("date") or ""))
+    start_date = parse_date_or_none(str(raw.get("start_date") or ""))
+    end_date = parse_date_or_none(str(raw.get("end_date") or ""))
+
+    if start_date and end_date and start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    if mode == "single" and date_value is None:
+        mode = "follow_page"
+    if mode == "range" and start_date is None and end_date is None:
+        mode = "follow_page"
+
+    return {
+        "mode": mode,
+        "date": date_value.isoformat() if date_value else "",
+        "start_date": start_date.isoformat() if start_date else "",
+        "end_date": end_date.isoformat() if end_date else "",
+        "date_col": DATASETS[dataset]["date_col"],
+    }
+
+
 def normalize_global_filters(raw_filters: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
     normalized: List[Dict[str, Any]] = []
     for item in raw_filters or []:
@@ -741,7 +1063,9 @@ def normalize_widget_config(widget_type: str, payload: Dict[str, Any] | None) ->
     config = {
         "dataset": dataset,
         "dimensions": [],
+        "series_field": "",
         "metrics": [],
+        "date_filter": normalize_widget_date_filter(dataset, raw.get("date_filter")),
         "filters": normalize_widget_filters(dataset, raw.get("filters")),
         "sort": [],
         "limit": 20,
@@ -753,6 +1077,17 @@ def normalize_widget_config(widget_type: str, payload: Dict[str, Any] | None) ->
             config["dimensions"].append(dim)
     if widget_type not in {"metric", "text"} and not config["dimensions"]:
         config["dimensions"] = default_dimensions(widget_type)
+
+    series_field = str(raw.get("series_field") or "").strip()
+    if (
+        supports_series_field(widget_type)
+        and series_field in fields
+        and fields[series_field].get("groupable", False)
+        and series_field not in config["dimensions"]
+    ):
+        config["series_field"] = series_field
+    elif supports_series_field(widget_type):
+        config["series_field"] = default_series_field(dataset, widget_type)
 
     for item in raw.get("metrics") or []:
         if not isinstance(item, dict):
@@ -811,6 +1146,7 @@ def ensure_schema() -> None:
         return
     current_engine = get_engine()
     ensure_sales_processing_schema(current_engine)
+    ensure_inventory_processing_schema(current_engine)
     with current_engine.begin() as conn:
         conn.execute(
             text(
@@ -881,6 +1217,7 @@ def ensure_schema() -> None:
                 },
             )
         ensure_preset_sales_view(conn)
+        ensure_preset_inventory_view(conn)
     schema_ready = True
 
 
@@ -981,6 +1318,65 @@ def latest_date(conn, dataset: str) -> date | None:
     return conn.execute(text(f"SELECT MAX(`{ds['date_col']}`) FROM `{ds['table']}`")).scalar()
 
 
+def query_filter_options(
+    conn,
+    *,
+    dataset: str,
+    field: str,
+    selected_date: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    keyword: str | None = None,
+    limit: int = 200,
+) -> Tuple[List[Dict[str, Any]], str]:
+    ds = DATASETS[dataset]
+    field_meta = ds["fields"][field]
+    keyword_text = str(keyword or "").strip()
+    base_params: Dict[str, Any] = {"_limit": max(1, min(limit, 500))}
+    base_clauses: List[str] = [f"`{field}` IS NOT NULL"]
+
+    if field_meta.get("type") == "string":
+        base_clauses.append(f"TRIM(CAST(`{field}` AS CHAR)) <> ''")
+    if keyword_text:
+        base_clauses.append(f"CAST(`{field}` AS CHAR) LIKE :keyword")
+        base_params["keyword"] = f"%{keyword_text}%"
+    if start_date is not None:
+        base_clauses.append(f"`{ds['date_col']}` >= :start_date")
+        base_params["start_date"] = start_date
+    if end_date is not None:
+        base_clauses.append(f"`{ds['date_col']}` <= :end_date")
+        base_params["end_date"] = end_date
+
+    def run_query(use_selected_date: bool) -> List[Dict[str, Any]]:
+        clauses = list(base_clauses)
+        params = dict(base_params)
+        if use_selected_date and selected_date is not None and field != ds["date_col"]:
+            clauses.append(f"`{ds['date_col']}` = :selected_date")
+            params["selected_date"] = selected_date
+        sql = (
+            f"SELECT DISTINCT `{field}` AS option_value "
+            f"FROM `{ds['table']}` "
+            f"WHERE {' AND '.join(clauses)} "
+            f"ORDER BY `{field}` "
+            f"LIMIT :_limit"
+        )
+        rows = conn.execute(text(sql), params).fetchall()
+        options: List[Dict[str, Any]] = []
+        for row in rows:
+            raw_value = row[0]
+            plain_value = to_plain(raw_value)
+            if plain_value in (None, ""):
+                continue
+            options.append({"value": plain_value, "label": str(plain_value)})
+        return options
+
+    options = run_query(use_selected_date=True)
+    if options or selected_date is None or field == ds["date_col"] or start_date is not None or end_date is not None:
+        return options, "selected_date"
+
+    return run_query(use_selected_date=False), "all_dates"
+
+
 def return_unpack_attendance_summaries(
     conn,
     *,
@@ -1072,6 +1468,41 @@ def should_apply_target_date(dataset: str, dimensions: List[str], filters: List[
         item.get("field") == date_col and filter_has_value(str(item.get("op") or "eq").lower(), item.get("value"))
         for item in filters
     )
+
+
+def resolve_widget_date_context(
+    conn,
+    *,
+    dataset: str,
+    config: Dict[str, Any],
+    selected_date: date | None,
+) -> Tuple[List[Dict[str, Any]], date | None, Any, str]:
+    date_filter = normalize_widget_date_filter(dataset, config.get("date_filter"))
+    config["date_filter"] = date_filter
+    mode = date_filter["mode"]
+    date_col = DATASETS[dataset]["date_col"]
+
+    if mode == "single" and date_filter["date"]:
+        return ([{"field": date_col, "op": "eq", "value": date_filter["date"]}], None, date_filter["date"], mode)
+
+    if mode == "range":
+        start_value = date_filter["start_date"]
+        end_value = date_filter["end_date"]
+        if start_value and end_value:
+            label = f"{start_value} 至 {end_value}"
+            return ([{"field": date_col, "op": "between", "value": [start_value, end_value]}], None, label, mode)
+        if start_value:
+            label = f"{start_value} 起"
+            return ([{"field": date_col, "op": "gte", "value": start_value}], None, label, mode)
+        if end_value:
+            label = f"截至 {end_value}"
+            return ([{"field": date_col, "op": "lte", "value": end_value}], None, label, mode)
+
+    if mode == "all":
+        return ([], None, "全部日期", mode)
+
+    target_date = selected_date or latest_date(conn, dataset)
+    return ([], target_date, to_plain(target_date), "follow_page")
 
 
 def build_where_sql(dataset: str, filters: List[Dict[str, Any]], target_date: date | None) -> Tuple[str, Dict[str, Any]]:
@@ -1196,53 +1627,137 @@ def apply_sort(rows: List[Dict[str, Any]], sort_config: List[Dict[str, Any]], al
         rows.sort(key=lambda row: (row.get(field) is None, row.get(field)), reverse=reverse)
 
 
+def pivot_rows_by_series(
+    rows: List[Dict[str, Any]],
+    *,
+    dimensions: List[str],
+    metrics: List[Dict[str, Any]],
+    series_field: str,
+    sort_config: List[Dict[str, Any]],
+    limit: int,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    metric_aliases = [f"metric_{idx}" for idx in range(len(metrics))]
+    grouped: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    series_labels: Dict[str, str] = {}
+
+    for raw_row in rows:
+        key = tuple(raw_row.get(dim) for dim in dimensions)
+        holder = grouped.setdefault(
+            key,
+            {
+                **{dim: raw_row.get(dim) for dim in dimensions},
+                **{alias: 0 for alias in metric_aliases},
+                "series_values": {},
+            },
+        )
+        series_value = to_plain(raw_row.get(series_field))
+        series_key = "" if series_value in (None, "") else str(series_value)
+        series_labels.setdefault(series_key, series_key or "未分类")
+        slot = holder["series_values"].setdefault(
+            series_key,
+            {"label": series_labels[series_key], **{alias: 0 for alias in metric_aliases}},
+        )
+        for alias in metric_aliases:
+            numeric = to_number(raw_row.get(alias))
+            if numeric is None:
+                continue
+            slot[alias] = float(slot.get(alias, 0) or 0) + float(numeric)
+            holder[alias] = float(holder.get(alias, 0) or 0) + float(numeric)
+
+    pivoted_rows = list(grouped.values())
+    apply_sort(pivoted_rows, sort_config, dimensions + metric_aliases)
+    limited_rows = pivoted_rows[:limit]
+
+    visible_series_keys: List[str] = []
+    for row in limited_rows:
+        for series_key in row.get("series_values", {}).keys():
+            if series_key not in visible_series_keys:
+                visible_series_keys.append(series_key)
+    visible_series_keys.sort(key=lambda item: series_labels.get(item, item or "未分类"))
+
+    series_groups = [
+        {"key": series_key, "label": series_labels.get(series_key, series_key or "未分类")}
+        for series_key in visible_series_keys
+    ]
+    return limited_rows, series_groups
+
+
 def query_widget_data(conn, widget: Dict[str, Any], selected_date: date | None, global_filters: List[Dict[str, Any]]) -> Dict[str, Any]:
     config = copy.deepcopy(widget["config"])
     dataset = config["dataset"]
     config["filters"] = merge_filters(dataset, config["filters"], global_filters)
-    target_date = selected_date or latest_date(conn, dataset)
+    date_filters, implicit_target_date, target_date, date_filter_scope = resolve_widget_date_context(
+        conn,
+        dataset=dataset,
+        config=config,
+        selected_date=selected_date,
+    )
+    config["filters"].extend(date_filters)
 
     if widget["widget_type"] == "text":
-        return {"target_date": to_plain(target_date), "dimensions": [], "metrics": [], "rows": [], "config": config}
+        return {
+            "target_date": target_date,
+            "dimensions": [],
+            "metrics": [],
+            "rows": [],
+            "config": config,
+            "date_filter_scope": date_filter_scope,
+        }
 
     dimensions = config["dimensions"]
     metrics = config["metrics"]
-    applied_target_date = target_date if should_apply_target_date(dataset, dimensions, config["filters"]) else None
+    series_field = config.get("series_field") or ""
+    use_series_breakdown = bool(series_field and supports_series_field(widget["widget_type"]) and dimensions and widget["widget_type"] != "text")
+    group_dimensions = dimensions + ([series_field] if use_series_breakdown else [])
+    applied_target_date = implicit_target_date if should_apply_target_date(dataset, dimensions, config["filters"]) else None
     where_clause, params = build_where_sql(dataset, config["filters"], applied_target_date)
     table_name = DATASETS[dataset]["table"]
     has_median = any(metric["agg"] == "median" for metric in metrics)
 
     if has_median:
-        select_columns = [f"`{dim}` AS `{dim}`" for dim in dimensions]
+        select_columns = [f"`{dim}` AS `{dim}`" for dim in group_dimensions]
         raw_fields = sorted({metric["field"] for metric in metrics if metric["field"] != "*"})
         select_columns.extend(f"`{field}` AS `{field}`" for field in raw_fields)
         sql = f"SELECT {', '.join(select_columns) if select_columns else '*'} FROM `{table_name}` WHERE {where_clause}"
         raw_rows = [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
-        rows = python_aggregate(raw_rows, dimensions, metrics)
+        rows = python_aggregate(raw_rows, group_dimensions, metrics)
     else:
         metric_aliases = [f"metric_{idx}" for idx in range(len(metrics))]
-        select_parts = [f"`{dim}` AS `{dim}`" for dim in dimensions]
+        select_parts = [f"`{dim}` AS `{dim}`" for dim in group_dimensions]
         select_parts.extend(metric_sql(metric, metric_aliases[idx]) for idx, metric in enumerate(metrics))
         sql = f"SELECT {', '.join(select_parts)} FROM `{table_name}` WHERE {where_clause}"
-        if dimensions:
-            sql += " GROUP BY " + ", ".join(f"`{dim}`" for dim in dimensions)
+        if group_dimensions:
+            sql += " GROUP BY " + ", ".join(f"`{dim}`" for dim in group_dimensions)
         allowed_fields = dimensions + metric_aliases
-        order_parts = [
-            f"`{item['field']}` {item['direction'].upper()}"
-            for item in config["sort"]
-            if item.get("field") in allowed_fields
-        ]
-        if not order_parts and metric_aliases:
-            order_parts = [f"`{metric_aliases[0]}` DESC"]
-        if order_parts:
-            sql += " ORDER BY " + ", ".join(order_parts)
-        sql += " LIMIT :_limit"
-        params["_limit"] = config["limit"]
+        if not use_series_breakdown:
+            order_parts = [
+                f"`{item['field']}` {item['direction'].upper()}"
+                for item in config["sort"]
+                if item.get("field") in allowed_fields
+            ]
+            if not order_parts and metric_aliases:
+                order_parts = [f"`{metric_aliases[0]}` DESC"]
+            if order_parts:
+                sql += " ORDER BY " + ", ".join(order_parts)
+            sql += " LIMIT :_limit"
+            params["_limit"] = config["limit"]
         rows = [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
 
     metric_aliases = [f"metric_{idx}" for idx in range(len(metrics))]
-    apply_sort(rows, config["sort"], dimensions + metric_aliases)
-    normalized_rows = [{key: to_plain(value) for key, value in row.items()} for row in rows[: config["limit"]]]
+    series_groups: List[Dict[str, str]] = []
+    if use_series_breakdown:
+        rows, series_groups = pivot_rows_by_series(
+            rows,
+            dimensions=dimensions,
+            metrics=metrics,
+            series_field=series_field,
+            sort_config=config["sort"],
+            limit=config["limit"],
+        )
+    else:
+        apply_sort(rows, config["sort"], dimensions + metric_aliases)
+        rows = rows[: config["limit"]]
+    normalized_rows = [{key: to_plain(value) for key, value in row.items()} for row in rows]
     normalized_metrics = [
         {
             "alias": f"metric_{idx}",
@@ -1253,12 +1768,15 @@ def query_widget_data(conn, widget: Dict[str, Any], selected_date: date | None, 
         for idx, metric in enumerate(metrics)
     ]
     return {
-        "target_date": to_plain(target_date),
+        "target_date": target_date,
         "applied_target_date": to_plain(applied_target_date),
         "dimensions": dimensions,
+        "series_field": series_field if use_series_breakdown else "",
+        "series_groups": series_groups,
         "metrics": normalized_metrics,
         "rows": normalized_rows,
         "config": config,
+        "date_filter_scope": date_filter_scope,
     }
 
 
@@ -1388,6 +1906,199 @@ async def bi_dashboard_attendance_entry(request: Request) -> Response:
     )
 
 
+@router.get("/bi-dashboard/inventory-mappings", response_class=HTMLResponse)
+async def bi_dashboard_inventory_mappings(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_inventory_mapping_entry.html",
+            {
+                "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
+                "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+            },
+        )
+    )
+
+
+@router.get("/bi-dashboard/api/inventory-mappings")
+async def list_inventory_mappings(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        warehouse_rows = conn.execute(
+            text(
+                """
+                SELECT id, source_warehouse_name, warehouse_name_clean, sort_order, is_enabled, created_at, updated_at
+                FROM bi_inventory_warehouse_map
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        status_rows = conn.execute(
+            text(
+                """
+                SELECT id, stock_status_id, stock_status_name, sort_order, is_enabled, created_at, updated_at
+                FROM bi_inventory_status_map
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        latest_cleaning = to_plain(latest_date(conn, "inventory_cleaning"))
+        latest_raw = to_plain(latest_date(conn, "inventory"))
+    return JSONResponse(
+        {
+            "warehouses": [
+                {
+                    "id": int(row["id"]),
+                    "source_warehouse_name": row["source_warehouse_name"],
+                    "warehouse_name_clean": row["warehouse_name_clean"],
+                    "sort_order": int(row["sort_order"] or 0),
+                    "is_enabled": bool(row["is_enabled"]),
+                    "created_at": to_plain(row["created_at"]),
+                    "updated_at": to_plain(row["updated_at"]),
+                }
+                for row in warehouse_rows
+            ],
+            "statuses": [
+                {
+                    "id": int(row["id"]),
+                    "stock_status_id": row["stock_status_id"],
+                    "stock_status_name": row["stock_status_name"],
+                    "sort_order": int(row["sort_order"] or 0),
+                    "is_enabled": bool(row["is_enabled"]),
+                    "created_at": to_plain(row["created_at"]),
+                    "updated_at": to_plain(row["updated_at"]),
+                }
+                for row in status_rows
+            ],
+            "latest_cleaning_date": latest_cleaning,
+            "latest_raw_date": latest_raw,
+        }
+    )
+
+
+@router.put("/bi-dashboard/api/inventory-mappings")
+async def save_inventory_mappings(
+    payload: Dict[str, Any] = Body(default={}),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    warehouse_rows = normalize_inventory_mapping_payload(payload.get("warehouses"), mapping_type="warehouse")
+    status_rows = normalize_inventory_mapping_payload(payload.get("statuses"), mapping_type="status")
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        existing_warehouse_ids = {
+            int(row[0])
+            for row in conn.execute(text("SELECT id FROM bi_inventory_warehouse_map")).fetchall()
+        }
+        existing_status_ids = {
+            int(row[0])
+            for row in conn.execute(text("SELECT id FROM bi_inventory_status_map")).fetchall()
+        }
+        submitted_warehouse_ids = {item["id"] for item in warehouse_rows if item["id"] > 0}
+        submitted_status_ids = {item["id"] for item in status_rows if item["id"] > 0}
+
+        for item in warehouse_rows:
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_inventory_warehouse_map
+                        SET
+                            source_warehouse_name = :source_warehouse_name,
+                            warehouse_name_clean = :warehouse_name_clean,
+                            sort_order = :sort_order,
+                            is_enabled = :is_enabled
+                        WHERE id = :id
+                        """
+                    ),
+                    item,
+                )
+                if result.rowcount:
+                    continue
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_inventory_warehouse_map(
+                        source_warehouse_name, warehouse_name_clean, sort_order, is_enabled
+                    ) VALUES (
+                        :source_warehouse_name, :warehouse_name_clean, :sort_order, :is_enabled
+                    )
+                    """
+                ),
+                {key: item[key] for key in ("source_warehouse_name", "warehouse_name_clean", "sort_order", "is_enabled")},
+            )
+
+        for item in status_rows:
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_inventory_status_map
+                        SET
+                            stock_status_id = :stock_status_id,
+                            stock_status_name = :stock_status_name,
+                            sort_order = :sort_order,
+                            is_enabled = :is_enabled
+                        WHERE id = :id
+                        """
+                    ),
+                    item,
+                )
+                if result.rowcount:
+                    continue
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_inventory_status_map(
+                        stock_status_id, stock_status_name, sort_order, is_enabled
+                    ) VALUES (
+                        :stock_status_id, :stock_status_name, :sort_order, :is_enabled
+                    )
+                    """
+                ),
+                {key: item[key] for key in ("stock_status_id", "stock_status_name", "sort_order", "is_enabled")},
+            )
+
+        disabled_warehouse_ids = sorted(existing_warehouse_ids - submitted_warehouse_ids)
+        disabled_status_ids = sorted(existing_status_ids - submitted_status_ids)
+        if disabled_warehouse_ids:
+            placeholders = ", ".join(f":wid_{idx}" for idx, _ in enumerate(disabled_warehouse_ids))
+            params = {f"wid_{idx}": row_id for idx, row_id in enumerate(disabled_warehouse_ids)}
+            conn.execute(
+                text(f"UPDATE bi_inventory_warehouse_map SET is_enabled = 0 WHERE id IN ({placeholders})"),
+                params,
+            )
+        if disabled_status_ids:
+            placeholders = ", ".join(f":sid_{idx}" for idx, _ in enumerate(disabled_status_ids))
+            params = {f"sid_{idx}": row_id for idx, row_id in enumerate(disabled_status_ids)}
+            conn.execute(
+                text(f"UPDATE bi_inventory_status_map SET is_enabled = 0 WHERE id IN ({placeholders})"),
+                params,
+            )
+
+    refreshed_rows = refresh_inventory_cleaning(current_engine)
+    with current_engine.connect() as conn:
+        latest_cleaning = to_plain(latest_date(conn, "inventory_cleaning"))
+    return JSONResponse(
+        {
+            "saved": True,
+            "warehouse_count": len(warehouse_rows),
+            "status_count": len(status_rows),
+            "refreshed_rows": int(refreshed_rows),
+            "latest_cleaning_date": latest_cleaning,
+        }
+    )
+
+
 @router.get("/bi-dashboard/api/return-unpack-attendance")
 async def list_return_unpack_attendance(
     start_date: str | None = Query(None),
@@ -1470,6 +2181,52 @@ async def bi_meta(_auth: str = Depends(require_auth)) -> JSONResponse:
             "layout_heights": sorted(LAYOUT_HEIGHTS),
             "latest_by_dataset": latest_by_dataset,
             "latest_overall": max(latest_values).isoformat() if latest_values else None,
+        }
+    )
+
+
+@router.get("/bi-dashboard/api/filter-options")
+async def bi_filter_options(
+    dataset: str = Query(...),
+    field: str = Query(...),
+    biz_date: str | None = Query(None),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    if dataset not in DATASETS:
+        raise HTTPException(status_code=400, detail=f"不支持的数据集：{dataset}")
+    fields = DATASETS[dataset]["fields"]
+    if field not in fields or not fields[field].get("filterable", False):
+        raise HTTPException(status_code=400, detail=f"字段不可筛选：{field}")
+    selected_date = parse_date_or_none(biz_date)
+    range_start = parse_date_or_none(start_date)
+    range_end = parse_date_or_none(end_date)
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        options, scope = query_filter_options(
+            conn,
+            dataset=dataset,
+            field=field,
+            selected_date=selected_date,
+            start_date=range_start,
+            end_date=range_end,
+            keyword=keyword,
+            limit=limit,
+        )
+    return JSONResponse(
+        {
+            "dataset": dataset,
+            "field": field,
+            "biz_date": to_plain(selected_date),
+            "start_date": to_plain(range_start),
+            "end_date": to_plain(range_end),
+            "keyword": str(keyword or "").strip() or None,
+            "scope": scope,
+            "options": options,
         }
     )
 
