@@ -1,0 +1,1105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>供应链 BI 运营中心</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: rgba(255, 255, 255, 0.94);
+      --line: rgba(15, 23, 42, 0.08);
+      --text: #111827;
+      --sub: #667085;
+      --subtle: #98a2b3;
+      --accent: #2d6bff;
+      --accent-soft: rgba(45, 107, 255, 0.1);
+      --shadow-lg: 0 26px 68px rgba(15, 23, 42, 0.08);
+      --shadow-md: 0 14px 34px rgba(15, 23, 42, 0.05);
+      --radius-xl: 30px;
+      --radius-lg: 24px;
+      --radius-md: 18px;
+      --chart-1: #5b8ff9;
+      --chart-2: #4ecb73;
+      --chart-3: #5ad8d8;
+      --chart-4: #ffb366;
+      --chart-5: #8b6ad9;
+      --chart-6: #f6c85f;
+      --chart-7: #ff7a7a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font: 13px "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(45, 107, 255, 0.08), transparent 22%),
+        radial-gradient(circle at top right, rgba(90, 216, 216, 0.08), transparent 18%),
+        linear-gradient(180deg, #fbfcfe 0%, var(--bg) 100%);
+    }
+    button, input, select { font: inherit; }
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    input, select {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--text);
+      outline: none;
+      min-height: 42px;
+    }
+    input:focus, select:focus {
+      border-color: rgba(45, 107, 255, 0.32);
+      box-shadow: 0 0 0 4px rgba(45, 107, 255, 0.08);
+    }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 18px;
+      padding: 18px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+    }
+    .rail {
+      position: sticky;
+      top: 18px;
+      height: calc(100vh - 36px);
+      padding: 14px 10px 12px;
+      border-radius: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      align-items: center;
+    }
+    .rail-logo {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      flex: none;
+    }
+    .rail-logo svg { width: 48px; height: 48px; display: block; }
+    .rail-nav {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+    }
+    .rail-item {
+      width: 100%;
+      padding: 10px 4px;
+      border-radius: 18px;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--sub);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .rail-item.active,
+    .rail-item:hover {
+      background: rgba(255, 255, 255, 0.78);
+      border-color: rgba(45, 107, 255, 0.12);
+      color: var(--accent);
+      box-shadow: 0 10px 24px rgba(45, 107, 255, 0.08);
+    }
+    .rail-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+    }
+    .rail-icon svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .ghost, .primary, .chip, .tab {
+      border-radius: 999px;
+      padding: 10px 15px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+    }
+    .ghost, .tab {
+      background: rgba(255, 255, 255, 0.86);
+      border-color: var(--line);
+      color: var(--sub);
+    }
+    .primary {
+      background: linear-gradient(180deg, #2d6bff, #1558d8);
+      color: #fff;
+      box-shadow: 0 14px 28px rgba(45, 107, 255, 0.18);
+    }
+    .chip { background: var(--accent-soft); color: var(--accent); }
+    .workspace {
+      min-width: 0;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+    .topbar, .hero, .summary-section, .board-section {
+      border-radius: var(--radius-xl);
+      padding: 20px;
+    }
+    .topbar, .hero-head, .toolbar-row, .section-head, .card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .topbar { align-items: center; }
+    .brand { display: flex; align-items: center; gap: 16px; min-width: 0; }
+    .brand-mark svg { display: block; width: 220px; max-width: 100%; height: auto; }
+    .brand-copy, .hero-copy { min-width: 0; }
+    .brand-copy h1 { margin: 0; font-size: 16px; line-height: 1.15; letter-spacing: -0.03em; }
+    .brand-copy p, .section-head p, .hero-copy p { margin: 4px 0 0; color: var(--sub); line-height: 1.7; }
+    .top-actions, .filters, .tabs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .kicker::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: linear-gradient(180deg, #2d6bff, #5db1ff);
+      box-shadow: 0 0 0 6px rgba(45, 107, 255, 0.08);
+    }
+    .hero-copy h2, .section-head h3 {
+      margin: 10px 0 8px;
+      line-height: 1.05;
+      letter-spacing: -0.05em;
+    }
+    .hero-copy h2 { font-size: clamp(28px, 4vw, 36px); }
+    .section-head h3 { font-size: 22px; }
+    .hero {
+      display: grid;
+      gap: 18px;
+    }
+    .hero-side {
+      min-width: 260px;
+      display: grid;
+      gap: 12px;
+      justify-items: end;
+    }
+    .status-card {
+      min-width: 260px;
+      padding: 14px 16px;
+      border-radius: 20px;
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(246, 249, 255, 0.95));
+      border: 1px solid rgba(45, 107, 255, 0.1);
+    }
+    .status-card strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .status-card span {
+      color: var(--sub);
+      line-height: 1.7;
+    }
+    .field-block {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.84);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+    }
+    .field-block span {
+      color: var(--sub);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .field-block select,
+    .field-block input {
+      min-width: 150px;
+      min-height: 32px;
+      padding: 0;
+      border: 0;
+      border-radius: 10px;
+      box-shadow: none;
+      background: transparent;
+    }
+    .tab.active {
+      background: var(--accent-soft);
+      border-color: rgba(45, 107, 255, 0.12);
+      color: var(--accent);
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .summary-empty {
+      grid-column: 1 / -1;
+      padding: 20px;
+      border: 1px dashed rgba(15, 23, 42, 0.1);
+      border-radius: 20px;
+      text-align: center;
+      color: var(--sub);
+      background: rgba(255, 255, 255, 0.68);
+    }
+    .sum {
+      position: relative;
+      padding: 16px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 251, 255, 0.96));
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+      min-height: 136px;
+    }
+    .sum::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: 14px;
+      width: 28px;
+      height: 4px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--chart-1), var(--chart-3));
+      opacity: .9;
+    }
+    .sum-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .sum h4 {
+      margin: 8px 0 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--sub);
+      line-height: 1.5;
+    }
+    .sum strong {
+      display: block;
+      margin-top: 16px;
+      font-size: 30px;
+      line-height: 1;
+      letter-spacing: -0.055em;
+    }
+    .sum span {
+      display: block;
+      margin-top: 10px;
+      color: var(--subtle);
+      font-size: 12px;
+    }
+    .sum-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .delta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .delta-chip::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: .28;
+    }
+    .delta-up {
+      color: #0f9f57;
+      background: rgba(15, 159, 87, 0.10);
+    }
+    .delta-down {
+      color: #e04f5f;
+      background: rgba(224, 79, 95, 0.10);
+    }
+    .delta-flat {
+      color: #6b7280;
+      background: rgba(107, 114, 128, 0.10);
+    }
+    .module-groups {
+      display: grid;
+      gap: 16px;
+    }
+    .module-group {
+      padding: 16px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.56);
+      border: 1px solid rgba(15, 23, 42, 0.04);
+      display: grid;
+      gap: 14px;
+    }
+    .module-group-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .module-group-head h4 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+    }
+    .module-group-head p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .card {
+      min-width: 0;
+      padding: 18px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      box-shadow: 0 18px 36px rgba(15, 23, 42, 0.04);
+      display: grid;
+      gap: 14px;
+    }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-4 { grid-column: span 4; }
+    .card-head h4 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+    }
+    .card-head p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .body {
+      min-height: 324px;
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(250, 251, 254, 0.96), rgba(255, 255, 255, 0.98));
+      border: 1px solid rgba(15, 23, 42, 0.05);
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+    .body.table, .body.rank { overflow: auto; padding: 0; }
+    .body.text { min-height: 240px; }
+    .body.loading::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.72) 50%, transparent 100%);
+      transform: translateX(-100%);
+      animation: shimmer 1.4s linear infinite;
+    }
+    .skeleton {
+      width: 100%;
+      height: 100%;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(240, 244, 251, 0.9), rgba(248, 250, 253, 0.95));
+      position: relative;
+      overflow: hidden;
+    }
+    .skeleton::before,
+    .skeleton::after {
+      content: "";
+      position: absolute;
+      left: 18px;
+      border-radius: 999px;
+      background: rgba(220, 226, 239, 0.7);
+    }
+    .skeleton::before { top: 22px; height: 10px; width: 34%; }
+    .skeleton::after { top: 52px; height: 8px; width: 52%; }
+    @keyframes shimmer {
+      to { transform: translateX(100%); }
+    }
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: rgba(250, 251, 254, 0.98);
+      color: var(--sub);
+      font-weight: 600;
+    }
+    .table th,
+    .table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      text-align: left;
+      white-space: nowrap;
+    }
+    .table tbody tr:hover { background: rgba(45, 107, 255, 0.04); }
+    .rank-list {
+      list-style: none;
+      margin: 0;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .rank-list li {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(249, 250, 252, 0.98);
+      border: 1px solid rgba(15, 23, 42, 0.04);
+    }
+    .rank-badge {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #2d6bff, #5db1ff);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .empty {
+      min-height: 200px;
+      display: grid;
+      place-items: center;
+      color: var(--sub);
+      text-align: center;
+      line-height: 1.7;
+    }
+    .text-content {
+      display: block;
+      color: var(--text);
+      line-height: 1.85;
+      white-space: pre-wrap;
+      font-size: 13px;
+    }
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: rgba(17, 24, 39, 0.94);
+      color: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: opacity .18s ease, transform .18s ease;
+      z-index: 30;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 1440px) { .summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 1180px) {
+      .shell { grid-template-columns: 1fr; }
+      .rail { position: static; height: auto; flex-direction: row; align-items: stretch; overflow: auto; }
+      .rail-nav { flex-direction: row; }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .span-8, .span-4 { grid-column: span 12; }
+      .topbar, .hero-head, .toolbar-row { flex-direction: column; align-items: flex-start; }
+      .hero-side { min-width: 0; width: 100%; justify-items: stretch; }
+      .status-card { min-width: 0; }
+    }
+    @media (max-width: 720px) {
+      .shell { padding: 12px; }
+      .brand { flex-direction: column; align-items: flex-start; }
+      .brand-mark svg { width: 188px; }
+      .summary { grid-template-columns: 1fr; }
+      .section-head h3 { font-size: 18px; }
+      .hero-copy h2 { font-size: 28px; }
+      .filters, .tabs, .top-actions { width: 100%; }
+      .field-block { width: 100%; }
+      .field-block select, .field-block input { min-width: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail panel">
+      <div class="rail-logo">__BI_LOGO_BADGE_SMALL__</div>
+      <div class="rail-nav">
+        <button class="rail-item active" type="button">
+          <span class="rail-icon">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M2.5 8.2L9 2.8l6.5 5.4"/><path d="M4.5 7.6v7h9v-7"/><path d="M7.2 14.6v-4.1h3.6v4.1"/></svg>
+          </span>
+          <span>首页</span>
+        </button>
+        <button class="rail-item" id="attendanceEntryBtn" type="button">
+          <span class="rail-icon">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3.5" width="12" height="11" rx="2"/><path d="M6 2.5v3M12 2.5v3M3 7.2h12"/><path d="M6.2 10h2.1M9.8 10h2.1M6.2 12.3h2.1"/></svg>
+          </span>
+          <span>出勤</span>
+        </button>
+        <button class="rail-item" id="inventoryMappingBtn" type="button">
+          <span class="rail-icon">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3.2 5.2h5.4M9.4 12.8h5.4"/><circle cx="11.5" cy="5.2" r="2"/><circle cx="6.5" cy="12.8" r="2"/><path d="M8 6.4l2.1 1.6M10 10l-2 1.6"/></svg>
+          </span>
+          <span>映射</span>
+        </button>
+        <button class="rail-item" id="refurbProductionBtn" type="button">
+          <span class="rail-icon">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 5.2h8.6l1.4 2.4-4.3 7H2.5L6.8 7.6"/><path d="M5.5 3.2l1.4 2M10.8 3.2l1.4 2"/><path d="M8.8 7.6l1.9 3.1"/></svg>
+          </span>
+          <span>翻新</span>
+        </button>
+        <button class="rail-item" id="forecastAlertBtn" type="button">
+          <span class="rail-icon">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3.2 13.6h11.6"/><path d="M4.5 12.8l2.5-4.4 2.6 2.1 3.9-5.3"/><path d="M11.8 5.2h2v2"/></svg>
+          </span>
+          <span>预测</span>
+        </button>
+        <button class="rail-item" id="syncScheduleBtn" type="button">
+          <span class="rail-icon">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="5.8"/><path d="M9 5.8v3.5l2.5 1.5"/><path d="M9 1.8v1.3M9 14.9v1.3M16.2 9h-1.3M3.1 9H1.8"/></svg>
+          </span>
+          <span>定时</span>
+        </button>
+      </div>
+      <button class="ghost" id="logoutBtn" type="button">退出</button>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar panel">
+        <div class="brand">
+          <div class="brand-mark">__BI_LOGO_WORDMARK__</div>
+          <div class="brand-copy">
+            <h1>供应链 BI 运营首页</h1>
+            <p id="headerSub">围绕库存、销售、退货、翻新生产与预测预警的经营驾驶舱。</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span class="chip" id="currentUserChip"></span>
+          <button class="ghost" id="openEditorBtn" type="button">进入编辑</button>
+          <button class="primary" id="refreshBtn" type="button">刷新数据</button>
+        </div>
+      </header>
+
+      <section class="hero panel">
+        <div class="hero-head">
+          <div class="hero-copy">
+            <span class="kicker">经营中心</span>
+            <h2 id="headerTitle">供应链 BI 运营中心</h2>
+            <p id="viewDescription">查看不同看板的最新业务结果，按日期切换经营口径，并将更深入的配置统一收口到编辑页。</p>
+          </div>
+          <div class="hero-side">
+            <div class="status-card">
+              <strong>当前状态</strong>
+              <span id="updatedHint">正在加载最新数据口径...</span>
+            </div>
+            <button class="ghost" id="globalFilterBtn" type="button">全局筛选</button>
+          </div>
+        </div>
+        <div class="toolbar-row">
+          <div class="filters">
+            <div class="field-block">
+              <span>看板</span>
+              <select id="viewSelect"></select>
+            </div>
+            <div class="field-block">
+              <span>业务日期</span>
+              <input id="bizDate" type="date" />
+            </div>
+          </div>
+          <div class="tabs" id="viewTabs"></div>
+        </div>
+      </section>
+
+      <section class="summary-section panel">
+        <div class="section-head">
+          <div>
+            <span class="kicker">关键指标</span>
+            <h3>经营摘要</h3>
+            <p>优先展示当前看板中的指标卡，让首页更适合直接查看关键结果。</p>
+          </div>
+        </div>
+        <div class="summary" id="summaryGrid"></div>
+      </section>
+
+      <section class="board-section panel">
+        <div class="section-head">
+          <div>
+            <span class="kicker">可视分析</span>
+            <h3 id="viewTitle">当前看板</h3>
+            <p>图表、表格和排行榜统一在这里呈现，编辑动作则收口到编辑页处理。</p>
+          </div>
+          <button class="ghost" id="boardEditBtn" type="button">编辑当前看板</button>
+        </div>
+        <div class="module-groups">
+          <section class="module-group">
+            <div class="module-group-head">
+              <div>
+                <h4>趋势分析</h4>
+                <p>折线图、柱状图、堆积图和饼图优先放在这一组，用于阅读趋势和结构。</p>
+              </div>
+            </div>
+            <div class="board" id="trendGrid"></div>
+          </section>
+          <section class="module-group">
+            <div class="module-group-head">
+              <div>
+                <h4>明细洞察</h4>
+                <p>表格、排行榜和文本说明统一归到这一组，适合查看细项与备注。</p>
+              </div>
+            </div>
+            <div class="board" id="detailGrid"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <script>
+    const CURRENT_USER = __BI_CURRENT_USER_JSON__;
+    const LOGIN_PATH = __BI_LOGIN_PATH_JSON__;
+    const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
+    const EDITOR_PATH = __BI_EDITOR_PATH_JSON__;
+    const ATTENDANCE_PATH = "/financial/bi-dashboard/attendance";
+    const INVENTORY_MAPPING_PATH = "/financial/bi-dashboard/inventory-mappings";
+    const REFURB_PRODUCTION_PATH = "/financial/bi-dashboard/refurb-production";
+    const FORECAST_ALERT_PATH = "/financial/bi-dashboard/forecast-alerts";
+    const SYNC_SCHEDULE_PATH = "/financial/bi-dashboard/sync-schedule";
+    const PALETTE = ["#5B8FF9", "#4ECB73", "#5AD8D8", "#FFB366", "#8B6AD9", "#F6C85F", "#FF7A7A"];
+    const IMMEDIATE_RENDER_TYPES = new Set(["text", "table", "ranking"]);
+    const state = { meta: null, views: [], currentView: null, currentViewId: null, selectedDate: "", widgetData: {}, previousWidgetData: {}, charts: {}, observer: null, widgetLookup: new Map() };
+    const el = {
+      currentUserChip: document.getElementById("currentUserChip"),
+      headerTitle: document.getElementById("headerTitle"),
+      headerSub: document.getElementById("headerSub"),
+      viewTitle: document.getElementById("viewTitle"),
+      viewDescription: document.getElementById("viewDescription"),
+      viewTabs: document.getElementById("viewTabs"),
+      viewSelect: document.getElementById("viewSelect"),
+      bizDate: document.getElementById("bizDate"),
+      summaryGrid: document.getElementById("summaryGrid"),
+      trendGrid: document.getElementById("trendGrid"),
+      detailGrid: document.getElementById("detailGrid"),
+      updatedHint: document.getElementById("updatedHint"),
+      toast: document.getElementById("toast"),
+    };
+
+    const api = async (path, options = {}) => {
+      const response = await fetch(path, {
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...options,
+      });
+      if (response.status === 401) {
+        const next = encodeURIComponent(`${location.pathname}${location.search}`);
+        location.href = `${LOGIN_PATH}?next=${next}`;
+        throw new Error("登录已失效");
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `请求失败：${response.status}`);
+      }
+      return (response.headers.get("content-type") || "").includes("application/json") ? response.json() : response.text();
+    };
+
+    const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    const formatNumber = (value) => {
+      const number = Number(value ?? 0);
+      return Number.isFinite(number) ? number.toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : "--";
+    };
+    const fieldMeta = (dataset, field) => state.meta?.dataset_fields?.[dataset]?.[field] || null;
+    const showToast = (message) => {
+      el.toast.textContent = message;
+      el.toast.classList.add("show");
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => el.toast.classList.remove("show"), 2200);
+    };
+
+    function disposeCharts() {
+      if (state.observer) {
+        state.observer.disconnect();
+        state.observer = null;
+      }
+      Object.values(state.charts).forEach((chart) => {
+        try { chart.dispose(); } catch {}
+      });
+      state.charts = {};
+    }
+
+    function cardSpan(widget) {
+      if (widget.widget_type === "table") return 12;
+      if (["line", "bar", "stacked_bar", "stacked_hbar"].includes(widget.widget_type)) return 8;
+      return 4;
+    }
+
+    function previousDateString(value) {
+      if (!value) return null;
+      const parsed = new Date(`${value}T00:00:00`);
+      if (Number.isNaN(parsed.getTime())) return null;
+      parsed.setDate(parsed.getDate() - 1);
+      const year = parsed.getFullYear();
+      const month = `${parsed.getMonth() + 1}`.padStart(2, "0");
+      const day = `${parsed.getDate()}`.padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function metricDelta(currentValue, previousValue) {
+      const current = Number(currentValue ?? 0);
+      const previous = Number(previousValue ?? 0);
+      if (!Number.isFinite(previous) || previous === 0) {
+        if (!Number.isFinite(current) || current === 0) {
+          return { text: "较前一日持平", className: "delta-flat" };
+        }
+        return { text: "较前一日新增", className: current > 0 ? "delta-up" : "delta-down" };
+      }
+      const ratio = ((current - previous) / Math.abs(previous)) * 100;
+      if (Math.abs(ratio) < 0.005) {
+        return { text: "较前一日持平", className: "delta-flat" };
+      }
+      const prefix = ratio > 0 ? "较前一日 +": "较前一日 ";
+      return {
+        text: `${prefix}${ratio.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%`,
+        className: ratio > 0 ? "delta-up" : "delta-down",
+      };
+    }
+
+    function seriesLabel(widgetType) {
+      if (!["line", "bar", "stacked_bar", "stacked_hbar"].includes(widgetType)) return { show: false };
+      return {
+        show: true,
+        position: widgetType === "line" ? "top" : widgetType === "stacked_hbar" ? "insideRight" : widgetType === "stacked_bar" ? "inside" : "top",
+        distance: 6,
+        color: "#6e6e73",
+        fontSize: 12,
+        formatter: (params) => {
+          const value = Array.isArray(params.value) ? params.value[1] : params.value;
+          const number = Number(value ?? 0);
+          return !Number.isFinite(number) || number === 0 ? "" : number.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+        },
+      };
+    }
+
+    function renderBasics() {
+      el.viewSelect.innerHTML = state.views.map((view) => `<option value="${view.id}" ${view.id === state.currentViewId ? "selected" : ""}>${escapeHtml(view.name)}</option>`).join("");
+      el.viewTabs.innerHTML = state.views.map((view) => `<button class="tab ${view.id === state.currentViewId ? "active" : ""}" data-view="${view.id}" type="button">${escapeHtml(view.name)}</button>`).join("");
+      document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => loadViewDetail(Number(button.dataset.view))));
+      if (!state.currentView) {
+        el.headerTitle.textContent = "供应链 BI 运营中心";
+        el.headerSub.textContent = "围绕库存、销售、退货、翻新生产与预测预警的经营驾驶舱。";
+        el.viewTitle.textContent = "当前看板";
+        el.viewDescription.textContent = "还没有可展示的看板。";
+        return;
+      }
+      const title = state.currentView.name || "当前看板";
+      const description = state.currentView.description || "查看当前看板的最新经营结果。";
+      el.headerTitle.textContent = title;
+      el.headerSub.textContent = description;
+      el.viewTitle.textContent = title;
+      el.viewDescription.textContent = description;
+    }
+
+    function renderSummary() {
+      const widgets = (state.currentView?.widgets || []).filter((widget) => widget.widget_type === "metric").slice(0, 6);
+      if (!widgets.length) {
+        el.summaryGrid.innerHTML = `<div class="summary-empty">当前看板还没有指标卡，进入编辑页后可以新增用于首页展示的关键指标。</div>`;
+        return;
+      }
+      el.summaryGrid.innerHTML = widgets.map((widget) => {
+        const payload = state.widgetData[widget.id] || {};
+        const previousPayload = state.previousWidgetData[widget.id] || {};
+        const metric = (payload.metrics || [])[0];
+        const row = (payload.rows || [])[0] || {};
+        const previousRow = (previousPayload.rows || [])[0] || {};
+        const value = row[metric?.alias || "metric_0"] ?? 0;
+        const previousValue = previousRow[metric?.alias || "metric_0"] ?? 0;
+        const datasetLabel = state.meta?.dataset_map?.[widget.dataset] || widget.dataset;
+        const dateLabel = payload.target_date || state.selectedDate || "当前口径";
+        const delta = metricDelta(value, previousValue);
+        return `
+          <article class="sum">
+            <div class="sum-head">
+              <h4>${escapeHtml(widget.title)}</h4>
+              <span class="delta-chip ${delta.className}">${escapeHtml(delta.text)}</span>
+            </div>
+            <strong>${escapeHtml(formatNumber(value))}</strong>
+            <div class="sum-foot">
+              <span>${escapeHtml(datasetLabel)} · ${escapeHtml(dateLabel)}</span>
+              <span>${escapeHtml(previousPayload.target_date || previousDateString(dateLabel) || "上一口径")}</span>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderTable(widget, payload, body) {
+      const dimensions = payload.dimensions || [];
+      const metrics = payload.metrics || [];
+      const rows = payload.rows || [];
+      const columns = [...dimensions, ...metrics.map((metric) => metric.alias)];
+      body.className = "body table";
+      let html = "<table class='table'><thead><tr>";
+      columns.forEach((column) => {
+        const dimMeta = fieldMeta(widget.dataset, column);
+        const metricMeta = metrics.find((item) => item.alias === column);
+        html += `<th>${escapeHtml(dimMeta?.label || metricMeta?.label || column)}</th>`;
+      });
+      html += "</tr></thead><tbody>";
+      rows.forEach((row) => {
+        html += "<tr>";
+        columns.forEach((column) => { html += `<td>${escapeHtml(row[column])}</td>`; });
+        html += "</tr>";
+      });
+      body.innerHTML = `${html}</tbody></table>`;
+    }
+
+    function renderRanking(widget, payload, body) {
+      const dimension = (payload.dimensions || [])[0];
+      const metric = (payload.metrics || [])[0];
+      const rows = [...(payload.rows || [])].sort((left, right) => Number(right[metric.alias] || 0) - Number(left[metric.alias] || 0)).slice(0, 10);
+      body.className = "body rank";
+      body.innerHTML = `<ul class="rank-list">${rows.map((row, index) => `<li><span class="rank-badge">${index + 1}</span><span>${escapeHtml(row[dimension])}</span><strong>${escapeHtml(formatNumber(row[metric.alias]))}</strong></li>`).join("")}</ul>`;
+    }
+
+    function renderText(widget, payload, body) {
+      body.className = "body text";
+      body.innerHTML = `<div class="text-content">${escapeHtml(payload.config?.text_content || widget.config?.text_content || "")}</div>`;
+    }
+
+    function renderChart(widget, payload, body) {
+      if (typeof echarts === "undefined") {
+        body.innerHTML = "<div class='empty'>图表库加载失败</div>";
+        return;
+      }
+      const rows = payload.rows || [];
+      if (!rows.length) {
+        body.innerHTML = "<div class='empty'>当前筛选条件下暂无数据</div>";
+        return;
+      }
+      const chart = echarts.init(body, null, { renderer: "canvas", useDirtyRect: true });
+      state.charts[widget.id] = chart;
+      const metrics = payload.metrics || [];
+      const dimensions = payload.dimensions || [];
+      const dimension = dimensions[0];
+      const categories = rows.map((row) => String(row[dimension] ?? ""));
+      const seriesField = payload.series_field || "";
+      const seriesGroups = payload.series_groups || [];
+      const hasSeriesField = Boolean(seriesField && seriesGroups.length);
+      const horizontal = widget.widget_type === "stacked_hbar";
+
+      if (widget.widget_type === "pie") {
+        const metric = metrics[0];
+        chart.setOption({
+          animation: false,
+          color: PALETTE,
+          tooltip: { trigger: "item", backgroundColor: "rgba(255,255,255,.98)", borderColor: "rgba(91,143,249,.28)", borderWidth: 1, textStyle: { color: "#111827" } },
+          legend: { bottom: 0, textStyle: { color: "#667085", fontSize: 12 }, itemWidth: 10, itemHeight: 10 },
+          series: [{ type: "pie", radius: ["42%", "70%"], center: ["50%", "46%"], itemStyle: { borderRadius: 12, borderColor: "#fff", borderWidth: 3 }, label: { color: "#667085", fontSize: 12 }, labelLine: { lineStyle: { color: "rgba(91,143,249,.32)" } }, data: rows.map((row) => ({ name: String(row[dimension] ?? ""), value: Number(row[metric.alias] || 0) })) }],
+        });
+        return;
+      }
+
+      const series = hasSeriesField
+        ? seriesGroups.flatMap((group) => metrics.map((metric) => ({ name: metrics.length > 1 ? `${group.label} / ${metric.label}` : group.label, type: widget.widget_type === "line" ? "line" : "bar", smooth: widget.widget_type === "line", showSymbol: widget.widget_type === "line", symbolSize: widget.widget_type === "line" ? 6 : undefined, lineStyle: widget.widget_type === "line" ? { width: 2.4 } : undefined, stack: ["stacked_bar", "stacked_hbar"].includes(widget.widget_type) ? (metrics.length > 1 ? metric.alias : "total") : undefined, barMaxWidth: 38, label: seriesLabel(widget.widget_type), labelLayout: { hideOverlap: true }, emphasis: { focus: "series" }, data: rows.map((row) => Number(row.series_values?.[group.key]?.[metric.alias] || 0)) })))
+        : metrics.map((metric) => ({ name: metric.label || metric.alias, type: widget.widget_type === "line" ? "line" : "bar", smooth: widget.widget_type === "line", showSymbol: widget.widget_type === "line", symbolSize: widget.widget_type === "line" ? 6 : undefined, lineStyle: widget.widget_type === "line" ? { width: 2.4 } : undefined, stack: ["stacked_bar", "stacked_hbar"].includes(widget.widget_type) ? "total" : undefined, barMaxWidth: 38, label: seriesLabel(widget.widget_type), labelLayout: { hideOverlap: true }, emphasis: { focus: "series" }, data: rows.map((row) => Number(row[metric.alias] || 0)) }));
+
+      chart.setOption({
+        animation: false,
+        color: PALETTE,
+        tooltip: { trigger: "axis", backgroundColor: "rgba(255,255,255,.98)", borderColor: "rgba(91,143,249,.22)", borderWidth: 1, textStyle: { color: "#111827" } },
+        legend: { top: 0, left: 8, textStyle: { color: "#667085", fontSize: 12 }, icon: "circle", itemWidth: 10, itemHeight: 10 },
+        grid: { left: 24, right: 18, top: 56, bottom: 28, containLabel: true },
+        xAxis: horizontal ? { type: "value", axisLabel: { color: "#98a2b3", fontSize: 11 }, splitLine: { lineStyle: { color: "rgba(15,23,42,.08)", type: "dashed" } } } : { type: "category", data: categories, axisLabel: { color: "#98a2b3", fontSize: 11, rotate: categories.length > 8 ? 26 : 0 }, axisLine: { lineStyle: { color: "rgba(15,23,42,.08)" } } },
+        yAxis: horizontal ? { type: "category", data: categories, axisLabel: { color: "#98a2b3", fontSize: 11 }, axisLine: { lineStyle: { color: "rgba(15,23,42,.08)" } } } : { type: "value", axisLabel: { color: "#98a2b3", fontSize: 11 }, splitLine: { lineStyle: { color: "rgba(15,23,42,.08)", type: "dashed" } } },
+        series,
+      });
+    }
+
+    function renderWidget(widget, body) {
+      body.classList.remove("loading");
+      const payload = state.widgetData[widget.id] || {};
+      if (widget.widget_type === "table") return renderTable(widget, payload, body);
+      if (widget.widget_type === "ranking") return renderRanking(widget, payload, body);
+      if (widget.widget_type === "text") return renderText(widget, payload, body);
+      return renderChart(widget, payload, body);
+    }
+
+    function createObserver() {
+      if (!("IntersectionObserver" in window)) return null;
+      state.observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const widgetId = Number(entry.target.dataset.widgetId);
+          const widget = state.widgetLookup.get(widgetId);
+          if (widget) renderWidget(widget, entry.target);
+          state.observer?.unobserve(entry.target);
+        });
+      }, { rootMargin: "280px 0px" });
+      return state.observer;
+    }
+
+    function renderWidgetGroup(widgets, target, emptyMessage) {
+      if (!widgets.length) {
+        target.innerHTML = `<section class="card span-12"><div class="empty">${escapeHtml(emptyMessage)}</div></section>`;
+        return;
+      }
+      target.innerHTML = widgets.map((widget) => `<section class="card span-${cardSpan(widget)}"><div class="card-head"><div><h4>${escapeHtml(widget.title)}</h4><p>${escapeHtml(state.meta?.dataset_map?.[widget.dataset] || widget.dataset)}</p></div><button class="ghost" data-edit="${widget.id}" type="button">编辑</button></div><div class="body loading" id="wb-${widget.id}" data-widget-id="${widget.id}"><div class="skeleton"></div></div></section>`).join("");
+    }
+
+    function renderBoard() {
+      const widgets = (state.currentView?.widgets || []).filter((widget) => widget.widget_type !== "metric");
+      const trendWidgets = widgets.filter((widget) => ["line", "bar", "stacked_bar", "stacked_hbar", "pie"].includes(widget.widget_type));
+      const detailWidgets = widgets.filter((widget) => !["line", "bar", "stacked_bar", "stacked_hbar", "pie"].includes(widget.widget_type));
+      state.widgetLookup = new Map(widgets.map((widget) => [widget.id, widget]));
+      renderWidgetGroup(trendWidgets, el.trendGrid, "当前看板还没有趋势类图表。可以在编辑页新增折线图、柱状图或饼图。");
+      renderWidgetGroup(detailWidgets, el.detailGrid, "当前看板还没有明细类组件。可以在编辑页新增表格、排行榜或文本说明。");
+      if (!widgets.length) {
+        return;
+      }
+      const observer = createObserver();
+      widgets.forEach((widget, index) => {
+        const body = document.getElementById(`wb-${widget.id}`);
+        if (!body) return;
+        if (!observer || index < 4 || IMMEDIATE_RENDER_TYPES.has(widget.widget_type)) {
+          renderWidget(widget, body);
+          return;
+        }
+        observer.observe(body);
+      });
+      document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => {
+        location.href = `${EDITOR_PATH}?view_id=${state.currentViewId}&widget_id=${Number(button.dataset.edit)}`;
+      }));
+    }
+
+    async function loadMeta() {
+      state.meta = await api("/financial/bi-dashboard/api/meta");
+      if (!state.selectedDate) {
+        state.selectedDate = state.meta.latest_overall || "";
+        el.bizDate.value = state.selectedDate;
+      }
+      el.updatedHint.textContent = state.meta.latest_overall ? `数据更新至 ${state.meta.latest_overall}，可直接切换业务日期查看。` : "等待原始数据同步后显示最新业务口径。";
+    }
+
+    async function loadViews() {
+      const payload = await api("/financial/bi-dashboard/api/views");
+      state.views = payload.views || [];
+      if (!state.views.length) {
+        state.currentView = null;
+        state.currentViewId = null;
+        renderBasics();
+        renderSummary();
+        renderBoard();
+        return;
+      }
+      if (!state.currentViewId || !state.views.some((view) => view.id === state.currentViewId)) state.currentViewId = state.views[0].id;
+      await loadViewDetail(state.currentViewId);
+    }
+
+    async function loadViewDetail(viewId) {
+      disposeCharts();
+      state.widgetData = {};
+      state.previousWidgetData = {};
+      state.currentView = await api(`/financial/bi-dashboard/api/views/${viewId}`);
+      state.currentViewId = viewId;
+      const query = state.selectedDate ? `?biz_date=${encodeURIComponent(state.selectedDate)}` : "";
+      const previousDate = previousDateString(state.selectedDate);
+      const previousQuery = previousDate ? `?biz_date=${encodeURIComponent(previousDate)}` : "";
+      const requests = [api(`/financial/bi-dashboard/api/views/${viewId}/widget-data${query}`)];
+      if (previousDate) {
+        requests.push(api(`/financial/bi-dashboard/api/views/${viewId}/widget-data${previousQuery}`));
+      }
+      const [batch, previousBatch] = await Promise.all(requests);
+      (batch.items || []).forEach((item) => { state.widgetData[item.widget_id] = item; });
+      (previousBatch?.items || []).forEach((item) => { state.previousWidgetData[item.widget_id] = item; });
+      renderBasics();
+      renderSummary();
+      renderBoard();
+    }
+
+    function openCurrentEditor() {
+      location.href = `${EDITOR_PATH}${state.currentViewId ? `?view_id=${state.currentViewId}` : ""}`;
+    }
+
+    function bind() {
+      document.getElementById("refreshBtn").addEventListener("click", async () => {
+        if (!state.currentViewId) return;
+        await loadViewDetail(state.currentViewId);
+        showToast("数据已刷新");
+      });
+      document.getElementById("openEditorBtn").addEventListener("click", openCurrentEditor);
+      document.getElementById("boardEditBtn").addEventListener("click", openCurrentEditor);
+      document.getElementById("logoutBtn").addEventListener("click", async () => {
+        await api(LOGOUT_PATH, { method: "POST" }).catch(() => null);
+        location.href = LOGIN_PATH;
+      });
+      document.getElementById("attendanceEntryBtn").addEventListener("click", () => { location.href = ATTENDANCE_PATH; });
+      document.getElementById("inventoryMappingBtn").addEventListener("click", () => { location.href = INVENTORY_MAPPING_PATH; });
+      document.getElementById("refurbProductionBtn").addEventListener("click", () => { location.href = REFURB_PRODUCTION_PATH; });
+      document.getElementById("forecastAlertBtn").addEventListener("click", () => { location.href = FORECAST_ALERT_PATH; });
+      document.getElementById("syncScheduleBtn").addEventListener("click", () => { location.href = SYNC_SCHEDULE_PATH; });
+      document.getElementById("globalFilterBtn").addEventListener("click", openCurrentEditor);
+      el.viewSelect.addEventListener("change", (event) => loadViewDetail(Number(event.target.value)));
+      el.bizDate.addEventListener("change", async (event) => {
+        state.selectedDate = event.target.value;
+        if (state.currentViewId) await loadViewDetail(state.currentViewId);
+      });
+      window.addEventListener("resize", () => {
+        Object.values(state.charts).forEach((chart) => {
+          try { chart.resize(); } catch {}
+        });
+      });
+    }
+
+    (async () => {
+      el.currentUserChip.textContent = CURRENT_USER || "当前用户";
+      bind();
+      try {
+        await loadMeta();
+        await loadViews();
+      } catch (error) {
+        showToast(error.message || "页面初始化失败");
+      }
+    })();
+  </script>
+</body>
+</html>

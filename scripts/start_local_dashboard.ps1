@@ -1,3 +1,7 @@
+param(
+  [switch]$NoOpenBrowser
+)
+
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -51,7 +55,9 @@ if (-not $ready) {
   exit 1
 }
 
-Start-Process $dashUrl | Out-Null
+if (-not $NoOpenBrowser) {
+  Start-Process $dashUrl | Out-Null
+}
 Write-Host "Dashboard is ready:"
 Write-Host "URL: $dashUrl"
 Write-Host "Login: form-based"

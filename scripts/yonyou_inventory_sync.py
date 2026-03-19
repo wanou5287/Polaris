@@ -1460,6 +1460,8 @@ def main() -> int:
             dry_run=args.dry_run,
             sleep_seconds=args.backfill_sleep_seconds,
         )
+        if not cron_expression:
+            return 0
 
     if cron_expression:
         scheduler = BlockingScheduler()

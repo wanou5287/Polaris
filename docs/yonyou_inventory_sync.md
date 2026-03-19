@@ -106,3 +106,20 @@ python scripts/yonyou_inventory_sync.py --config config/yonyou_inventory_sync.ya
 2. `inventory.filters` 和 `salesout.filters` 里多数过滤字段要求传内部 id；如果你当前租户接口要求字段名或路径略有差异，直接在 YAML 中调整即可。
 3. 销售表现在保存原始明细；如果要做“销售出库 / 退货 / 净出库”等指标，请基于 `bi_material_sales_daily` 另建加工表。
 4. 如果租户接口要求 `access_token` 放在 body 而不是 query，把对应接口的 `access_token_mode` 改成 `body` 或 `both`。
+
+## Web 定时配置
+
+BI 看板现在已经支持直接在页面里配置原始数据定时任务：
+
+- 页面入口：`/financial/bi-dashboard/sync-schedule`
+- 功能包括：
+  - 开关定时同步
+  - 修改 `cron` 表达式
+  - 切换同步模式（库存 + 销售 / 仅库存 / 仅销售）
+  - 配置 `sales_days_behind`、`sales_window_days`、`snapshot_days_behind`
+  - 查看最近执行状态、下次执行时间
+  - 手动点击“立即执行一次”
+
+说明：
+- Web 页面只管理“调度参数”，不会覆盖 `config/yonyou_inventory_sync.yaml` 里的用友凭证、接口地址和数据库连接。
+- 服务启动时会自动读取数据库里的最新调度配置并挂载定时任务。

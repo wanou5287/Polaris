@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.logger import logger
+from app.routes.bi_dashboard import start_sync_scheduler, stop_sync_scheduler
 from app.routes.base import api_router
 
 
@@ -20,8 +21,10 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # pragma: no cover - startup guard
         logger.warning("Database init failed, continue startup: %s", exc)
 
+    start_sync_scheduler()
     logger.info("Storage backend: %s", settings.STORAGE_BACKEND)
     yield
+    stop_sync_scheduler()
     logger.info("FinvisPy is shutting down...")
 
 

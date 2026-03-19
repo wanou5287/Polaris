@@ -3,27 +3,52 @@ from __future__ import annotations
 import copy
 import hashlib
 import hmac
+import io
 import json
 import os
 import secrets
+import threading
 import time
 from base64 import b64decode, urlsafe_b64decode, urlsafe_b64encode
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from statistics import median
 from typing import Any, Dict, List, Sequence, Tuple
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from openpyxl import load_workbook
 from sqlalchemy import create_engine, text
 
+from app.core.logger import logger as app_logger
+from app.services.dashboard_share_service import share_dashboard_widget
+from app.services.forecast_alert_service import (
+    ensure_forecast_alert_schema,
+    list_ai_forecasts,
+    list_forecast_profiles,
+    list_inventory_alerts,
+    list_manual_forecasts as list_forecast_manual_rows,
+    list_promotion_events,
+    recalculate_forecasts_and_alerts,
+    save_manual_forecast,
+    save_promotion_events,
+)
 from scripts.yonyou_inventory_sync import (
+    AppConfig,
+    InventorySyncService,
+    JobConfig,
+    build_logger,
+    default_dates_from_job,
     refresh_inventory_cleaning,
     ensure_inventory_processing_schema,
     ensure_sales_processing_schema,
+    load_config,
     quote_mysql_url,
     save_return_unpack_attendance,
 )
@@ -33,10 +58,18 @@ router = APIRouter()
 engine = None
 schema_ready = False
 project_root = Path(__file__).resolve().parents[2]
+yonyou_sync_config_path = project_root / "config" / "yonyou_inventory_sync.yaml"
 dashboard_users_config_path = project_root / "config" / "bi_dashboard_users.local.yaml"
 DASHBOARD_SESSION_COOKIE = "finvis_bi_session"
 DASHBOARD_SESSION_MAX_AGE = 60 * 60 * 24 * 14
 DASHBOARD_DEFAULT_PATH = "/financial/bi-dashboard"
+DASHBOARD_EDITOR_PATH = "/financial/bi-dashboard/editor"
+SYNC_SCHEDULE_KEY = "raw_yonyou_sync_default"
+SYNC_SCHEDULE_JOB_ID = "bi_raw_yonyou_sync"
+SYNC_SCHEDULER_TIMEZONE = "Asia/Shanghai"
+sync_scheduler: BackgroundScheduler | None = None
+sync_scheduler_lock = threading.RLock()
+sync_run_lock = threading.Lock()
 PREFERRED_SALES_VIEW_NAME = "销售/退货看板"
 PREFERRED_SALES_VIEW_DESCRIPTION = "基于销售清洗表预置的销售与退货经营看板"
 PREFERRED_INVENTORY_VIEW_NAME = "库存清洗看板"
@@ -120,6 +153,19 @@ DATASETS: Dict[str, Dict[str, Any]] = {
             "source_row_count": {"label": "原始聚合行数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
         },
     },
+    "inventory_turnover": {
+        "label": "库存周转分析",
+        "table": "",
+        "date_col": "month_date",
+        "virtual": True,
+        "fields": {
+            "month_date": {"label": "月份", "type": "date", "filterable": True, "sortable": True},
+            "month": {"label": "月份", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "monthly_sales_qty": {"label": "当月销量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "avg_inventory_qty": {"label": "月均库存", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "inventory_turnover_days": {"label": "库存周转天数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+        },
+    },
     "sales": {
         "label": "销售出库原始明细",
         "table": "bi_material_sales_daily",
@@ -168,6 +214,62 @@ DATASETS: Dict[str, Dict[str, Any]] = {
             "return_unpack_efficiency": {"label": "退货拆包人效", "type": "number", "numeric": True, "filterable": True, "sortable": True},
             "total_return_qty": {"label": "当日总退货数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
             "total_sales_qty": {"label": "当日总销量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+        },
+    },
+    "refurb_production": {
+        "label": "翻新生产明细",
+        "table": "bi_refurb_production_daily",
+        "date_col": "biz_date",
+        "fields": {
+            "biz_date": {"label": "日期", "type": "date", "groupable": True, "filterable": True, "sortable": True},
+            "refurb_category": {"label": "翻新种类", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "material_name": {"label": "物料名称", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "feeding_qty": {"label": "领料数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "total_work_hours": {"label": "总耗费工时", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "plan_qty": {"label": "计划数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "quality_defect_qty": {"label": "品质-检出不合格品", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "production_good_qty": {"label": "生产-产出良品数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "production_bad_qty": {"label": "生产-产出不良品数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "final_good_qty": {"label": "最终合格数量", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "non_refurbishable_rate": {"label": "不可翻新率", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "quality_reject_rate": {"label": "出货合格率-品质", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "plan_achievement_rate": {"label": "计划达成率", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "refurb_efficiency": {"label": "翻新人效", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+        },
+    },
+    "sales_forecast": {
+        "label": "销售/生产预测明细",
+        "table": "bi_sales_forecast_ai_daily",
+        "date_col": "forecast_date",
+        "fields": {
+            "forecast_date": {"label": "预测日期", "type": "date", "groupable": True, "filterable": True, "sortable": True},
+            "material_name": {"label": "物料名称", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "demand_type": {"label": "需求类型", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "material_role": {"label": "物料角色", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "base_qty": {"label": "基础需求", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "ai_qty": {"label": "AI预测值", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "manual_qty": {"label": "手动预测值", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "final_qty": {"label": "最终预测值", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "weekday_factor": {"label": "季节性系数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "trend_factor": {"label": "趋势系数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "promo_factor": {"label": "促销系数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+        },
+    },
+    "inventory_alert": {
+        "label": "安全库存预警",
+        "table": "bi_inventory_alert_log",
+        "date_col": "snapshot_date",
+        "fields": {
+            "snapshot_date": {"label": "快照日期", "type": "date", "groupable": True, "filterable": True, "sortable": True},
+            "material_name": {"label": "物料名称", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "demand_type": {"label": "需求类型", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "material_role": {"label": "物料角色", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "current_stock_qty": {"label": "当前良品库存", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "forecast_14d_qty": {"label": "未来14天需求", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "coverage_days": {"label": "库存覆盖天数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "threshold_days": {"label": "预警阈值天数", "type": "number", "numeric": True, "filterable": True, "sortable": True},
+            "alert_level": {"label": "预警等级", "type": "string", "groupable": True, "filterable": True, "sortable": True},
+            "pushed_to_dingtalk": {"label": "已推送钉钉", "type": "number", "numeric": True, "filterable": True, "sortable": True},
         },
     },
 }
@@ -297,6 +399,68 @@ def render_template(template_name: str, replacements: Dict[str, str] | None = No
     return content
 
 
+def dashboard_logo_wordmark_svg() -> str:
+    return """
+<svg width="248" height="72" viewBox="0 0 248 72" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Supply Chain BI 精准学">
+  <defs>
+    <linearGradient id="biLogoBlue" x1="8" y1="6" x2="64" y2="66" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#5CB2FF"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <rect x="2" y="2" width="68" height="68" rx="20" fill="white" stroke="#E5E7EB" stroke-width="1.5"/>
+    <text x="36" y="31" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="500" fill="#6E6E73" letter-spacing="0.35">supply</text>
+    <text x="36" y="49" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="29" font-weight="700" fill="#111827" letter-spacing="-0.8">BI</text>
+    <path d="M2 49H70V52C70 61.941 61.941 70 52 70H20C10.059 70 2 61.941 2 52V49Z" fill="url(#biLogoBlue)"/>
+    <text x="36" y="63" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="12.5" font-weight="700" fill="white">精准学</text>
+  </g>
+  <g transform="translate(88 12)">
+    <text x="0" y="14" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="500" fill="#6E6E73" letter-spacing="0.4">supply chain</text>
+    <text x="0" y="41" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="31" font-weight="700" fill="#1D1D1F" letter-spacing="-0.9">BI</text>
+    <text x="47" y="41" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="19" font-weight="700" fill="#0071E3">精准学</text>
+  </g>
+</svg>
+""".strip()
+
+
+def dashboard_logo_badge_svg() -> str:
+    return """
+<svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Supply Chain BI 精准学">
+  <defs>
+    <linearGradient id="biBadgeBlue" x1="32" y1="180" x2="228" y2="248" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#4F9DFF"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="240" height="240" rx="52" fill="white"/>
+  <rect x="10" y="168" width="240" height="82" rx="0" fill="url(#biBadgeBlue)"/>
+  <path d="M10 168H250V198C250 226.719 226.719 250 198 250H62C33.2812 250 10 226.719 10 198V168Z" fill="url(#biBadgeBlue)"/>
+  <text x="130" y="60" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="24" font-weight="500" fill="#6E6E73" letter-spacing="0.6">supply chain</text>
+  <text x="130" y="146" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="92" font-weight="700" fill="#111827" letter-spacing="-2.4">BI</text>
+  <text x="130" y="222" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="48" font-weight="700" fill="white">精准学</text>
+</svg>
+""".strip()
+
+
+def dashboard_logo_badge_small_svg() -> str:
+    return """
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="BI 精准学">
+  <defs>
+    <linearGradient id="biBadgeBlueSmall" x1="6" y1="30" x2="42" y2="46" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#5CB2FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="1.25" y="1.25" width="45.5" height="45.5" rx="13" fill="white" stroke="#E5E7EB"/>
+  <path d="M1.25 29H46.75V33.5C46.75 40.8438 40.8438 46.75 33.5 46.75H14.5C7.15621 46.75 1.25 40.8438 1.25 33.5V29Z" fill="url(#biBadgeBlueSmall)"/>
+  <text x="24" y="15.5" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="6.1" font-weight="500" fill="#6E6E73" letter-spacing="0.18">supply</text>
+  <text x="24" y="27.6" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="15.6" font-weight="700" fill="#111827" letter-spacing="-0.4">BI</text>
+  <text x="24" y="39.6" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="7.7" font-weight="700" fill="white">精准学</text>
+</svg>
+""".strip()
+
+
 def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -359,6 +523,649 @@ def parse_int_or_default(raw_value: Any, default: int = 0) -> int:
         return int(str(raw_value).strip())
     except Exception:
         return default
+
+
+def parse_bool_or_default(raw_value: Any, default: bool = False) -> bool:
+    if raw_value in (None, ""):
+        return default
+    if isinstance(raw_value, bool):
+        return raw_value
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def scheduler_timezone() -> ZoneInfo:
+    return ZoneInfo(SYNC_SCHEDULER_TIMEZONE)
+
+
+def validate_cron_expression(raw_value: Any) -> str:
+    cron_expr = str(raw_value or "").strip()
+    if not cron_expr:
+        raise HTTPException(status_code=400, detail="Cron 表达式不能为空")
+    try:
+        CronTrigger.from_crontab(cron_expr, timezone=scheduler_timezone())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Cron 表达式无效，请使用 5 段标准 crontab 格式") from exc
+    return cron_expr
+
+
+def load_sync_base_config() -> AppConfig:
+    if not yonyou_sync_config_path.exists():
+        raise RuntimeError("缺少 config/yonyou_inventory_sync.yaml，无法启动原始数据同步任务")
+    return load_config(yonyou_sync_config_path)
+
+
+def default_sync_schedule_settings() -> Dict[str, Any]:
+    base_config = load_sync_base_config()
+    cron_expr = str(base_config.job.cron or "").strip()
+    return {
+        "schedule_key": SYNC_SCHEDULE_KEY,
+        "is_enabled": bool(cron_expr),
+        "mode": "all",
+        "cron_expr": cron_expr or "59 23 * * *",
+        "sales_days_behind": max(0, int(base_config.job.sales_days_behind)),
+        "sales_window_days": max(1, int(base_config.job.sales_window_days)),
+        "snapshot_days_behind": max(0, int(base_config.job.snapshot_days_behind)),
+    }
+
+
+def normalize_sync_schedule_row(row: Dict[str, Any] | None) -> Dict[str, Any]:
+    defaults = default_sync_schedule_settings()
+    row = row or {}
+    schedule = {
+        "id": parse_int_or_default(row.get("id"), 0),
+        "schedule_key": str(row.get("schedule_key") or defaults["schedule_key"]),
+        "is_enabled": parse_bool_or_default(row.get("is_enabled"), defaults["is_enabled"]),
+        "mode": str(row.get("mode") or defaults["mode"]).strip().lower(),
+        "cron_expr": str(row.get("cron_expr") or defaults["cron_expr"]).strip(),
+        "sales_days_behind": max(0, parse_int_or_default(row.get("sales_days_behind"), defaults["sales_days_behind"])),
+        "sales_window_days": max(1, parse_int_or_default(row.get("sales_window_days"), defaults["sales_window_days"])),
+        "snapshot_days_behind": max(0, parse_int_or_default(row.get("snapshot_days_behind"), defaults["snapshot_days_behind"])),
+        "last_run_started_at": to_plain(row.get("last_run_started_at")),
+        "last_run_finished_at": to_plain(row.get("last_run_finished_at")),
+        "last_run_status": str(row.get("last_run_status") or "idle"),
+        "last_run_message": str(row.get("last_run_message") or ""),
+        "last_trigger": str(row.get("last_trigger") or ""),
+        "last_result": json_loads(row.get("last_result_json"), {}),
+        "updated_by": str(row.get("updated_by") or ""),
+        "created_at": to_plain(row.get("created_at")),
+        "updated_at": to_plain(row.get("updated_at")),
+    }
+    if schedule["mode"] not in {"all", "inventory", "sales"}:
+        schedule["mode"] = defaults["mode"]
+    if not schedule["cron_expr"]:
+        schedule["cron_expr"] = defaults["cron_expr"]
+    return schedule
+
+
+def ensure_sync_schedule_seed(conn) -> None:
+    existing = conn.execute(
+        text(
+            """
+            SELECT id
+            FROM bi_raw_sync_schedule_config
+            WHERE schedule_key = :schedule_key
+            """
+        ),
+        {"schedule_key": SYNC_SCHEDULE_KEY},
+    ).first()
+    if existing:
+        return
+    defaults = default_sync_schedule_settings()
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_raw_sync_schedule_config(
+                schedule_key, is_enabled, mode, cron_expr, sales_days_behind,
+                sales_window_days, snapshot_days_behind, last_run_status, last_run_message
+            )
+            VALUES(
+                :schedule_key, :is_enabled, :mode, :cron_expr, :sales_days_behind,
+                :sales_window_days, :snapshot_days_behind, 'idle', ''
+            )
+            """
+        ),
+        {
+            "schedule_key": defaults["schedule_key"],
+            "is_enabled": 1 if defaults["is_enabled"] else 0,
+            "mode": defaults["mode"],
+            "cron_expr": defaults["cron_expr"],
+            "sales_days_behind": defaults["sales_days_behind"],
+            "sales_window_days": defaults["sales_window_days"],
+            "snapshot_days_behind": defaults["snapshot_days_behind"],
+        },
+    )
+
+
+def load_sync_schedule(conn) -> Dict[str, Any]:
+    ensure_sync_schedule_seed(conn)
+    row = conn.execute(
+        text(
+            """
+            SELECT
+                id, schedule_key, is_enabled, mode, cron_expr, sales_days_behind,
+                sales_window_days, snapshot_days_behind, last_run_started_at,
+                last_run_finished_at, last_run_status, last_run_message, last_trigger,
+                last_result_json, updated_by, created_at, updated_at
+            FROM bi_raw_sync_schedule_config
+            WHERE schedule_key = :schedule_key
+            """
+        ),
+        {"schedule_key": SYNC_SCHEDULE_KEY},
+    ).mappings().first()
+    return normalize_sync_schedule_row(dict(row) if row else None)
+
+
+def update_sync_schedule_runtime(
+    *,
+    last_run_started_at: datetime | None = None,
+    last_run_finished_at: datetime | None = None,
+    last_run_status: str | None = None,
+    last_run_message: str | None = None,
+    last_trigger: str | None = None,
+    last_result: Dict[str, Any] | None = None,
+) -> None:
+    fields: Dict[str, Any] = {}
+    if last_run_started_at is not None:
+        fields["last_run_started_at"] = last_run_started_at
+    if last_run_finished_at is not None:
+        fields["last_run_finished_at"] = last_run_finished_at
+    if last_run_status is not None:
+        fields["last_run_status"] = last_run_status
+    if last_run_message is not None:
+        fields["last_run_message"] = last_run_message
+    if last_trigger is not None:
+        fields["last_trigger"] = last_trigger
+    if last_result is not None:
+        fields["last_result_json"] = json_dumps(last_result)
+    if not fields:
+        return
+    fields["schedule_key"] = SYNC_SCHEDULE_KEY
+    assignment_sql = ", ".join(f"{column} = :{column}" for column in fields if column != "schedule_key")
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE bi_raw_sync_schedule_config
+                SET {assignment_sql}
+                WHERE schedule_key = :schedule_key
+                """
+            ),
+            fields,
+        )
+
+
+def build_sync_runtime_config(schedule: Dict[str, Any]) -> AppConfig:
+    base_config = load_sync_base_config()
+    base_config.job = JobConfig(
+        cron=schedule["cron_expr"],
+        sales_days_behind=schedule["sales_days_behind"],
+        sales_window_days=schedule["sales_window_days"],
+        snapshot_days_behind=schedule["snapshot_days_behind"],
+    )
+    return base_config
+
+
+def execute_raw_sync(trigger: str = "manual") -> Dict[str, Any]:
+    started_at = datetime.now()
+    if not sync_run_lock.acquire(blocking=False):
+        message = "已有原始数据同步任务在执行，本次触发已跳过。"
+        update_sync_schedule_runtime(
+            last_run_started_at=started_at,
+            last_run_finished_at=started_at,
+            last_run_status="skipped",
+            last_run_message=message,
+            last_trigger=trigger,
+        )
+        if trigger == "manual":
+            raise RuntimeError(message)
+        app_logger.warning(message)
+        return {"status": "skipped", "message": message}
+
+    try:
+        ensure_schema()
+        current_engine = get_engine()
+        with current_engine.connect() as conn:
+            schedule = load_sync_schedule(conn)
+        update_sync_schedule_runtime(
+            last_run_started_at=started_at,
+            last_run_status="running",
+            last_run_message="原始数据同步任务执行中...",
+            last_trigger=trigger,
+        )
+        runtime_config = build_sync_runtime_config(schedule)
+        job_logger = build_logger(runtime_config.logging)
+        service = InventorySyncService(runtime_config, job_logger)
+        snapshot_date, sales_start_date, sales_end_date = default_dates_from_job(runtime_config.job)
+        run_result = service.run_once(
+            mode=schedule["mode"],
+            snapshot_date=snapshot_date,
+            sales_start_date=sales_start_date,
+            sales_end_date=sales_end_date,
+            dry_run=False,
+        )
+        forecast_result = recalculate_forecasts_and_alerts(
+            current_engine,
+            updated_by=trigger,
+            send_notifications=True,
+        )
+        finished_at = datetime.now()
+        result_payload = {
+            "mode": schedule["mode"],
+            "snapshot_date": snapshot_date.isoformat(),
+            "sales_start_date": sales_start_date.isoformat(),
+            "sales_end_date": sales_end_date.isoformat(),
+            **run_result,
+            "forecast_refresh": forecast_result,
+        }
+        message = (
+            f"执行完成：库存原始 {run_result.get('inventory_raw', 0)} 行，"
+            f"销售原始 {run_result.get('sales_raw', 0)} 行，"
+            f"预警 {forecast_result.get('alert_rows', 0)} 条。"
+        )
+        update_sync_schedule_runtime(
+            last_run_finished_at=finished_at,
+            last_run_status="success",
+            last_run_message=message,
+            last_trigger=trigger,
+            last_result=result_payload,
+        )
+        return {"status": "success", "message": message, "result": result_payload}
+    except Exception as exc:
+        finished_at = datetime.now()
+        message = f"{type(exc).__name__}: {exc}"
+        update_sync_schedule_runtime(
+            last_run_finished_at=finished_at,
+            last_run_status="failed",
+            last_run_message=message,
+            last_trigger=trigger,
+        )
+        app_logger.exception("Raw sync job failed: %s", exc)
+        raise
+    finally:
+        sync_run_lock.release()
+
+
+def get_sync_scheduler() -> BackgroundScheduler:
+    global sync_scheduler
+    with sync_scheduler_lock:
+        if sync_scheduler is None:
+            sync_scheduler = BackgroundScheduler(
+                timezone=scheduler_timezone(),
+                job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
+            )
+        return sync_scheduler
+
+
+def sync_scheduler_snapshot() -> Dict[str, Any]:
+    scheduler = sync_scheduler
+    job = scheduler.get_job(SYNC_SCHEDULE_JOB_ID) if scheduler and scheduler.running else None
+    return {
+        "scheduler_running": bool(scheduler and scheduler.running),
+        "is_running": sync_run_lock.locked(),
+        "next_run_at": to_plain(job.next_run_time) if job and job.next_run_time else None,
+        "timezone": SYNC_SCHEDULER_TIMEZONE,
+    }
+
+
+def refresh_sync_scheduler() -> Dict[str, Any]:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        schedule = load_sync_schedule(conn)
+
+    scheduler = get_sync_scheduler()
+    with sync_scheduler_lock:
+        if not scheduler.running:
+            scheduler.start()
+        existing_job = scheduler.get_job(SYNC_SCHEDULE_JOB_ID)
+        if existing_job is not None:
+            scheduler.remove_job(SYNC_SCHEDULE_JOB_ID)
+        if schedule["is_enabled"]:
+            trigger = CronTrigger.from_crontab(schedule["cron_expr"], timezone=scheduler_timezone())
+            scheduler.add_job(
+                lambda: execute_raw_sync("scheduled"),
+                trigger=trigger,
+                id=SYNC_SCHEDULE_JOB_ID,
+                replace_existing=True,
+            )
+    runtime = sync_scheduler_snapshot()
+    return {**schedule, **runtime}
+
+
+def start_sync_scheduler() -> None:
+    try:
+        schedule = refresh_sync_scheduler()
+        app_logger.info(
+            "Raw sync scheduler initialized. enabled=%s cron=%s next_run_at=%s",
+            schedule["is_enabled"],
+            schedule["cron_expr"],
+            schedule.get("next_run_at"),
+        )
+    except Exception as exc:  # pragma: no cover - startup guard
+        app_logger.warning("Raw sync scheduler init failed: %s", exc)
+
+
+def stop_sync_scheduler() -> None:
+    global sync_scheduler
+    with sync_scheduler_lock:
+        if sync_scheduler and sync_scheduler.running:
+            sync_scheduler.shutdown(wait=False)
+        sync_scheduler = None
+
+
+def serialize_sync_schedule(schedule: Dict[str, Any]) -> Dict[str, Any]:
+    return {**schedule, **sync_scheduler_snapshot()}
+
+
+def validate_sync_schedule_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    mode = str(payload.get("mode") or "all").strip().lower()
+    if mode not in {"all", "inventory", "sales"}:
+        raise HTTPException(status_code=400, detail="同步模式无效")
+    is_enabled = parse_bool_or_default(payload.get("is_enabled"), False)
+    cron_expr = str(payload.get("cron_expr") or "").strip() or "59 23 * * *"
+    if is_enabled:
+        cron_expr = validate_cron_expression(cron_expr)
+    normalized = {
+        "is_enabled": is_enabled,
+        "mode": mode,
+        "cron_expr": cron_expr,
+        "sales_days_behind": max(0, parse_int_or_default(payload.get("sales_days_behind"), 1)),
+        "sales_window_days": max(1, min(31, parse_int_or_default(payload.get("sales_window_days"), 1))),
+        "snapshot_days_behind": max(0, parse_int_or_default(payload.get("snapshot_days_behind"), 0)),
+    }
+    return normalized
+
+
+def parse_numeric_or_zero(raw_value: Any) -> Decimal:
+    if raw_value in (None, "", "-"):
+        return Decimal("0")
+    if isinstance(raw_value, Decimal):
+        return raw_value
+    normalized = str(raw_value).strip().replace(",", "")
+    if normalized.endswith("%"):
+        normalized = normalized[:-1]
+    try:
+        return Decimal(normalized)
+    except Exception:
+        return Decimal("0")
+
+
+def parse_refurb_date(raw_value: Any, field_name: str = "日期") -> date:
+    if isinstance(raw_value, datetime):
+        return raw_value.date()
+    if isinstance(raw_value, date):
+        return raw_value
+    text_value = str(raw_value or "").strip()
+    if not text_value:
+        raise HTTPException(status_code=400, detail=f"{field_name}不能为空")
+    for pattern in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text_value, pattern).date()
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail=f"{field_name}格式无效：{text_value}")
+
+
+def calculate_refurb_metrics(payload: Dict[str, Any]) -> Dict[str, Decimal]:
+    feeding_qty = parse_numeric_or_zero(payload.get("feeding_qty"))
+    total_work_hours = parse_numeric_or_zero(payload.get("total_work_hours"))
+    plan_qty = parse_numeric_or_zero(payload.get("plan_qty"))
+    quality_defect_qty = parse_numeric_or_zero(payload.get("quality_defect_qty"))
+    production_good_qty = parse_numeric_or_zero(payload.get("production_good_qty"))
+    production_bad_qty = parse_numeric_or_zero(payload.get("production_bad_qty"))
+    final_good_qty = production_good_qty - quality_defect_qty
+    non_refurbishable_rate = Decimal("0")
+    if feeding_qty != 0:
+        non_refurbishable_rate = Decimal("1") - (final_good_qty / feeding_qty)
+    quality_reject_rate = Decimal("0")
+    if production_good_qty != 0:
+        quality_reject_rate = quality_defect_qty / production_good_qty
+    plan_achievement_rate = Decimal("0")
+    if plan_qty != 0:
+        plan_achievement_rate = final_good_qty / plan_qty
+    refurb_efficiency = Decimal("0")
+    if total_work_hours != 0:
+        refurb_efficiency = final_good_qty / (total_work_hours / Decimal("8"))
+    return {
+        "feeding_qty": feeding_qty,
+        "total_work_hours": total_work_hours,
+        "plan_qty": plan_qty,
+        "quality_defect_qty": quality_defect_qty,
+        "production_good_qty": production_good_qty,
+        "production_bad_qty": production_bad_qty,
+        "final_good_qty": final_good_qty,
+        "non_refurbishable_rate": non_refurbishable_rate,
+        "quality_reject_rate": quality_reject_rate,
+        "plan_achievement_rate": plan_achievement_rate,
+        "refurb_efficiency": refurb_efficiency,
+    }
+
+
+def normalize_refurb_production_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    raw = payload or {}
+    biz_date = parse_refurb_date(raw.get("biz_date"))
+    refurb_category = str(raw.get("refurb_category") or "").strip()
+    material_name = str(raw.get("material_name") or "").strip()
+    if not refurb_category:
+        raise HTTPException(status_code=400, detail="翻新种类不能为空")
+    if not material_name:
+        raise HTTPException(status_code=400, detail="物料名称不能为空")
+    metrics = calculate_refurb_metrics(raw)
+    return {
+        "biz_date": biz_date,
+        "refurb_category": refurb_category,
+        "material_name": material_name,
+        **metrics,
+    }
+
+
+def parse_refurb_excel_rows(upload_file: UploadFile, content: bytes) -> List[Dict[str, Any]]:
+    try:
+        workbook = load_workbook(io.BytesIO(content), data_only=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Excel 文件无法解析，请上传 .xlsx 文件") from exc
+
+    worksheet = workbook.active
+    rows = list(worksheet.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(status_code=400, detail="Excel 文件没有可导入的数据")
+
+    header_row_index = None
+    for index, row in enumerate(rows):
+        normalized = [str(cell or "").strip() for cell in row]
+        if "日期" in normalized and "翻新种类" in normalized and "物料名称" in normalized:
+            header_row_index = index
+            break
+    if header_row_index is None:
+        raise HTTPException(status_code=400, detail="Excel 表头未识别，请使用参考模板导入")
+
+    header = [str(cell or "").strip() for cell in rows[header_row_index]]
+    header_map = {name: idx for idx, name in enumerate(header) if name}
+    required_headers = {
+        "日期": "biz_date",
+        "翻新种类": "refurb_category",
+        "物料名称": "material_name",
+        "领料数量": "feeding_qty",
+        "总耗费工时": "total_work_hours",
+        "计划数量": "plan_qty",
+        "品质-检出不合格品": "quality_defect_qty",
+        "生产-产出良品数量": "production_good_qty",
+        "生产-产出不良品数量": "production_bad_qty",
+    }
+    missing_headers = [name for name in required_headers if name not in header_map]
+    if missing_headers:
+        raise HTTPException(status_code=400, detail=f"Excel 缺少必要列：{'、'.join(missing_headers)}")
+
+    normalized_rows: List[Dict[str, Any]] = []
+    for row_number, row in enumerate(rows[header_row_index + 1 :], start=header_row_index + 2):
+        candidate = {
+            target: row[header_map[source]] if header_map[source] < len(row) else None
+            for source, target in required_headers.items()
+        }
+        if not any(str(value or "").strip() for value in candidate.values()):
+            continue
+        try:
+            normalized_rows.append(normalize_refurb_production_payload(candidate))
+        except HTTPException as exc:
+            raise HTTPException(status_code=400, detail=f"第 {row_number} 行导入失败：{exc.detail}") from exc
+    if not normalized_rows:
+        raise HTTPException(status_code=400, detail=f"{upload_file.filename or 'Excel 文件'} 中没有可导入的数据行")
+    return normalized_rows
+
+
+def save_refurb_production_rows(current_engine, rows: Sequence[Dict[str, Any]], updated_by: str) -> int:
+    if not rows:
+        return 0
+    payload = []
+    for row in rows:
+        payload.append(
+            {
+                "biz_date": row["biz_date"],
+                "refurb_category": row["refurb_category"],
+                "material_name": row["material_name"],
+                "feeding_qty": row["feeding_qty"],
+                "total_work_hours": row["total_work_hours"],
+                "plan_qty": row["plan_qty"],
+                "quality_defect_qty": row["quality_defect_qty"],
+                "production_good_qty": row["production_good_qty"],
+                "production_bad_qty": row["production_bad_qty"],
+                "final_good_qty": row["final_good_qty"],
+                "non_refurbishable_rate": row["non_refurbishable_rate"],
+                "quality_reject_rate": row["quality_reject_rate"],
+                "plan_achievement_rate": row["plan_achievement_rate"],
+                "refurb_efficiency": row["refurb_efficiency"],
+                "updated_by": updated_by,
+            }
+        )
+    with current_engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO bi_refurb_production_daily(
+                    biz_date, refurb_category, material_name, feeding_qty, total_work_hours,
+                    plan_qty, quality_defect_qty, production_good_qty, production_bad_qty,
+                    final_good_qty, non_refurbishable_rate, quality_reject_rate,
+                    plan_achievement_rate, refurb_efficiency, updated_by
+                )
+                VALUES(
+                    :biz_date, :refurb_category, :material_name, :feeding_qty, :total_work_hours,
+                    :plan_qty, :quality_defect_qty, :production_good_qty, :production_bad_qty,
+                    :final_good_qty, :non_refurbishable_rate, :quality_reject_rate,
+                    :plan_achievement_rate, :refurb_efficiency, :updated_by
+                )
+                ON DUPLICATE KEY UPDATE
+                    feeding_qty = VALUES(feeding_qty),
+                    total_work_hours = VALUES(total_work_hours),
+                    plan_qty = VALUES(plan_qty),
+                    quality_defect_qty = VALUES(quality_defect_qty),
+                    production_good_qty = VALUES(production_good_qty),
+                    production_bad_qty = VALUES(production_bad_qty),
+                    final_good_qty = VALUES(final_good_qty),
+                    non_refurbishable_rate = VALUES(non_refurbishable_rate),
+                    quality_reject_rate = VALUES(quality_reject_rate),
+                    plan_achievement_rate = VALUES(plan_achievement_rate),
+                    refurb_efficiency = VALUES(refurb_efficiency),
+                    updated_by = VALUES(updated_by)
+                """
+            ),
+            payload,
+        )
+    return len(payload)
+
+
+def refurb_production_summaries(conn, start_date: date | None = None, end_date: date | None = None, limit: int = 200) -> List[Dict[str, Any]]:
+    query = """
+        SELECT
+            id, biz_date, refurb_category, material_name, feeding_qty, total_work_hours,
+            plan_qty, quality_defect_qty, production_good_qty, production_bad_qty,
+            final_good_qty, non_refurbishable_rate, quality_reject_rate,
+            plan_achievement_rate, refurb_efficiency, updated_by, created_at, updated_at
+        FROM bi_refurb_production_daily
+        WHERE 1 = 1
+    """
+    params: Dict[str, Any] = {"limit": max(1, min(int(limit or 200), 1000))}
+    if start_date is not None:
+        query += " AND biz_date >= :start_date"
+        params["start_date"] = start_date
+    if end_date is not None:
+        query += " AND biz_date <= :end_date"
+        params["end_date"] = end_date
+    query += " ORDER BY biz_date DESC, refurb_category ASC, material_name ASC LIMIT :limit"
+    rows = conn.execute(text(query), params).mappings().all()
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        for key in (
+            "feeding_qty",
+            "total_work_hours",
+            "plan_qty",
+            "quality_defect_qty",
+            "production_good_qty",
+            "production_bad_qty",
+            "final_good_qty",
+            "non_refurbishable_rate",
+            "quality_reject_rate",
+            "plan_achievement_rate",
+            "refurb_efficiency",
+        ):
+            item[key] = to_plain(item.get(key))
+        item["id"] = parse_int_or_default(item.get("id"), 0)
+        item["biz_date"] = to_plain(item.get("biz_date"))
+        item["created_at"] = to_plain(item.get("created_at"))
+        item["updated_at"] = to_plain(item.get("updated_at"))
+        result.append(item)
+    return result
+
+
+def normalize_forecast_manual_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    raw = payload or {}
+    forecast_date = parse_refurb_date(raw.get("forecast_date"), "预测日期")
+    material_name = str(raw.get("material_name") or "").strip()
+    demand_type = str(raw.get("demand_type") or "").strip().lower()
+    if not material_name:
+        raise HTTPException(status_code=400, detail="物料名称不能为空")
+    if demand_type not in {"sales", "refurb"}:
+        raise HTTPException(status_code=400, detail="需求类型仅支持 sales 或 refurb")
+    manual_qty = parse_numeric_or_zero(raw.get("manual_qty"))
+    if manual_qty < 0:
+        raise HTTPException(status_code=400, detail="手动预测值不能为负数")
+    return {
+        "forecast_date": forecast_date,
+        "material_name": material_name,
+        "demand_type": demand_type,
+        "manual_qty": manual_qty,
+        "notes": str(raw.get("notes") or "").strip(),
+    }
+
+
+def normalize_promotion_event_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for index, row in enumerate(rows or [], start=1):
+        event_name = str((row or {}).get("event_name") or "").strip()
+        month_day_start = str((row or {}).get("month_day_start") or "").strip()
+        month_day_end = str((row or {}).get("month_day_end") or "").strip()
+        if not event_name or not month_day_start or not month_day_end:
+            raise HTTPException(status_code=400, detail=f"第 {index} 条促销事件缺少名称或日期范围")
+        try:
+            datetime.strptime(f"2000-{month_day_start}", "%Y-%m-%d")
+            datetime.strptime(f"2000-{month_day_end}", "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"第 {index} 条促销事件日期格式无效，应为 MM-DD") from exc
+        uplift_factor = parse_numeric_or_zero((row or {}).get("uplift_factor"))
+        if uplift_factor <= 0:
+            raise HTTPException(status_code=400, detail=f"第 {index} 条促销事件系数必须大于 0")
+        normalized.append(
+            {
+                "id": parse_int_or_default((row or {}).get("id"), 0),
+                "event_name": event_name,
+                "month_day_start": month_day_start,
+                "month_day_end": month_day_end,
+                "uplift_factor": uplift_factor,
+                "is_enabled": parse_bool_or_default((row or {}).get("is_enabled"), True),
+            }
+        )
+    return normalized
 
 
 def normalize_inventory_mapping_payload(
@@ -426,8 +1233,12 @@ def ordered_keys(values: Sequence[str] | set[str], preferred_order: Sequence[str
     return [item for item in preferred_order if item in value_set]
 
 
-def default_dimensions(widget_type: str) -> List[str]:
-    return [] if widget_type in {"metric", "text"} else ["material_name"]
+def default_dimensions(widget_type: str, dataset: str | None = None) -> List[str]:
+    if widget_type in {"metric", "text"}:
+        return []
+    if dataset == "inventory_turnover":
+        return ["month"]
+    return ["material_name"]
 
 
 def supports_series_field(widget_type: str) -> bool:
@@ -443,6 +1254,8 @@ def default_series_field(dataset: str, widget_type: str) -> str:
 
 
 def default_metrics(dataset: str, widget_type: str) -> List[Dict[str, Any]]:
+    if dataset == "inventory_turnover":
+        return [{"field": "inventory_turnover_days", "agg": "avg", "label": "库存周转天数"}]
     if dataset == "sales":
         return [{"field": "qty", "agg": "sum", "label": "原始数量"}]
     if dataset == "inventory_cleaning":
@@ -481,7 +1294,7 @@ def rows_to_height(rows: int) -> str:
 def default_widget_config(widget_type: str, dataset: str) -> Dict[str, Any]:
     return {
         "dataset": dataset,
-        "dimensions": default_dimensions(widget_type),
+        "dimensions": default_dimensions(widget_type, dataset),
         "series_field": default_series_field(dataset, widget_type),
         "metrics": default_metrics(dataset, widget_type),
         "date_filter": {"mode": "follow_page", "date": "", "start_date": "", "end_date": ""},
@@ -1076,7 +1889,7 @@ def normalize_widget_config(widget_type: str, payload: Dict[str, Any] | None) ->
         if dim in fields and fields[dim].get("groupable", False):
             config["dimensions"].append(dim)
     if widget_type not in {"metric", "text"} and not config["dimensions"]:
-        config["dimensions"] = default_dimensions(widget_type)
+        config["dimensions"] = default_dimensions(widget_type, dataset)
 
     series_field = str(raw.get("series_field") or "").strip()
     if (
@@ -1131,8 +1944,7 @@ def get_engine():
     global engine
     if engine is not None:
         return engine
-    config_path = project_root / "config" / "yonyou_inventory_sync.yaml"
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(yonyou_sync_config_path.read_text(encoding="utf-8")) or {}
     db_url = raw.get("database", {}).get("url", "")
     if not db_url:
         raise RuntimeError("缺少 config/yonyou_inventory_sync.yaml 中的 database.url 配置")
@@ -1147,6 +1959,7 @@ def ensure_schema() -> None:
     current_engine = get_engine()
     ensure_sales_processing_schema(current_engine)
     ensure_inventory_processing_schema(current_engine)
+    ensure_forecast_alert_schema(current_engine)
     with current_engine.begin() as conn:
         conn.execute(
             text(
@@ -1198,9 +2011,66 @@ def ensure_schema() -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_raw_sync_schedule_config (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    schedule_key VARCHAR(64) NOT NULL,
+                    is_enabled TINYINT(1) NOT NULL DEFAULT 0,
+                    mode VARCHAR(16) NOT NULL DEFAULT 'all',
+                    cron_expr VARCHAR(64) NOT NULL DEFAULT '',
+                    sales_days_behind INT NOT NULL DEFAULT 1,
+                    sales_window_days INT NOT NULL DEFAULT 1,
+                    snapshot_days_behind INT NOT NULL DEFAULT 0,
+                    last_run_started_at DATETIME NULL,
+                    last_run_finished_at DATETIME NULL,
+                    last_run_status VARCHAR(32) NOT NULL DEFAULT 'idle',
+                    last_run_message VARCHAR(1024) NOT NULL DEFAULT '',
+                    last_trigger VARCHAR(32) NOT NULL DEFAULT '',
+                    last_result_json LONGTEXT NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_raw_sync_schedule_key (schedule_key)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_refurb_production_daily (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    biz_date DATE NOT NULL,
+                    refurb_category VARCHAR(128) NOT NULL,
+                    material_name VARCHAR(255) NOT NULL,
+                    feeding_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    total_work_hours DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    plan_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    quality_defect_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    production_good_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    production_bad_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    final_good_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    non_refurbishable_rate DECIMAL(18, 6) NOT NULL DEFAULT 0,
+                    quality_reject_rate DECIMAL(18, 6) NOT NULL DEFAULT 0,
+                    plan_achievement_rate DECIMAL(18, 6) NOT NULL DEFAULT 0,
+                    refurb_efficiency DECIMAL(18, 6) NOT NULL DEFAULT 0,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_refurb_daily (biz_date, refurb_category, material_name),
+                    INDEX idx_bi_refurb_date (biz_date),
+                    INDEX idx_bi_refurb_category (refurb_category),
+                    INDEX idx_bi_refurb_material (material_name)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
         columns = {row[0] for row in conn.execute(text("SHOW COLUMNS FROM bi_dashboard_view")).fetchall()}
         if "global_filters_json" not in columns:
             conn.execute(text("ALTER TABLE bi_dashboard_view ADD COLUMN global_filters_json LONGTEXT NULL"))
+        ensure_sync_schedule_seed(conn)
         count = int(conn.execute(text("SELECT COUNT(*) FROM bi_dashboard_view")).scalar() or 0)
         if count == 0:
             conn.execute(
@@ -1314,8 +2184,175 @@ def view_detail(conn, view_id: int) -> Dict[str, Any]:
 
 
 def latest_date(conn, dataset: str) -> date | None:
+    if dataset == "inventory_turnover":
+        latest_sales = conn.execute(text("SELECT MAX(biz_date) FROM bi_material_sales_daily_cleaning")).scalar()
+        latest_inventory = conn.execute(text("SELECT MAX(snapshot_date) FROM bi_inventory_snapshot_daily_cleaning")).scalar()
+        latest_candidates = [item for item in (latest_sales, latest_inventory) if item is not None]
+        if not latest_candidates:
+            return None
+        latest_value = max(latest_candidates)
+        return latest_value.replace(day=1)
     ds = DATASETS[dataset]
     return conn.execute(text(f"SELECT MAX(`{ds['date_col']}`) FROM `{ds['table']}`")).scalar()
+
+
+def month_floor(value: date | None) -> date | None:
+    if value is None:
+        return None
+    return value.replace(day=1)
+
+
+def inventory_turnover_source_rows(conn) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        text(
+            """
+            WITH sales_month AS (
+                SELECT
+                    DATE_FORMAT(biz_date, '%Y-%m-01') AS month_date,
+                    DATE_FORMAT(biz_date, '%Y-%m') AS month,
+                    COALESCE(SUM(total_sales_qty), 0) AS monthly_sales_qty
+                FROM bi_material_sales_daily_cleaning
+                GROUP BY DATE_FORMAT(biz_date, '%Y-%m-01'), DATE_FORMAT(biz_date, '%Y-%m')
+            ),
+            inventory_day AS (
+                SELECT
+                    snapshot_date,
+                    COALESCE(SUM(qty), 0) AS day_inventory_qty
+                FROM bi_inventory_snapshot_daily_cleaning
+                GROUP BY snapshot_date
+            ),
+            inventory_month AS (
+                SELECT
+                    DATE_FORMAT(snapshot_date, '%Y-%m-01') AS month_date,
+                    DATE_FORMAT(snapshot_date, '%Y-%m') AS month,
+                    COALESCE(AVG(day_inventory_qty), 0) AS avg_inventory_qty
+                FROM inventory_day
+                GROUP BY DATE_FORMAT(snapshot_date, '%Y-%m-01'), DATE_FORMAT(snapshot_date, '%Y-%m')
+            ),
+            month_union AS (
+                SELECT month_date, month FROM sales_month
+                UNION
+                SELECT month_date, month FROM inventory_month
+            )
+            SELECT
+                month_union.month_date,
+                month_union.month,
+                COALESCE(sales_month.monthly_sales_qty, 0) AS monthly_sales_qty,
+                COALESCE(inventory_month.avg_inventory_qty, 0) AS avg_inventory_qty
+            FROM month_union
+            LEFT JOIN sales_month
+                ON sales_month.month_date = month_union.month_date
+                AND sales_month.month = month_union.month
+            LEFT JOIN inventory_month
+                ON inventory_month.month_date = month_union.month_date
+                AND inventory_month.month = month_union.month
+            ORDER BY month_union.month_date
+            """
+        )
+    ).mappings().all()
+
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        month_date = parse_date_or_none(str(row.get("month_date") or ""))
+        monthly_sales_qty = float(to_number(row.get("monthly_sales_qty")) or 0)
+        avg_inventory_qty = float(to_number(row.get("avg_inventory_qty")) or 0)
+        annualized_ratio = 0.0
+        inventory_turnover_days = 0.0
+        if monthly_sales_qty > 0 and avg_inventory_qty > 0:
+            annualized_ratio = (monthly_sales_qty * 12.0) / avg_inventory_qty
+            if annualized_ratio > 0:
+                inventory_turnover_days = 365.0 / annualized_ratio
+        result.append(
+            {
+                "month_date": month_date,
+                "month": str(row.get("month") or ""),
+                "monthly_sales_qty": monthly_sales_qty,
+                "avg_inventory_qty": avg_inventory_qty,
+                "inventory_turnover_days": inventory_turnover_days,
+            }
+        )
+    return result
+
+
+def virtual_dataset_rows(conn, dataset: str) -> List[Dict[str, Any]]:
+    if dataset == "inventory_turnover":
+        return inventory_turnover_source_rows(conn)
+    raise ValueError(f"unsupported virtual dataset: {dataset}")
+
+
+def normalize_virtual_cell(field_meta: Dict[str, Any], value: Any) -> Any:
+    if field_meta.get("type") == "date":
+        if isinstance(value, date):
+            return value
+        return parse_date_or_none(str(value or ""))
+    if field_meta.get("numeric"):
+        number = to_number(value)
+        return float(number) if number is not None else None
+    return "" if value is None else str(value)
+
+
+def matches_virtual_filter(field_meta: Dict[str, Any], row_value: Any, operator: str, expected: Any) -> bool:
+    normalized_row = normalize_virtual_cell(field_meta, row_value)
+    if operator == "like":
+        source_text = str(normalized_row or "").lower()
+        return str(expected or "").lower() in source_text
+    if operator == "in":
+        values = expected if isinstance(expected, list) else []
+        normalized_values = [normalize_virtual_cell(field_meta, item) for item in values]
+        return normalized_row in normalized_values
+    if operator == "between":
+        values = expected if isinstance(expected, list) else []
+        if len(values) != 2:
+            return True
+        low = normalize_virtual_cell(field_meta, values[0])
+        high = normalize_virtual_cell(field_meta, values[1])
+        if normalized_row is None or low is None or high is None:
+            return False
+        return low <= normalized_row <= high
+    expected_value = normalize_virtual_cell(field_meta, expected)
+    if operator == "eq":
+        return normalized_row == expected_value
+    if operator == "ne":
+        return normalized_row != expected_value
+    if normalized_row is None or expected_value is None:
+        return False
+    if operator == "gt":
+        return normalized_row > expected_value
+    if operator == "gte":
+        return normalized_row >= expected_value
+    if operator == "lt":
+        return normalized_row < expected_value
+    if operator == "lte":
+        return normalized_row <= expected_value
+    return True
+
+
+def filter_virtual_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    dataset: str,
+    filters: List[Dict[str, Any]],
+    target_date: date | None,
+) -> List[Dict[str, Any]]:
+    ds = DATASETS[dataset]
+    effective_filters = list(filters)
+    if target_date is not None:
+        effective_filters.append({"field": ds["date_col"], "op": "eq", "value": target_date})
+
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        matched = True
+        for item in effective_filters:
+            field = item["field"]
+            field_meta = ds["fields"].get(field)
+            if not field_meta:
+                continue
+            if not matches_virtual_filter(field_meta, row.get(field), item["op"], item.get("value")):
+                matched = False
+                break
+        if matched:
+            result.append(row)
+    return result
 
 
 def query_filter_options(
@@ -1329,6 +2366,48 @@ def query_filter_options(
     keyword: str | None = None,
     limit: int = 200,
 ) -> Tuple[List[Dict[str, Any]], str]:
+    if DATASETS[dataset].get("virtual"):
+        rows = virtual_dataset_rows(conn, dataset)
+        normalized_selected_date = month_floor(selected_date) if dataset == "inventory_turnover" else selected_date
+        normalized_start_date = month_floor(start_date) if dataset == "inventory_turnover" else start_date
+        normalized_end_date = month_floor(end_date) if dataset == "inventory_turnover" else end_date
+        scoped_rows = filter_virtual_rows(
+            rows,
+            dataset=dataset,
+            filters=[],
+            target_date=normalized_selected_date if field != DATASETS[dataset]["date_col"] else None,
+        )
+        if normalized_start_date is not None:
+            scoped_rows = filter_virtual_rows(
+                scoped_rows,
+                dataset=dataset,
+                filters=[{"field": DATASETS[dataset]["date_col"], "op": "gte", "value": normalized_start_date}],
+                target_date=None,
+            )
+        if normalized_end_date is not None:
+            scoped_rows = filter_virtual_rows(
+                scoped_rows,
+                dataset=dataset,
+                filters=[{"field": DATASETS[dataset]["date_col"], "op": "lte", "value": normalized_end_date}],
+                target_date=None,
+            )
+        keyword_text = str(keyword or "").strip().lower()
+        field_meta = DATASETS[dataset]["fields"][field]
+        seen: set[Any] = set()
+        options: List[Dict[str, Any]] = []
+        for row in scoped_rows:
+            raw_value = row.get(field)
+            plain_value = to_plain(raw_value)
+            if plain_value in (None, "") or plain_value in seen:
+                continue
+            label_text = str(plain_value)
+            if keyword_text and keyword_text not in label_text.lower():
+                continue
+            seen.add(plain_value)
+            options.append({"value": plain_value, "label": label_text})
+        options.sort(key=lambda item: normalize_virtual_cell(field_meta, item["value"]) or item["label"])
+        return options[: max(1, min(limit, 500))], "selected_date"
+
     ds = DATASETS[dataset]
     field_meta = ds["fields"][field]
     keyword_text = str(keyword or "").strip()
@@ -1462,10 +2541,12 @@ def filter_has_value(operator: str, value: Any) -> bool:
 
 def should_apply_target_date(dataset: str, dimensions: List[str], filters: List[Dict[str, Any]]) -> bool:
     date_col = DATASETS[dataset]["date_col"]
+    if dataset == "inventory_turnover" and any(field in dimensions for field in {"month", "month_date"}):
+        return False
     if date_col in dimensions:
         return False
     return not any(
-        item.get("field") == date_col and filter_has_value(str(item.get("op") or "eq").lower(), item.get("value"))
+        item.get("field") in {date_col, "month"} and filter_has_value(str(item.get("op") or "eq").lower(), item.get("value"))
         for item in filters
     )
 
@@ -1481,13 +2562,15 @@ def resolve_widget_date_context(
     config["date_filter"] = date_filter
     mode = date_filter["mode"]
     date_col = DATASETS[dataset]["date_col"]
+    normalize_date = month_floor if dataset == "inventory_turnover" else (lambda value: value)
 
     if mode == "single" and date_filter["date"]:
-        return ([{"field": date_col, "op": "eq", "value": date_filter["date"]}], None, date_filter["date"], mode)
+        target = normalize_date(parse_date_or_none(date_filter["date"]))
+        return ([{"field": date_col, "op": "eq", "value": to_plain(target)}], None, to_plain(target), mode)
 
     if mode == "range":
-        start_value = date_filter["start_date"]
-        end_value = date_filter["end_date"]
+        start_value = to_plain(normalize_date(parse_date_or_none(date_filter["start_date"])))
+        end_value = to_plain(normalize_date(parse_date_or_none(date_filter["end_date"])))
         if start_value and end_value:
             label = f"{start_value} 至 {end_value}"
             return ([{"field": date_col, "op": "between", "value": [start_value, end_value]}], None, label, mode)
@@ -1501,7 +2584,7 @@ def resolve_widget_date_context(
     if mode == "all":
         return ([], None, "全部日期", mode)
 
-    target_date = selected_date or latest_date(conn, dataset)
+    target_date = normalize_date(selected_date or latest_date(conn, dataset))
     return ([], target_date, to_plain(target_date), "follow_page")
 
 
@@ -1710,6 +2793,50 @@ def query_widget_data(conn, widget: Dict[str, Any], selected_date: date | None, 
     use_series_breakdown = bool(series_field and supports_series_field(widget["widget_type"]) and dimensions and widget["widget_type"] != "text")
     group_dimensions = dimensions + ([series_field] if use_series_breakdown else [])
     applied_target_date = implicit_target_date if should_apply_target_date(dataset, dimensions, config["filters"]) else None
+    if DATASETS[dataset].get("virtual"):
+        raw_rows = filter_virtual_rows(
+            virtual_dataset_rows(conn, dataset),
+            dataset=dataset,
+            filters=config["filters"],
+            target_date=applied_target_date,
+        )
+        rows = python_aggregate(raw_rows, group_dimensions, metrics)
+        metric_aliases = [f"metric_{idx}" for idx in range(len(metrics))]
+        series_groups: List[Dict[str, str]] = []
+        if use_series_breakdown:
+            rows, series_groups = pivot_rows_by_series(
+                rows,
+                dimensions=dimensions,
+                metrics=metrics,
+                series_field=series_field,
+                sort_config=config["sort"],
+                limit=config["limit"],
+            )
+        else:
+            apply_sort(rows, config["sort"], dimensions + metric_aliases)
+            rows = rows[: config["limit"]]
+        normalized_rows = [{key: to_plain(value) for key, value in row.items()} for row in rows]
+        normalized_metrics = [
+            {
+                "alias": f"metric_{idx}",
+                "field": metric["field"],
+                "agg": metric["agg"],
+                "label": metric.get("label") or metric_label(dataset, metric["field"], metric["agg"]),
+            }
+            for idx, metric in enumerate(metrics)
+        ]
+        return {
+            "target_date": target_date,
+            "applied_target_date": to_plain(applied_target_date),
+            "dimensions": dimensions,
+            "series_field": series_field if use_series_breakdown else "",
+            "series_groups": series_groups,
+            "metrics": normalized_metrics,
+            "rows": normalized_rows,
+            "config": config,
+            "date_filter_scope": date_filter_scope,
+        }
+
     where_clause, params = build_where_sql(dataset, config["filters"], applied_target_date)
     table_name = DATASETS[dataset]["table"]
     has_median = any(metric["agg"] == "median" for metric in metrics)
@@ -1822,6 +2949,8 @@ async def bi_dashboard_login(request: Request, next: str | None = Query(None)) -
             "bi_dashboard_login.html",
             {
                 "__NEXT_PATH_JSON__": json.dumps(target, ensure_ascii=False),
+                "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
+                "__BI_LOGO_BADGE__": dashboard_logo_badge_svg(),
             },
         )
     )
@@ -1874,11 +3003,38 @@ async def bi_dashboard(request: Request) -> Response:
         return RedirectResponse(url=login_url, status_code=303)
     return HTMLResponse(
         render_template(
+            "bi_dashboard_runtime.html",
+            {
+                "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                "__BI_LOGIN_PATH_JSON__": json.dumps("/financial/bi-dashboard/login", ensure_ascii=False),
+                "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+                "__BI_EDITOR_PATH_JSON__": json.dumps(DASHBOARD_EDITOR_PATH, ensure_ascii=False),
+                "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
+                "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
+            },
+        )
+    )
+
+
+@router.get("/bi-dashboard/editor", response_class=HTMLResponse)
+async def bi_dashboard_editor(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
             "bi_dashboard_builder.html",
             {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_LOGIN_PATH_JSON__": json.dumps("/financial/bi-dashboard/login", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+                "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
+                "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
             },
         )
     )
@@ -1926,6 +3082,378 @@ async def bi_dashboard_inventory_mappings(request: Request) -> Response:
             },
         )
     )
+
+
+@router.get("/bi-dashboard/refurb-production", response_class=HTMLResponse)
+async def bi_dashboard_refurb_production(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_refurb_production_entry.html",
+            {
+                "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
+                "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+            },
+        )
+    )
+
+
+@router.get("/bi-dashboard/forecast-alerts", response_class=HTMLResponse)
+async def bi_dashboard_forecast_alerts(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_forecast_alert_entry.html",
+            {
+                "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
+                "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+            },
+        )
+    )
+
+
+@router.get("/bi-dashboard/sync-schedule", response_class=HTMLResponse)
+async def bi_dashboard_sync_schedule(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_sync_schedule_entry.html",
+            {
+                "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
+                "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+            },
+        )
+    )
+
+
+@router.get("/bi-dashboard/api/sync-schedule")
+async def get_sync_schedule(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        schedule = load_sync_schedule(conn)
+    payload = serialize_sync_schedule(schedule)
+    payload["mode_options"] = [
+        {"value": "all", "label": "库存 + 销售"},
+        {"value": "inventory", "label": "仅库存原始数据"},
+        {"value": "sales", "label": "仅销售原始数据"},
+    ]
+    payload["status_options"] = [
+        {"value": "idle", "label": "未执行"},
+        {"value": "running", "label": "执行中"},
+        {"value": "success", "label": "成功"},
+        {"value": "failed", "label": "失败"},
+        {"value": "skipped", "label": "已跳过"},
+    ]
+    return JSONResponse(payload)
+
+
+@router.put("/bi-dashboard/api/sync-schedule")
+async def save_sync_schedule(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    normalized = validate_sync_schedule_payload(payload or {})
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        ensure_sync_schedule_seed(conn)
+        conn.execute(
+            text(
+                """
+                UPDATE bi_raw_sync_schedule_config
+                SET
+                    is_enabled = :is_enabled,
+                    mode = :mode,
+                    cron_expr = :cron_expr,
+                    sales_days_behind = :sales_days_behind,
+                    sales_window_days = :sales_window_days,
+                    snapshot_days_behind = :snapshot_days_behind,
+                    updated_by = :updated_by
+                WHERE schedule_key = :schedule_key
+                """
+            ),
+            {
+                "schedule_key": SYNC_SCHEDULE_KEY,
+                "is_enabled": 1 if normalized["is_enabled"] else 0,
+                "mode": normalized["mode"],
+                "cron_expr": normalized["cron_expr"],
+                "sales_days_behind": normalized["sales_days_behind"],
+                "sales_window_days": normalized["sales_window_days"],
+                "snapshot_days_behind": normalized["snapshot_days_behind"],
+                "updated_by": username,
+            },
+        )
+        schedule = load_sync_schedule(conn)
+    refreshed = refresh_sync_scheduler()
+    return JSONResponse(
+        {
+            "message": "定时配置已保存并生效",
+            "schedule": {**schedule, **sync_scheduler_snapshot()},
+            "runtime": refreshed,
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/sync-schedule/run-now")
+async def run_sync_schedule_now(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    if sync_run_lock.locked():
+        raise HTTPException(status_code=409, detail="已有原始数据同步任务在执行，请稍后再试")
+
+    def run_in_background() -> None:
+        try:
+            execute_raw_sync("manual")
+        except Exception:
+            pass
+
+    threading.Thread(target=run_in_background, name="bi-raw-sync-manual", daemon=True).start()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        schedule = load_sync_schedule(conn)
+    return JSONResponse(
+        {
+            "message": "已提交原始数据同步任务，请稍后刷新查看执行结果",
+            "schedule": serialize_sync_schedule(schedule),
+        },
+        status_code=202,
+    )
+
+
+@router.get("/bi-dashboard/api/refurb-production")
+async def list_refurb_production(
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    start = parse_date_or_none(start_date)
+    end = parse_date_or_none(end_date)
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rows = refurb_production_summaries(conn, start_date=start, end_date=end, limit=limit)
+    total_final_good_qty = sum(float(row.get("final_good_qty") or 0) for row in rows)
+    total_plan_qty = sum(float(row.get("plan_qty") or 0) for row in rows)
+    return JSONResponse(
+        {
+            "rows": rows,
+            "summary": {
+                "row_count": len(rows),
+                "total_final_good_qty": total_final_good_qty,
+                "total_plan_qty": total_plan_qty,
+            },
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/refurb-production")
+async def upsert_refurb_production(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    normalized = normalize_refurb_production_payload(payload)
+    current_engine = get_engine()
+    saved_rows = save_refurb_production_rows(current_engine, [normalized], username)
+    with current_engine.connect() as conn:
+        rows = refurb_production_summaries(
+            conn,
+            start_date=normalized["biz_date"],
+            end_date=normalized["biz_date"],
+            limit=500,
+        )
+    current_row = next(
+        (
+            row
+            for row in rows
+            if row["biz_date"] == normalized["biz_date"].isoformat()
+            and row["refurb_category"] == normalized["refurb_category"]
+            and row["material_name"] == normalized["material_name"]
+        ),
+        None,
+    )
+    return JSONResponse(
+        {
+            "message": "翻新生产数据已保存",
+            "saved_rows": saved_rows,
+            "row": current_row or {
+                "biz_date": normalized["biz_date"].isoformat(),
+                "refurb_category": normalized["refurb_category"],
+                "material_name": normalized["material_name"],
+            },
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/refurb-production/import")
+async def import_refurb_production(
+    file: UploadFile = File(...),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    if not str(file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="仅支持导入 .xlsx 文件")
+    content = await file.read()
+    rows = parse_refurb_excel_rows(file, content)
+    current_engine = get_engine()
+    saved_rows = save_refurb_production_rows(current_engine, rows, username)
+    date_values = [row["biz_date"] for row in rows]
+    with current_engine.connect() as conn:
+        refreshed_rows = refurb_production_summaries(
+            conn,
+            start_date=min(date_values),
+            end_date=max(date_values),
+            limit=1000,
+        )
+    return JSONResponse(
+        {
+            "message": f"Excel 导入完成，共写入 {saved_rows} 行",
+            "saved_rows": saved_rows,
+            "date_range": {
+                "start_date": min(date_values).isoformat(),
+                "end_date": max(date_values).isoformat(),
+            },
+            "rows": refreshed_rows,
+        }
+    )
+
+
+@router.get("/bi-dashboard/api/forecast-alerts/overview")
+async def forecast_alert_overview(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        profiles = list_forecast_profiles(conn)
+        events = list_promotion_events(conn)
+        alerts = list_inventory_alerts(conn, limit=50)
+        today = date.today()
+        forecasts = list_ai_forecasts(conn, start_date=today, end_date=today + timedelta(days=14), limit=300)
+        latest_forecast_date = conn.execute(text("SELECT MAX(forecast_date) FROM bi_sales_forecast_ai_daily")).scalar()
+        latest_alert_date = conn.execute(text("SELECT MAX(snapshot_date) FROM bi_inventory_alert_log")).scalar()
+    return JSONResponse(
+        {
+            "profiles": profiles,
+            "events": events,
+            "alerts": alerts,
+            "forecasts": forecasts,
+            "summary": {
+                "profile_count": len(profiles),
+                "event_count": len(events),
+                "alert_count": len(alerts),
+                "forecast_count": len(forecasts),
+                "latest_forecast_date": _plain_date_value(latest_forecast_date),
+                "latest_alert_date": _plain_date_value(latest_alert_date),
+            },
+        }
+    )
+
+
+def _plain_date_value(value: Any) -> Any:
+    return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+
+@router.get("/bi-dashboard/api/forecast-alerts/manual")
+async def list_forecast_manual(
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    limit: int = Query(300, ge=1, le=1000),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rows = list_forecast_manual_rows(
+            conn,
+            start_date=parse_date_or_none(start_date),
+            end_date=parse_date_or_none(end_date),
+            limit=limit,
+        )
+    return JSONResponse({"rows": rows})
+
+
+@router.post("/bi-dashboard/api/forecast-alerts/manual")
+async def upsert_forecast_manual(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    normalized = normalize_forecast_manual_payload(payload)
+    current_engine = get_engine()
+    save_manual_forecast(current_engine, normalized, username)
+    recalculate_forecasts_and_alerts(current_engine, updated_by=username, send_notifications=False)
+    with current_engine.connect() as conn:
+        rows = list_forecast_manual_rows(
+            conn,
+            start_date=normalized["forecast_date"],
+            end_date=normalized["forecast_date"],
+            limit=100,
+        )
+    current_row = next(
+        (
+            row
+            for row in rows
+            if row["forecast_date"] == normalized["forecast_date"].isoformat()
+            and row["material_name"] == normalized["material_name"]
+            and row["demand_type"] == normalized["demand_type"]
+        ),
+        None,
+    )
+    return JSONResponse({"message": "手动预测已保存并重算 AI 预测", "row": current_row})
+
+
+@router.get("/bi-dashboard/api/forecast-alerts/events")
+async def get_forecast_events(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rows = list_promotion_events(conn)
+    return JSONResponse({"rows": rows})
+
+
+@router.put("/bi-dashboard/api/forecast-alerts/events")
+async def put_forecast_events(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    rows = normalize_promotion_event_payload(payload.get("rows"))
+    current_engine = get_engine()
+    save_promotion_events(current_engine, rows)
+    result = recalculate_forecasts_and_alerts(current_engine, updated_by=username, send_notifications=False)
+    return JSONResponse({"message": "促销事件已保存并完成预测重算", "result": result})
+
+
+@router.post("/bi-dashboard/api/forecast-alerts/recalculate")
+async def post_forecast_recalculate(username: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    result = recalculate_forecasts_and_alerts(current_engine, updated_by=username, send_notifications=True)
+    return JSONResponse({"message": "预测与安全库存预警已重算", "result": result})
 
 
 @router.get("/bi-dashboard/api/inventory-mappings")
@@ -2706,6 +4234,65 @@ async def widget_data(
         payload = query_widget_data(conn, widget, selected_date, view["global_filters"])
     payload.update({"widget_id": widget["id"], "widget_type": widget["widget_type"], "title": widget["title"]})
     return JSONResponse(payload)
+
+
+@router.get("/bi-dashboard/api/views/{view_id}/widget-data")
+async def view_widget_data(
+    view_id: int,
+    biz_date: str | None = Query(None),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    selected_date = parse_date_or_none(biz_date)
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        detail = view_detail(conn, view_id)
+        items: List[Dict[str, Any]] = []
+        for widget in detail["widgets"]:
+            payload = query_widget_data(conn, widget, selected_date, detail["global_filters"])
+            payload.update({"widget_id": widget["id"], "widget_type": widget["widget_type"], "title": widget["title"]})
+            items.append(payload)
+    return JSONResponse(
+        {
+            "view_id": view_id,
+            "biz_date": to_plain(selected_date),
+            "items": items,
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/widgets/{widget_id}/share-dingtalk")
+async def share_widget_dingtalk(
+    widget_id: int,
+    payload: Dict[str, Any] = Body(default={}),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    selected_date = parse_date_or_none(payload.get("biz_date"))
+    group_name = str(payload.get("group_name") or "供应链数据同步群").strip() or "供应链数据同步群"
+    message_tag = str(payload.get("message_tag") or "供应链BI系统测试消息").strip() or "供应链BI系统测试消息"
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        widget = load_widget(conn, widget_id)
+        view = load_view(conn, widget["view_id"])
+        widget_payload = query_widget_data(conn, widget, selected_date, view["global_filters"])
+        dataset_label = DATASETS[widget["dataset"]]["label"]
+
+    share_result = await share_dashboard_widget(
+        widget_title=widget["title"],
+        dataset_label=dataset_label,
+        widget_type=widget["widget_type"],
+        target_date=str(widget_payload.get("target_date") or "--"),
+        dimensions=list(widget_payload.get("dimensions") or []),
+        metrics=list(widget_payload.get("metrics") or []),
+        rows=list(widget_payload.get("rows") or []),
+        series_field=str(widget_payload.get("series_field") or ""),
+        series_groups=list(widget_payload.get("series_groups") or []),
+        group_name=group_name,
+        message_tag=message_tag,
+    )
+    share_result["widget_id"] = widget_id
+    return JSONResponse(share_result)
 
 
 @router.post("/bi-dashboard/api/widgets/{widget_id}/ai-analysis")

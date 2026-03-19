@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>翻新生产数据录入</title>
+  <style>
+    :root {
+      --bg: #eef3ec;
+      --panel: rgba(255, 255, 255, 0.94);
+      --line: rgba(15, 23, 42, 0.08);
+      --text: #111827;
+      --sub: #667085;
+      --accent: #1f6dff;
+      --accent-soft: rgba(31, 109, 255, 0.1);
+      --shadow-lg: 0 28px 60px rgba(24, 32, 56, 0.14);
+      --shadow-md: 0 18px 36px rgba(24, 32, 56, 0.08);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(31, 109, 255, 0.12), transparent 26%),
+        radial-gradient(circle at 100% 12%, rgba(18, 183, 106, 0.1), transparent 22%),
+        linear-gradient(180deg, #f5f8f3 0%, var(--bg) 100%);
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 11px 14px;
+      background: rgba(248, 250, 252, 0.96);
+      color: var(--text);
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: rgba(31, 109, 255, 0.4);
+      box-shadow: 0 0 0 4px rgba(31, 109, 255, 0.12);
+    }
+    .shell {
+      min-height: 100vh;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .glass {
+      background: var(--panel);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow-md);
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-radius: var(--radius-xl);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #d6ecff, #8fc1ff);
+      color: #1447aa;
+      font-weight: 700;
+    }
+    .brand h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+    .brand p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+    }
+    .pill, .primary, .ghost {
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .pill, .ghost {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+    .primary {
+      color: #fff;
+      background: linear-gradient(180deg, #2c77ff, #1558d8);
+      box-shadow: 0 14px 28px rgba(31, 109, 255, 0.2);
+    }
+    .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(31, 109, 255, 0.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(360px, 480px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      padding: 18px;
+      border-radius: var(--radius-lg);
+    }
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .panel-head h2, .panel-head h3 {
+      margin: 0 0 6px;
+      letter-spacing: -0.03em;
+    }
+    .panel-head p, .helper {
+      margin: 0;
+      color: var(--sub);
+      line-height: 1.7;
+      font-size: 13px;
+    }
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .field-row label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--sub);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .helper-card {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.78);
+      border: 1px solid rgba(15,23,42,.06);
+    }
+    .helper-card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .tag {
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(31,109,255,.08);
+      color: #1757cc;
+    }
+    .tag.green {
+      background: rgba(18,183,106,.12);
+      color: #10704f;
+    }
+    .tag.orange {
+      background: rgba(245,158,11,.14);
+      color: #9a6708;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric-card {
+      padding: 16px;
+      border-radius: 18px;
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.78));
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      box-shadow: 0 12px 24px rgba(24, 32, 56, 0.05);
+    }
+    .metric-card span {
+      color: var(--sub);
+      font-size: 12px;
+    }
+    .metric-card strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 24px;
+      letter-spacing: -0.04em;
+    }
+    .import-box {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px dashed rgba(15, 23, 42, 0.14);
+      background: rgba(255,255,255,.72);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .toolbar .field-row {
+      min-width: 160px;
+      flex: 1 1 180px;
+    }
+    .notice {
+      min-height: 22px;
+      color: #1558d8;
+      font-size: 13px;
+    }
+    .notice.error { color: #d92d20; }
+    .table-wrap {
+      overflow: auto;
+      border-radius: 18px;
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      background: rgba(255, 255, 255, 0.76);
+      max-height: 760px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      text-align: left;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: rgba(247, 249, 253, 0.96);
+      color: var(--sub);
+      font-weight: 600;
+    }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: rgba(31, 109, 255, 0.04); }
+    .empty {
+      min-height: 180px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      border-radius: 18px;
+      border: 1px dashed rgba(15, 23, 42, 0.12);
+      background: rgba(255, 255, 255, 0.64);
+      color: var(--sub);
+      padding: 18px;
+    }
+    @media (max-width: 1200px) {
+      .workspace, .field-grid, .metric-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .shell { padding: 14px; }
+      .topbar { grid-template-columns: 1fr; }
+      .top-actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar glass">
+      <div class="brand">
+        <div class="brand-mark">翻新</div>
+        <div>
+          <h1>翻新生产数据录入</h1>
+          <p>支持生产、品质、计划三类手工录入字段，也支持按参考模板一键导入 Excel。计算字段会自动回填，后续可直接作为 BI 数据源使用。</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" id="refreshBtn">刷新列表</button>
+        <button class="ghost" id="resetBtn">清空表单</button>
+        <button class="ghost" id="backBtn">返回看板</button>
+        <button class="primary" id="saveBtn">保存数据</button>
+        <span class="user-chip" id="currentUserChip"></span>
+        <button class="ghost" id="logoutBtn">退出</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="panel glass">
+        <div class="panel-head">
+          <div>
+            <h2>手工录入</h2>
+            <p>所有自动计算字段都会在录入时实时预览，保存后写入 MySQL。当前阶段不做角色限制，但字段责任边界已标明。</p>
+          </div>
+        </div>
+
+        <div class="stack">
+          <div class="helper-card">
+            <strong>字段责任</strong>
+            <div class="tag-row">
+              <span class="tag">生产部门：翻新种类 / 物料名称 / 领料数量 / 总耗费工时 / 生产良品 / 生产不良品</span>
+              <span class="tag green">品质部门：品质-检出不合格品</span>
+              <span class="tag orange">计划部门：计划数量</span>
+            </div>
+          </div>
+
+          <div class="field-grid">
+            <div class="field-row">
+              <label for="bizDate">日期</label>
+              <input id="bizDate" type="date" />
+            </div>
+            <div class="field-row">
+              <label for="refurbCategory">翻新种类</label>
+              <input id="refurbCategory" type="text" placeholder="例如 整机组装" />
+            </div>
+            <div class="field-row" style="grid-column: 1 / -1;">
+              <label for="materialName">物料名称</label>
+              <input id="materialName" type="text" placeholder="例如 B138Q0精准学集团原生代AI辅学机" />
+            </div>
+            <div class="field-row">
+              <label for="feedingQty">领料数量</label>
+              <input id="feedingQty" type="number" min="0" step="0.01" />
+            </div>
+            <div class="field-row">
+              <label for="totalWorkHours">总耗费工时</label>
+              <input id="totalWorkHours" type="number" min="0" step="0.01" />
+            </div>
+            <div class="field-row">
+              <label for="productionGoodQty">生产-产出良品数量</label>
+              <input id="productionGoodQty" type="number" min="0" step="0.01" />
+            </div>
+            <div class="field-row">
+              <label for="productionBadQty">生产-产出不良品数量</label>
+              <input id="productionBadQty" type="number" min="0" step="0.01" />
+            </div>
+            <div class="field-row">
+              <label for="qualityDefectQty">品质-检出不合格品</label>
+              <input id="qualityDefectQty" type="number" min="0" step="0.01" />
+            </div>
+            <div class="field-row">
+              <label for="planQty">计划数量</label>
+              <input id="planQty" type="number" min="0" step="0.01" />
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric-card">
+              <span>最终合格数量</span>
+              <strong id="finalGoodQtyMetric">0</strong>
+            </div>
+            <div class="metric-card">
+              <span>不可翻新率</span>
+              <strong id="nonRefurbishableRateMetric">0%</strong>
+            </div>
+            <div class="metric-card">
+              <span>出货合格率-品质</span>
+              <strong id="qualityRejectRateMetric">0%</strong>
+            </div>
+            <div class="metric-card">
+              <span>计划达成率</span>
+              <strong id="planAchievementRateMetric">0%</strong>
+            </div>
+            <div class="metric-card">
+              <span>翻新人效</span>
+              <strong id="refurbEfficiencyMetric">0</strong>
+            </div>
+          </div>
+
+          <div class="import-box">
+            <strong>Excel 一键导入</strong>
+            <div class="helper">支持直接导入你提供的参考模板表头。系统会自动读取手工字段，并重新计算最终合格数量、不可翻新率、计划达成率和翻新人效。</div>
+            <input id="excelFile" type="file" accept=".xlsx" />
+            <button class="pill" id="importBtn">导入 Excel</button>
+          </div>
+
+          <div class="notice" id="notice"></div>
+        </div>
+      </section>
+
+      <section class="panel glass">
+        <div class="panel-head">
+          <div>
+            <h3>数据列表</h3>
+            <p>点击任意一行即可回填到左侧表单继续修改。默认按日期倒序显示。</p>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="field-row">
+            <label for="startDate">开始日期</label>
+            <input id="startDate" type="date" />
+          </div>
+          <div class="field-row">
+            <label for="endDate">结束日期</label>
+            <input id="endDate" type="date" />
+          </div>
+          <div class="field-row">
+            <label for="limitInput">显示条数</label>
+            <input id="limitInput" type="number" min="1" max="1000" value="200" />
+          </div>
+          <div class="field-row" style="align-self: end;">
+            <button class="pill" id="filterBtn">查询</button>
+          </div>
+        </div>
+
+        <div class="metric-grid" style="margin: 14px 0;">
+          <div class="metric-card">
+            <span>记录数</span>
+            <strong id="rowCountMetric">0</strong>
+          </div>
+          <div class="metric-card">
+            <span>最终合格数量合计</span>
+            <strong id="totalFinalGoodMetric">0</strong>
+          </div>
+          <div class="metric-card">
+            <span>计划数量合计</span>
+            <strong id="totalPlanMetric">0</strong>
+          </div>
+        </div>
+
+        <div id="tableContainer" class="empty">正在加载翻新生产数据...</div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const CURRENT_USER = __BI_CURRENT_USER_JSON__;
+    const DASHBOARD_PATH = __BI_DASHBOARD_PATH_JSON__;
+    const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
+    const LIST_API = "/financial/bi-dashboard/api/refurb-production";
+    const SAVE_API = "/financial/bi-dashboard/api/refurb-production";
+    const IMPORT_API = "/financial/bi-dashboard/api/refurb-production/import";
+
+    const el = {
+      currentUserChip: document.getElementById("currentUserChip"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      resetBtn: document.getElementById("resetBtn"),
+      backBtn: document.getElementById("backBtn"),
+      saveBtn: document.getElementById("saveBtn"),
+      logoutBtn: document.getElementById("logoutBtn"),
+      importBtn: document.getElementById("importBtn"),
+      filterBtn: document.getElementById("filterBtn"),
+      notice: document.getElementById("notice"),
+      bizDate: document.getElementById("bizDate"),
+      refurbCategory: document.getElementById("refurbCategory"),
+      materialName: document.getElementById("materialName"),
+      feedingQty: document.getElementById("feedingQty"),
+      totalWorkHours: document.getElementById("totalWorkHours"),
+      productionGoodQty: document.getElementById("productionGoodQty"),
+      productionBadQty: document.getElementById("productionBadQty"),
+      qualityDefectQty: document.getElementById("qualityDefectQty"),
+      planQty: document.getElementById("planQty"),
+      finalGoodQtyMetric: document.getElementById("finalGoodQtyMetric"),
+      nonRefurbishableRateMetric: document.getElementById("nonRefurbishableRateMetric"),
+      qualityRejectRateMetric: document.getElementById("qualityRejectRateMetric"),
+      planAchievementRateMetric: document.getElementById("planAchievementRateMetric"),
+      refurbEfficiencyMetric: document.getElementById("refurbEfficiencyMetric"),
+      excelFile: document.getElementById("excelFile"),
+      startDate: document.getElementById("startDate"),
+      endDate: document.getElementById("endDate"),
+      limitInput: document.getElementById("limitInput"),
+      rowCountMetric: document.getElementById("rowCountMetric"),
+      totalFinalGoodMetric: document.getElementById("totalFinalGoodMetric"),
+      totalPlanMetric: document.getElementById("totalPlanMetric"),
+      tableContainer: document.getElementById("tableContainer"),
+    };
+
+    function numberValue(value) {
+      const parsed = Number(value || 0);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function formatNumber(value, digits = 2) {
+      const parsed = Number(value || 0);
+      return parsed.toLocaleString("zh-CN", {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+      });
+    }
+
+    function formatCompactNumber(value) {
+      const parsed = Number(value || 0);
+      return parsed.toLocaleString("zh-CN", {
+        minimumFractionDigits: parsed % 1 === 0 ? 0 : 2,
+        maximumFractionDigits: 2,
+      });
+    }
+
+    function formatRate(value) {
+      const parsed = Number(value || 0) * 100;
+      return `${parsed.toLocaleString("zh-CN", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+    }
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, {
+        credentials: "same-origin",
+        headers: { ...(options.headers || {}) },
+        ...options,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || payload.message || `请求失败: ${response.status}`);
+      }
+      return payload;
+    }
+
+    function setNotice(message = "", isError = false) {
+      el.notice.textContent = message;
+      el.notice.className = `notice${isError ? " error" : ""}`;
+    }
+
+    function collectPayload() {
+      return {
+        biz_date: el.bizDate.value,
+        refurb_category: el.refurbCategory.value,
+        material_name: el.materialName.value,
+        feeding_qty: el.feedingQty.value,
+        total_work_hours: el.totalWorkHours.value,
+        production_good_qty: el.productionGoodQty.value,
+        production_bad_qty: el.productionBadQty.value,
+        quality_defect_qty: el.qualityDefectQty.value,
+        plan_qty: el.planQty.value,
+      };
+    }
+
+    function renderComputedMetrics() {
+      const feedingQty = numberValue(el.feedingQty.value);
+      const totalWorkHours = numberValue(el.totalWorkHours.value);
+      const productionGoodQty = numberValue(el.productionGoodQty.value);
+      const qualityDefectQty = numberValue(el.qualityDefectQty.value);
+      const planQty = numberValue(el.planQty.value);
+      const finalGoodQty = productionGoodQty - qualityDefectQty;
+      const nonRefurbishableRate = feedingQty ? 1 - (finalGoodQty / feedingQty) : 0;
+      const qualityRejectRate = productionGoodQty ? qualityDefectQty / productionGoodQty : 0;
+      const planAchievementRate = planQty ? finalGoodQty / planQty : 0;
+      const refurbEfficiency = totalWorkHours ? finalGoodQty / (totalWorkHours / 8) : 0;
+      el.finalGoodQtyMetric.textContent = formatCompactNumber(finalGoodQty);
+      el.nonRefurbishableRateMetric.textContent = formatRate(nonRefurbishableRate);
+      el.qualityRejectRateMetric.textContent = formatRate(qualityRejectRate);
+      el.planAchievementRateMetric.textContent = formatRate(planAchievementRate);
+      el.refurbEfficiencyMetric.textContent = formatCompactNumber(refurbEfficiency);
+    }
+
+    function fillForm(row) {
+      el.bizDate.value = row.biz_date || "";
+      el.refurbCategory.value = row.refurb_category || "";
+      el.materialName.value = row.material_name || "";
+      el.feedingQty.value = row.feeding_qty ?? "";
+      el.totalWorkHours.value = row.total_work_hours ?? "";
+      el.productionGoodQty.value = row.production_good_qty ?? "";
+      el.productionBadQty.value = row.production_bad_qty ?? "";
+      el.qualityDefectQty.value = row.quality_defect_qty ?? "";
+      el.planQty.value = row.plan_qty ?? "";
+      renderComputedMetrics();
+    }
+
+    function resetForm() {
+      fillForm({
+        biz_date: "",
+        refurb_category: "",
+        material_name: "",
+        feeding_qty: "",
+        total_work_hours: "",
+        production_good_qty: "",
+        production_bad_qty: "",
+        quality_defect_qty: "",
+        plan_qty: "",
+      });
+      setNotice("表单已清空。");
+    }
+
+    function renderTable(rows) {
+      if (!rows.length) {
+        el.tableContainer.className = "empty";
+        el.tableContainer.textContent = "当前筛选条件下没有翻新生产数据。";
+        return;
+      }
+      el.tableContainer.className = "table-wrap";
+      el.tableContainer.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>翻新种类</th>
+              <th>物料名称</th>
+              <th>领料数量</th>
+              <th>最终合格数量</th>
+              <th>计划数量</th>
+              <th>计划达成率</th>
+              <th>翻新人效</th>
+              <th>更新人</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr
+                class="clickable"
+                data-row='${JSON.stringify(row).replace(/'/g, "&apos;")}'
+              >
+                <td>${row.biz_date || ""}</td>
+                <td>${row.refurb_category || ""}</td>
+                <td>${row.material_name || ""}</td>
+                <td>${formatCompactNumber(row.feeding_qty)}</td>
+                <td>${formatCompactNumber(row.final_good_qty)}</td>
+                <td>${formatCompactNumber(row.plan_qty)}</td>
+                <td>${formatRate(row.plan_achievement_rate)}</td>
+                <td>${formatCompactNumber(row.refurb_efficiency)}</td>
+                <td>${row.updated_by || "-"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+      el.tableContainer.querySelectorAll("tbody tr").forEach((rowEl) => {
+        rowEl.addEventListener("click", () => {
+          const row = JSON.parse(rowEl.dataset.row.replace(/&apos;/g, "'"));
+          fillForm(row);
+          setNotice(`已加载 ${row.biz_date} / ${row.refurb_category} / ${row.material_name}`);
+        });
+      });
+    }
+
+    async function loadRows(showNotice = false) {
+      const params = new URLSearchParams();
+      if (el.startDate.value) params.set("start_date", el.startDate.value);
+      if (el.endDate.value) params.set("end_date", el.endDate.value);
+      params.set("limit", el.limitInput.value || "200");
+      const payload = await api(`${LIST_API}?${params.toString()}`);
+      renderTable(payload.rows || []);
+      const summary = payload.summary || {};
+      el.rowCountMetric.textContent = formatCompactNumber(summary.row_count || 0);
+      el.totalFinalGoodMetric.textContent = formatCompactNumber(summary.total_final_good_qty || 0);
+      el.totalPlanMetric.textContent = formatCompactNumber(summary.total_plan_qty || 0);
+      if (showNotice) {
+        setNotice("翻新生产数据已刷新。");
+      }
+    }
+
+    async function saveRow() {
+      el.saveBtn.disabled = true;
+      try {
+        const payload = await api(SAVE_API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(collectPayload()),
+        });
+        if (payload.row) fillForm(payload.row);
+        await loadRows(false);
+        setNotice(payload.message || "翻新生产数据已保存。");
+      } catch (error) {
+        setNotice(error.message, true);
+      } finally {
+        el.saveBtn.disabled = false;
+      }
+    }
+
+    async function importExcel() {
+      const file = el.excelFile.files && el.excelFile.files[0];
+      if (!file) {
+        setNotice("请先选择 Excel 文件。", true);
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", file);
+      el.importBtn.disabled = true;
+      try {
+        const response = await fetch(IMPORT_API, {
+          method: "POST",
+          credentials: "same-origin",
+          body: formData,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.detail || payload.message || "导入失败");
+        }
+        await loadRows(false);
+        setNotice(payload.message || "Excel 导入完成。");
+        el.excelFile.value = "";
+      } catch (error) {
+        setNotice(error.message, true);
+      } finally {
+        el.importBtn.disabled = false;
+      }
+    }
+
+    async function logout() {
+      try {
+        const payload = await api(LOGOUT_PATH, { method: "POST" });
+        window.location.href = payload.redirect_to || "/financial/bi-dashboard/login";
+      } catch (error) {
+        setNotice(error.message, true);
+      }
+    }
+
+    function bindEvents() {
+      [
+        el.feedingQty,
+        el.totalWorkHours,
+        el.productionGoodQty,
+        el.productionBadQty,
+        el.qualityDefectQty,
+        el.planQty,
+      ].forEach((input) => input.addEventListener("input", renderComputedMetrics));
+      el.refreshBtn.addEventListener("click", () => loadRows(true).catch((error) => setNotice(error.message, true)));
+      el.resetBtn.addEventListener("click", resetForm);
+      el.backBtn.addEventListener("click", () => { window.location.href = DASHBOARD_PATH; });
+      el.saveBtn.addEventListener("click", saveRow);
+      el.importBtn.addEventListener("click", importExcel);
+      el.filterBtn.addEventListener("click", () => loadRows(true).catch((error) => setNotice(error.message, true)));
+      el.logoutBtn.addEventListener("click", logout);
+    }
+
+    async function init() {
+      el.currentUserChip.textContent = CURRENT_USER || "BI 用户";
+      bindEvents();
+      renderComputedMetrics();
+      try {
+        await loadRows(false);
+      } catch (error) {
+        setNotice(error.message, true);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,3 +1,7 @@
+param(
+  [switch]$NoOpenBrowser
+)
+
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -86,7 +90,7 @@ if (-not (Test-PortListening -Port $mysqlPort)) {
 Write-Host "MySQL ready: 127.0.0.1:$mysqlPort"
 
 Write-Host "[2/3] Starting local dashboard..."
-& (Join-Path $scriptDir "start_local_dashboard.ps1")
+& (Join-Path $scriptDir "start_local_dashboard.ps1") -NoOpenBrowser:$NoOpenBrowser
 
 if (-not (Wait-HttpHealthy -Url $dashboardHealthUrl -Attempts 15 -DelayMs 500)) {
   throw "Dashboard health check failed: $dashboardHealthUrl"

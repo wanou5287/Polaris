@@ -97,8 +97,28 @@ class NotificationService:
         except Exception as e:
             logger.error(f"发送文件下载通知失败: {str(e)}")
             return False
-    
-    
+
+    async def send_text_notification(self, title: str, lines: List[str]) -> bool:
+        """发送通用文本通知"""
+        if not self.dingtalk_webhook_url:
+            logger.warning("钉钉Webhook URL未配置，跳过文本通知")
+            return False
+
+        try:
+            content_lines = [str(title or "").strip()]
+            content_lines.extend(str(line).strip() for line in lines if str(line or "").strip())
+            message = {
+                "msgtype": "text",
+                "text": {
+                    "content": "\n".join(content_lines)
+                }
+            }
+            return await self._send_dingtalk_message(message)
+        except Exception as e:
+            logger.error(f"发送文本通知失败: {str(e)}")
+            return False
+
+
     async def _send_dingtalk_message(self, message: Dict) -> bool:
         """发送钉钉消息"""
         try:
