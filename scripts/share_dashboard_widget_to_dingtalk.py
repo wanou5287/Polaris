@@ -26,13 +26,13 @@ EDGE_PATHS = [
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Share a BI dashboard widget to DingTalk.")
+    parser = argparse.ArgumentParser(description="Share a Polaris dashboard widget to DingTalk.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8888")
     parser.add_argument("--username", default="tester")
     parser.add_argument("--password", default="test123")
     parser.add_argument("--widget-id", type=int, required=True)
     parser.add_argument("--group-name", required=True)
-    parser.add_argument("--message-tag", default="供应链BI系统测试消息")
+    parser.add_argument("--message-tag", default="北极星系统测试消息")
     parser.add_argument("--output-dir", default="output/widget-share")
     return parser.parse_args()
 

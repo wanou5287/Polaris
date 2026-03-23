@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 200" width="1200" height="200" role="img" aria-labelledby="title desc">
+  <title id="title">Data Agent</title>
+  <desc id="desc">Project banner for Data Agent</desc>
+  <defs>
+    <!-- Sky blue gradient -->
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="60%" stop-color="#7dd3fc"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.20"/>
+    </filter>
+    <style>
+      .title { font: 800 72px 'Segoe UI', system-ui, -apple-system, Arial; fill: #ffffff; letter-spacing: 2px; }
+      .chip { font: 700 14px 'Segoe UI', system-ui, -apple-system, Arial; fill: #0f172a; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1200" height="200" fill="url(#g)"/>
+  <!-- soft clouds -->
+  <circle cx="200" cy="90" r="120" fill="#ffffff" opacity="0.20"/>
+  <circle cx="310" cy="110" r="80" fill="#ffffff" opacity="0.15"/>
+  <circle cx="980" cy="150" r="100" fill="#ffffff" opacity="0.12"/>
+
+  <!-- decorative symbols: data/AI themed -->
+  <!-- tiny bar chart -->
+  <g opacity="0.85">
+    <rect x="150" y="132" width="6" height="22" fill="#ffffff"/>
+    <rect x="160" y="122" width="6" height="32" fill="#ffffff" opacity="0.92"/>
+    <rect x="170" y="112" width="6" height="42" fill="#ffffff" opacity="0.88"/>
+  </g>
+
+  <!-- line chart with nodes -->
+  <g opacity="0.85">
+    <polyline points="520,120 540,110 560,130 580,100 600,115" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="520" cy="120" r="3" fill="#ffffff"/>
+    <circle cx="540" cy="110" r="3" fill="#ffffff"/>
+    <circle cx="560" cy="130" r="3" fill="#ffffff"/>
+    <circle cx="580" cy="100" r="3" fill="#ffffff"/>
+    <circle cx="600" cy="115" r="3" fill="#ffffff"/>
+  </g>
+
+  <!-- small network graph -->
+  <g stroke="#ffffff" stroke-width="2" opacity="0.8">
+    <circle cx="1020" cy="60" r="3" fill="#ffffff"/>
+    <circle cx="1050" cy="80" r="3" fill="#ffffff"/>
+    <circle cx="1000" cy="95" r="3" fill="#ffffff"/>
+    <circle cx="1040" cy="115" r="3" fill="#ffffff"/>
+    <line x1="1020" y1="60" x2="1050" y2="80"/>
+    <line x1="1020" y1="60" x2="1000" y2="95"/>
+    <line x1="1050" y1="80" x2="1040" y2="115"/>
+    <line x1="1000" y1="95" x2="1040" y2="115"/>
+  </g>
+
+  <!-- matrix of dots -->
+  <g fill="#ffffff" opacity="0.7">
+    <circle cx="270" cy="58" r="2"/>
+    <circle cx="280" cy="58" r="2"/>
+    <circle cx="290" cy="58" r="2"/>
+    <circle cx="270" cy="70" r="2"/>
+    <circle cx="280" cy="70" r="2"/>
+    <circle cx="290" cy="70" r="2"/>
+  </g>
+
+  <!-- bottom wave to reduce whitespace perception -->
+  <path d="M0,175 C180,165 260,190 420,185 C620,180 740,195 940,186 C1060,180 1130,185 1200,175 L1200,200 L0,200 Z"
+        fill="#ffffff" opacity="0.18"/>
+
+  <!-- Text -->
+  <g transform="translate(80, 115)" filter="url(#shadow)">
+    <text class="title">Data Agent</text>
+  </g>
+</svg>
+

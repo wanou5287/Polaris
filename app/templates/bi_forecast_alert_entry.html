@@ -694,7 +694,7 @@
     }
 
     async function init() {
-      el.currentUserChip.textContent = CURRENT_USER || "BI 用户";
+      el.currentUserChip.textContent = CURRENT_USER || "北极星用户";
       bindEvents();
       try {
         await Promise.all([loadOverview(false), loadManualRows()]);

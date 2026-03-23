@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>供应链 BI 运营中心</title>
+  <title>北极星经营中心</title>
   <style>
     :root {
       --bg: #f5f7fb;
@@ -595,6 +595,12 @@
           </span>
           <span>预测</span>
         </button>
+        <button class="rail-item" id="dataAgentBtn" type="button">
+          <span class="rail-icon">
+            <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M6 4.2h6"/><path d="M9 4.2v2.2"/><rect x="4" y="6.4" width="10" height="7.8" rx="2"/><circle cx="7.2" cy="10.3" r="0.8"/><circle cx="10.8" cy="10.3" r="0.8"/><path d="M7.3 12.6h3.4"/></svg>
+          </span>
+          <span>智能体</span>
+        </button>
         <button class="rail-item" id="syncScheduleBtn" type="button">
           <span class="rail-icon">
             <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="5.8"/><path d="M9 5.8v3.5l2.5 1.5"/><path d="M9 1.8v1.3M9 14.9v1.3M16.2 9h-1.3M3.1 9H1.8"/></svg>
@@ -610,7 +616,7 @@
         <div class="brand">
           <div class="brand-mark">__BI_LOGO_WORDMARK__</div>
           <div class="brand-copy">
-            <h1>供应链 BI 运营首页</h1>
+            <h1>北极星经营中心</h1>
             <p id="headerSub">围绕库存、销售、退货、翻新生产与预测预警的经营驾驶舱。</p>
           </div>
         </div>
@@ -625,7 +631,7 @@
         <div class="hero-head">
           <div class="hero-copy">
             <span class="kicker">经营中心</span>
-            <h2 id="headerTitle">供应链 BI 运营中心</h2>
+            <h2 id="headerTitle">北极星经营中心</h2>
             <p id="viewDescription">查看不同看板的最新业务结果，按日期切换经营口径，并将更深入的配置统一收口到编辑页。</p>
           </div>
           <div class="hero-side">
@@ -705,6 +711,7 @@
     const INVENTORY_MAPPING_PATH = "/financial/bi-dashboard/inventory-mappings";
     const REFURB_PRODUCTION_PATH = "/financial/bi-dashboard/refurb-production";
     const FORECAST_ALERT_PATH = "/financial/bi-dashboard/forecast-alerts";
+    const DATA_AGENT_PATH = "/financial/bi-dashboard/data-agent";
     const SYNC_SCHEDULE_PATH = "/financial/bi-dashboard/sync-schedule";
     const PALETTE = ["#5B8FF9", "#4ECB73", "#5AD8D8", "#FFB366", "#8B6AD9", "#F6C85F", "#FF7A7A"];
     const IMMEDIATE_RENDER_TYPES = new Set(["text", "table", "ranking"]);
@@ -825,7 +832,7 @@
       el.viewTabs.innerHTML = state.views.map((view) => `<button class="tab ${view.id === state.currentViewId ? "active" : ""}" data-view="${view.id}" type="button">${escapeHtml(view.name)}</button>`).join("");
       document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => loadViewDetail(Number(button.dataset.view))));
       if (!state.currentView) {
-        el.headerTitle.textContent = "供应链 BI 运营中心";
+        el.headerTitle.textContent = "北极星经营中心";
         el.headerSub.textContent = "围绕库存、销售、退货、翻新生产与预测预警的经营驾驶舱。";
         el.viewTitle.textContent = "当前看板";
         el.viewDescription.textContent = "还没有可展示的看板。";
@@ -1076,6 +1083,7 @@
       document.getElementById("inventoryMappingBtn").addEventListener("click", () => { location.href = INVENTORY_MAPPING_PATH; });
       document.getElementById("refurbProductionBtn").addEventListener("click", () => { location.href = REFURB_PRODUCTION_PATH; });
       document.getElementById("forecastAlertBtn").addEventListener("click", () => { location.href = FORECAST_ALERT_PATH; });
+      document.getElementById("dataAgentBtn").addEventListener("click", () => { location.href = DATA_AGENT_PATH; });
       document.getElementById("syncScheduleBtn").addEventListener("click", () => { location.href = SYNC_SCHEDULE_PATH; });
       document.getElementById("globalFilterBtn").addEventListener("click", openCurrentEditor);
       el.viewSelect.addEventListener("change", (event) => loadViewDetail(Number(event.target.value)));

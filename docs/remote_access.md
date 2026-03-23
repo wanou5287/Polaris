@@ -4,7 +4,7 @@ This project now supports remote access through a Cloudflare Quick Tunnel.
 
 ## What it does
 
-- Keeps the BI dashboard on local `http://127.0.0.1:8888`
+- Keeps the 北极星看板 on local `http://127.0.0.1:8888`
 - Creates a temporary public HTTPS address on `trycloudflare.com`
 - Uses the dashboard login page on `/financial/bi-dashboard`
 

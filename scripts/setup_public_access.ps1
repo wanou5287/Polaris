@@ -20,7 +20,7 @@ if (-not $isAdmin) {
   }
 }
 
-$RuleName = "FinvisPy-HTTP-$Port"
+$RuleName = "Polaris-HTTP-$Port"
 
 try {
   $existing = Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue

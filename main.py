@@ -1,4 +1,4 @@
-"""FinvisPy FastAPI entrypoint."""
+"""Polaris FastAPI entrypoint."""
 
 from contextlib import asynccontextmanager
 
@@ -14,7 +14,7 @@ from app.routes.base import api_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("FinvisPy is starting...")
+    logger.info("北极星启动中...")
     try:
         init_db()
         logger.info("Database initialized.")
@@ -25,12 +25,12 @@ async def lifespan(app: FastAPI):
     logger.info("Storage backend: %s", settings.STORAGE_BACKEND)
     yield
     stop_sync_scheduler()
-    logger.info("FinvisPy is shutting down...")
+    logger.info("北极星正在关闭...")
 
 
 app = FastAPI(
-    title="Financial Automation System",
-    description="Generate reports and BI views from Yonyou and internal data.",
+    title="北极星供应链与财务运营系统",
+    description="北极星：基于用友与内部数据的财务自动化、供应链经营分析与预警平台。",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/financial/docs",

@@ -7,10 +7,10 @@ from app.core.logger import logger
 # Mount all APIs under /financial
 api_router = APIRouter(prefix="/financial")
 
-# Keep BI dashboard always available.
+# Keep Polaris dashboard always available.
 from .bi_dashboard import router as bi_dashboard_router
 
-api_router.include_router(bi_dashboard_router, tags=["BI Dashboard"])
+api_router.include_router(bi_dashboard_router, tags=["北极星看板"])
 
 # Load heavy routers defensively so one missing dependency does not
 # prevent the whole app from starting.

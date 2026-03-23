@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>北极星 · 数据智能体</title>
+  <style>
+    :root {
+      --bg: #f4f6fb;
+      --panel: rgba(255, 255, 255, 0.94);
+      --panel-strong: rgba(255, 255, 255, 0.98);
+      --line: rgba(15, 23, 42, 0.08);
+      --text: #111827;
+      --sub: #667085;
+      --blue: #1677ff;
+      --green: #12b76a;
+      --orange: #f79009;
+      --shadow: 0 22px 40px rgba(15, 23, 42, 0.08);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 0% 0%, rgba(22, 119, 255, 0.1), transparent 28%),
+        radial-gradient(circle at 100% 10%, rgba(18, 183, 106, 0.08), transparent 24%),
+        linear-gradient(180deg, #f9fbff 0%, var(--bg) 100%);
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    .shell {
+      min-height: 100vh;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .glass {
+      background: var(--panel);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: var(--shadow);
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-radius: var(--radius-xl);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+    }
+    .brand-copy {
+      min-width: 0;
+    }
+    .brand-copy h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      letter-spacing: -0.04em;
+    }
+    .brand-copy p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 13px;
+      line-height: 1.75;
+    }
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .pill, .ghost, .primary {
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .pill, .ghost {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--line);
+    }
+    .primary {
+      color: #fff;
+      background: linear-gradient(180deg, #2c77ff, #1558d8);
+      box-shadow: 0 12px 26px rgba(22, 119, 255, 0.22);
+    }
+    .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(22, 119, 255, 0.08);
+      color: #1757cc;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .hero {
+      border-radius: var(--radius-xl);
+      padding: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+    .hero-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .hero-copy h2 {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.15;
+      letter-spacing: -0.05em;
+    }
+    .hero-copy p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 14px;
+      line-height: 1.85;
+      max-width: 760px;
+    }
+    .status-card {
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      background: linear-gradient(160deg, rgba(255,255,255,.98), rgba(247,250,255,.8));
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      justify-content: space-between;
+    }
+    .status-card strong {
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+    .status-card p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 13px;
+      line-height: 1.8;
+    }
+    .status-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(148, 163, 184, 0.12);
+      color: #475467;
+    }
+    .status-pill::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: currentColor;
+      opacity: .9;
+    }
+    .status-pill.online {
+      background: rgba(18, 183, 106, 0.12);
+      color: #067647;
+    }
+    .status-pill.offline {
+      background: rgba(247, 144, 9, 0.14);
+      color: #b54708;
+    }
+    .status-pill.missing {
+      background: rgba(248, 113, 113, 0.14);
+      color: #b42318;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric-card {
+      padding: 18px;
+      border-radius: 18px;
+      background: var(--panel-strong);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.04);
+    }
+    .metric-card span {
+      display: block;
+      color: var(--sub);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .metric-card strong {
+      display: block;
+      font-size: 24px;
+      letter-spacing: -0.05em;
+    }
+    .metric-card p {
+      margin: 8px 0 0;
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.75;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      padding: 20px;
+      border-radius: var(--radius-lg);
+    }
+    .panel h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      letter-spacing: -0.04em;
+    }
+    .panel > p {
+      margin: 0 0 16px;
+      color: var(--sub);
+      font-size: 13px;
+      line-height: 1.8;
+    }
+    .capability-list, .meta-list {
+      display: grid;
+      gap: 10px;
+    }
+    .capability-item, .meta-item {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      background: rgba(255,255,255,.82);
+    }
+    .capability-item strong, .meta-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+    .capability-item span, .meta-item span {
+      display: block;
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.75;
+      word-break: break-all;
+    }
+    .meta-item code, .step-card code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+    }
+    .step-stack {
+      display: grid;
+      gap: 10px;
+    }
+    .step-card {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.03);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+    }
+    .step-card strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .step-card pre {
+      margin: 0;
+      white-space: pre-wrap;
+      color: #334155;
+      line-height: 1.8;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    .notice {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(22, 119, 255, 0.08);
+      border: 1px solid rgba(22, 119, 255, 0.12);
+      color: #1d4ed8;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+    .helper {
+      margin-top: 12px;
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: rgba(17, 24, 39, 0.94);
+      color: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: opacity .18s ease, transform .18s ease;
+      z-index: 20;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 1240px) {
+      .hero,
+      .workspace { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .shell { padding: 12px; }
+      .topbar { grid-template-columns: 1fr; }
+      .top-actions { justify-content: flex-start; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .hero-copy h2 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar glass">
+      <div class="brand">
+        <div class="brand-mark">__BI_LOGO_BADGE_SMALL__</div>
+        <div class="brand-copy">
+          <h1>北极星 · 数据智能体</h1>
+          <p>先以独立模块形式引入 DataAgent，统一入口、查看运行状态和启动指引，后续再决定是否做统一代理和嵌入式联动。</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="user-chip" id="currentUserChip"></span>
+        <button class="ghost" id="backDashboardBtn" type="button">返回首页</button>
+        <button class="ghost" id="openEditorBtn" type="button">进入编辑</button>
+        <button class="primary" id="refreshBtn" type="button">刷新状态</button>
+        <button class="ghost" id="logoutBtn" type="button">退出</button>
+      </div>
+    </header>
+
+    <section class="hero glass">
+      <div class="hero-copy">
+        <span class="kicker">Data Agent</span>
+        <h2>为北极星预留会话式数据分析智能体入口</h2>
+        <p id="integrationNote">正在读取当前集成状态...</p>
+        <div class="status-row" id="heroStatusRow"></div>
+      </div>
+      <aside class="status-card">
+        <div>
+          <strong>当前阶段定位</strong>
+          <p>先把开源数据分析智能体代码纳入项目，并在前端提供独立入口。这样我们不需要马上改动主看板逻辑，也不会把未配置完成的智能体服务直接暴露给业务页面。</p>
+        </div>
+        <div class="actions">
+          <button class="ghost" id="openRepoBtn" type="button">查看开源仓库</button>
+          <button class="ghost" id="openLocalUiBtn" type="button">本机打开 Streamlit</button>
+          <button class="ghost" id="openLocalApiBtn" type="button">本机打开 API</button>
+        </div>
+      </aside>
+    </section>
+
+    <section class="metric-grid" id="metricGrid"></section>
+
+    <section class="workspace">
+      <div class="panel glass">
+        <h3>能力概览</h3>
+        <p>这一页先聚焦于“可达入口 + 可见状态 + 启动指引”。真正把 DataAgent 和北极星主数据源做深度打通，我们后面再按你确认的方式推进。</p>
+        <div class="capability-list" id="capabilityList"></div>
+        <div class="helper">当前默认按独立应用处理：FastAPI 后端负责会话式分析接口，Streamlit 负责交互式前端。</div>
+      </div>
+      <div class="panel glass">
+        <h3>接入状态</h3>
+        <p>这里展示仓库代码是否已纳入、核心文件是否存在，以及本机端口层面的服务探测结果。</p>
+        <div class="meta-list" id="metaList"></div>
+      </div>
+    </section>
+
+    <section class="panel glass">
+      <h3>启动与联调</h3>
+      <p>DataAgent 目前还保持独立运行，不强行并进北极星主进程。这样接入风险更小，也更方便我们后续决定是代理转发，还是继续作为独立服务。</p>
+      <div class="step-stack" id="stepStack"></div>
+      <div class="notice" id="noticeCard">Streamlit 与 API 默认都走本机端口。如果你希望外网同事也能直接访问，下一步需要给 DataAgent 也做统一代理或反向转发。</div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const CURRENT_USER = __BI_CURRENT_USER_JSON__;
+    const DASHBOARD_PATH = __BI_DASHBOARD_PATH_JSON__;
+    const EDITOR_PATH = __BI_EDITOR_PATH_JSON__;
+    const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
+    const STATUS_API_PATH = __BI_DATA_AGENT_STATUS_API_PATH_JSON__;
+
+    let latestStatus = null;
+    let toastTimer = null;
+
+    const el = {
+      currentUserChip: document.getElementById("currentUserChip"),
+      heroStatusRow: document.getElementById("heroStatusRow"),
+      integrationNote: document.getElementById("integrationNote"),
+      metricGrid: document.getElementById("metricGrid"),
+      capabilityList: document.getElementById("capabilityList"),
+      metaList: document.getElementById("metaList"),
+      stepStack: document.getElementById("stepStack"),
+      noticeCard: document.getElementById("noticeCard"),
+      toast: document.getElementById("toast"),
+    };
+
+    function showToast(message) {
+      if (!message) return;
+      el.toast.textContent = message;
+      el.toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2200);
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...options,
+      });
+      if (response.status === 401) {
+        const next = encodeURIComponent(`${location.pathname}${location.search}`);
+        location.href = `/financial/bi-dashboard/login?next=${next}`;
+        throw new Error("登录已失效");
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || "请求失败");
+      }
+      return response.json();
+    }
+
+    function statusPill(label, kind) {
+      return `<span class="status-pill ${kind}">${label}</span>`;
+    }
+
+    function renderStatus(status) {
+      latestStatus = status;
+      el.integrationNote.textContent = status.integration_note || "";
+      el.heroStatusRow.innerHTML = [
+        status.repo_present ? statusPill("代码快照已纳入", "online") : statusPill("代码快照未纳入", "missing"),
+        status.config_ready ? statusPill("conf.yaml 已准备", "online") : statusPill("conf.yaml 待配置", "offline"),
+        status.api_online ? statusPill("API 服务在线", "online") : statusPill("API 服务未启动", "offline"),
+        status.ui_online ? statusPill("Streamlit 在线", "online") : statusPill("Streamlit 未启动", "offline"),
+      ].join("");
+
+      const metrics = [
+        {
+          label: "代码纳入",
+          value: status.repo_present ? "已接入" : "未接入",
+          desc: status.repo_path,
+        },
+        {
+          label: "配置文件",
+          value: status.config_ready ? "已准备" : "待复制",
+          desc: "建议先从 conf.example.yaml 复制 conf.yaml 后再开始联调。",
+        },
+        {
+          label: "API 状态",
+          value: status.api_online ? "运行中" : "未启动",
+          desc: status.api_url,
+        },
+        {
+          label: "前端状态",
+          value: status.ui_online ? "运行中" : "未启动",
+          desc: status.ui_url,
+        },
+      ];
+      el.metricGrid.innerHTML = metrics.map((item) => `
+        <article class="metric-card">
+          <span>${item.label}</span>
+          <strong>${item.value}</strong>
+          <p>${item.desc}</p>
+        </article>
+      `).join("");
+
+      el.capabilityList.innerHTML = (status.capabilities || []).map((item, index) => `
+        <article class="capability-item">
+          <strong>能力 ${index + 1}</strong>
+          <span>${item}</span>
+        </article>
+      `).join("");
+
+      const filePairs = Object.entries(status.files || {}).map(([key, exists]) => ({
+        label: key,
+        value: exists ? "已找到" : "缺失",
+      }));
+      const metaItems = [
+        { label: "仓库地址", value: status.github_url },
+        { label: "本地目录", value: status.repo_path },
+        ...filePairs.map((item) => ({ label: `文件检查 · ${item.label}`, value: item.value })),
+      ];
+      el.metaList.innerHTML = metaItems.map((item) => `
+        <article class="meta-item">
+          <strong>${item.label}</strong>
+          <span><code>${item.value}</code></span>
+        </article>
+      `).join("");
+
+      el.stepStack.innerHTML = (status.startup_steps || []).map((item, index) => `
+        <article class="step-card">
+          <strong>步骤 ${index + 1}</strong>
+          <pre><code>${item}</code></pre>
+        </article>
+      `).join("");
+    }
+
+    async function refreshStatus() {
+      try {
+        const status = await api(STATUS_API_PATH);
+        renderStatus(status);
+        showToast("DataAgent 状态已刷新");
+      } catch (error) {
+        showToast(error.message || "状态刷新失败");
+      }
+    }
+
+    function bind() {
+      document.getElementById("backDashboardBtn").addEventListener("click", () => {
+        location.href = DASHBOARD_PATH;
+      });
+      document.getElementById("openEditorBtn").addEventListener("click", () => {
+        location.href = EDITOR_PATH;
+      });
+      document.getElementById("refreshBtn").addEventListener("click", refreshStatus);
+      document.getElementById("logoutBtn").addEventListener("click", async () => {
+        await api(LOGOUT_PATH, { method: "POST" }).catch(() => null);
+        location.href = `/financial/bi-dashboard/login`;
+      });
+      document.getElementById("openRepoBtn").addEventListener("click", () => {
+        if (latestStatus?.github_url) window.open(latestStatus.github_url, "_blank", "noopener");
+      });
+      document.getElementById("openLocalUiBtn").addEventListener("click", () => {
+        if (!latestStatus?.ui_url) return;
+        window.open(latestStatus.ui_url, "_blank", "noopener");
+      });
+      document.getElementById("openLocalApiBtn").addEventListener("click", () => {
+        if (!latestStatus?.api_url) return;
+        window.open(latestStatus.api_url, "_blank", "noopener");
+      });
+    }
+
+    (async () => {
+      el.currentUserChip.textContent = CURRENT_USER || "当前用户";
+      bind();
+      await refreshStatus();
+    })();
+  </script>
+</body>
+</html>

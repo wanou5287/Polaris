@@ -7,6 +7,7 @@ import io
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 from base64 import b64decode, urlsafe_b64decode, urlsafe_b64encode
@@ -60,10 +61,12 @@ schema_ready = False
 project_root = Path(__file__).resolve().parents[2]
 yonyou_sync_config_path = project_root / "config" / "yonyou_inventory_sync.yaml"
 dashboard_users_config_path = project_root / "config" / "bi_dashboard_users.local.yaml"
-DASHBOARD_SESSION_COOKIE = "finvis_bi_session"
+DASHBOARD_SESSION_COOKIE = "polaris_session"
 DASHBOARD_SESSION_MAX_AGE = 60 * 60 * 24 * 14
 DASHBOARD_DEFAULT_PATH = "/financial/bi-dashboard"
 DASHBOARD_EDITOR_PATH = "/financial/bi-dashboard/editor"
+DATA_AGENT_ENTRY_PATH = "/financial/bi-dashboard/data-agent"
+DATA_AGENT_STATUS_API_PATH = "/financial/bi-dashboard/api/data-agent/status"
 SYNC_SCHEDULE_KEY = "raw_yonyou_sync_default"
 SYNC_SCHEDULE_JOB_ID = "bi_raw_yonyou_sync"
 SYNC_SCHEDULER_TIMEZONE = "Asia/Shanghai"
@@ -74,6 +77,10 @@ PREFERRED_SALES_VIEW_NAME = "销售/退货看板"
 PREFERRED_SALES_VIEW_DESCRIPTION = "基于销售清洗表预置的销售与退货经营看板"
 PREFERRED_INVENTORY_VIEW_NAME = "库存清洗看板"
 PREFERRED_INVENTORY_VIEW_DESCRIPTION = "基于库存清洗表预置的库存结构与明细看板"
+DATA_AGENT_GITHUB_URL = "https://github.com/3600818203/DataAgent"
+DATA_AGENT_REPO_DIR = project_root / "vendor" / "DataAgent"
+DATA_AGENT_API_URL = "http://127.0.0.1:10000"
+DATA_AGENT_UI_URL = "http://127.0.0.1:8501"
 
 WIDGET_TYPES: Dict[str, str] = {
     "metric": "指标卡",
@@ -306,7 +313,7 @@ def dashboard_session_secret() -> str:
     configured = str(((raw.get("settings") or {}).get("session_secret")) or os.getenv("BI_DASH_SESSION_SECRET") or "").strip()
     if configured:
         return configured
-    seed = f"{project_root}|{os.getenv('BI_DASH_USERNAME', 'bi_admin')}|finvis-bi-session"
+    seed = f"{project_root}|{os.getenv('BI_DASH_USERNAME', 'bi_admin')}|polaris-session"
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
@@ -401,24 +408,22 @@ def render_template(template_name: str, replacements: Dict[str, str] | None = No
 
 def dashboard_logo_wordmark_svg() -> str:
     return """
-<svg width="248" height="72" viewBox="0 0 248 72" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Supply Chain BI 精准学">
+<svg width="248" height="72" viewBox="0 0 248 72" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="北极星">
   <defs>
-    <linearGradient id="biLogoBlue" x1="8" y1="6" x2="64" y2="66" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0A84FF"/>
-      <stop offset="1" stop-color="#5CB2FF"/>
+    <linearGradient id="polarisWordmarkBlue" x1="7" y1="8" x2="60" y2="62" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1677FF"/>
+      <stop offset="1" stop-color="#63B3FF"/>
     </linearGradient>
   </defs>
   <g>
-    <rect x="2" y="2" width="68" height="68" rx="20" fill="white" stroke="#E5E7EB" stroke-width="1.5"/>
-    <text x="36" y="31" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="500" fill="#6E6E73" letter-spacing="0.35">supply</text>
-    <text x="36" y="49" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="29" font-weight="700" fill="#111827" letter-spacing="-0.8">BI</text>
-    <path d="M2 49H70V52C70 61.941 61.941 70 52 70H20C10.059 70 2 61.941 2 52V49Z" fill="url(#biLogoBlue)"/>
-    <text x="36" y="63" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="12.5" font-weight="700" fill="white">精准学</text>
+    <rect x="2" y="2" width="68" height="68" rx="20" fill="white" stroke="#E6ECF5" stroke-width="1.5"/>
+    <circle cx="36" cy="36" r="17" fill="url(#polarisWordmarkBlue)" opacity="0.12"/>
+    <path d="M36 15L40.9 27.1L53.9 28L43.9 36.3L47.1 49.1L36 42.1L24.9 49.1L28.1 36.3L18.1 28L31.1 27.1L36 15Z" fill="url(#polarisWordmarkBlue)"/>
   </g>
-  <g transform="translate(88 12)">
-    <text x="0" y="14" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="500" fill="#6E6E73" letter-spacing="0.4">supply chain</text>
-    <text x="0" y="41" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="31" font-weight="700" fill="#1D1D1F" letter-spacing="-0.9">BI</text>
-    <text x="47" y="41" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="19" font-weight="700" fill="#0071E3">精准学</text>
+  <g transform="translate(88 13)">
+    <text x="0" y="12" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="500" fill="#6E6E73" letter-spacing="0.48">Polaris</text>
+    <text x="0" y="39" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#1D1D1F" letter-spacing="-0.7">北极星</text>
+    <text x="0" y="57" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" fill="#1677FF">经营中心</text>
   </g>
 </svg>
 """.strip()
@@ -426,39 +431,83 @@ def dashboard_logo_wordmark_svg() -> str:
 
 def dashboard_logo_badge_svg() -> str:
     return """
-<svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Supply Chain BI 精准学">
+<svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="北极星">
   <defs>
-    <linearGradient id="biBadgeBlue" x1="32" y1="180" x2="228" y2="248" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0A84FF"/>
-      <stop offset="1" stop-color="#4F9DFF"/>
+    <linearGradient id="polarisBadgeBlue" x1="54" y1="46" x2="210" y2="214" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1677FF"/>
+      <stop offset="1" stop-color="#63B3FF"/>
     </linearGradient>
   </defs>
-  <rect x="10" y="10" width="240" height="240" rx="52" fill="white"/>
-  <rect x="10" y="168" width="240" height="82" rx="0" fill="url(#biBadgeBlue)"/>
-  <path d="M10 168H250V198C250 226.719 226.719 250 198 250H62C33.2812 250 10 226.719 10 198V168Z" fill="url(#biBadgeBlue)"/>
-  <text x="130" y="60" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="24" font-weight="500" fill="#6E6E73" letter-spacing="0.6">supply chain</text>
-  <text x="130" y="146" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="92" font-weight="700" fill="#111827" letter-spacing="-2.4">BI</text>
-  <text x="130" y="222" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="48" font-weight="700" fill="white">精准学</text>
+  <rect x="10" y="10" width="240" height="240" rx="56" fill="white" stroke="#E6ECF5" stroke-width="1.5"/>
+  <circle cx="130" cy="98" r="42" fill="url(#polarisBadgeBlue)" opacity="0.12"/>
+  <path d="M130 48L141.4 76.1L171.6 78.1L148.4 97.4L155.8 127.2L130 111L104.2 127.2L111.6 97.4L88.4 78.1L118.6 76.1L130 48Z" fill="url(#polarisBadgeBlue)"/>
+  <text x="130" y="172" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="52" font-weight="700" fill="#111827" letter-spacing="-1.2">北极星</text>
+  <text x="130" y="204" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="20" font-weight="500" fill="#6E6E73" letter-spacing="0.5">Polaris</text>
 </svg>
 """.strip()
 
 
 def dashboard_logo_badge_small_svg() -> str:
     return """
-<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="BI 精准学">
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="北极星">
   <defs>
-    <linearGradient id="biBadgeBlueSmall" x1="6" y1="30" x2="42" y2="46" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0A84FF"/>
-      <stop offset="1" stop-color="#5CB2FF"/>
+    <linearGradient id="polarisBadgeBlueSmall" x1="8" y1="6" x2="41" y2="42" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1677FF"/>
+      <stop offset="1" stop-color="#63B3FF"/>
     </linearGradient>
   </defs>
-  <rect x="1.25" y="1.25" width="45.5" height="45.5" rx="13" fill="white" stroke="#E5E7EB"/>
-  <path d="M1.25 29H46.75V33.5C46.75 40.8438 40.8438 46.75 33.5 46.75H14.5C7.15621 46.75 1.25 40.8438 1.25 33.5V29Z" fill="url(#biBadgeBlueSmall)"/>
-  <text x="24" y="15.5" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="6.1" font-weight="500" fill="#6E6E73" letter-spacing="0.18">supply</text>
-  <text x="24" y="27.6" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="15.6" font-weight="700" fill="#111827" letter-spacing="-0.4">BI</text>
-  <text x="24" y="39.6" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="7.7" font-weight="700" fill="white">精准学</text>
+  <rect x="1.25" y="1.25" width="45.5" height="45.5" rx="13" fill="white" stroke="#E6ECF5"/>
+  <circle cx="24" cy="24" r="9.2" fill="url(#polarisBadgeBlueSmall)" opacity="0.14"/>
+  <path d="M24 8.5L27 16.3L35.3 16.9L28.9 22.2L31 30.4L24 25.9L17 30.4L19.1 22.2L12.7 16.9L21 16.3L24 8.5Z" fill="url(#polarisBadgeBlueSmall)"/>
 </svg>
 """.strip()
+
+
+def is_local_port_open(host: str, port: int, timeout: float = 0.35) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def data_agent_status_payload() -> Dict[str, Any]:
+    repo_dir = DATA_AGENT_REPO_DIR
+    files = {
+        "readme": repo_dir / "README_CN.md",
+        "backend": repo_dir / "server.py",
+        "frontend": repo_dir / "streamlit_app.py",
+        "example_config": repo_dir / "conf.example.yaml",
+        "config": repo_dir / "conf.yaml",
+        "requirements": repo_dir / "requirements.txt",
+    }
+    return {
+        "module_name": "数据智能体",
+        "display_name": "DataAgent",
+        "github_url": DATA_AGENT_GITHUB_URL,
+        "repo_path": str(repo_dir),
+        "repo_present": repo_dir.exists(),
+        "config_ready": files["config"].exists(),
+        "files": {name: path.exists() for name, path in files.items()},
+        "api_url": DATA_AGENT_API_URL,
+        "ui_url": DATA_AGENT_UI_URL,
+        "api_online": is_local_port_open("127.0.0.1", 10000),
+        "ui_online": is_local_port_open("127.0.0.1", 8501),
+        "startup_steps": [
+            "cd /d \"vendor\\DataAgent\"",
+            "pip install -r requirements.txt",
+            "copy conf.example.yaml conf.yaml",
+            "python server.py --host 0.0.0.0 --port 10000",
+            "streamlit run streamlit_app.py --server.port 8501",
+        ],
+        "capabilities": [
+            "多智能体协作规划与执行",
+            "基于 CSV / MySQL / Doris 的数据分析",
+            "流式对话、代码执行与分析报告生成",
+            "支持 MCP 与 RAGFlow 扩展",
+        ],
+        "integration_note": "当前阶段先以独立模块形式接入北极星，前端提供统一入口与运行状态查看，后续再决定是否做统一代理和单点嵌入。",
+    }
 
 
 def json_dumps(value: Any) -> str:
@@ -3150,6 +3199,38 @@ async def bi_dashboard_sync_schedule(request: Request) -> Response:
     )
 
 
+@router.get("/bi-dashboard/data-agent", response_class=HTMLResponse)
+async def bi_dashboard_data_agent_entry(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_data_agent_entry.html",
+            {
+                "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                "__BI_DASHBOARD_PATH_JSON__": json.dumps(DASHBOARD_DEFAULT_PATH, ensure_ascii=False),
+                "__BI_EDITOR_PATH_JSON__": json.dumps(DASHBOARD_EDITOR_PATH, ensure_ascii=False),
+                "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+                "__BI_DATA_AGENT_STATUS_API_PATH_JSON__": json.dumps(DATA_AGENT_STATUS_API_PATH, ensure_ascii=False),
+                "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
+                "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
+            },
+        )
+    )
+
+
+@router.get("/bi-dashboard/api/data-agent/status")
+async def bi_dashboard_data_agent_status(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    return JSONResponse(data_agent_status_payload())
+
+
 @router.get("/bi-dashboard/api/sync-schedule")
 async def get_sync_schedule(_auth: str = Depends(require_auth)) -> JSONResponse:
     ensure_schema()
@@ -4270,7 +4351,7 @@ async def share_widget_dingtalk(
     ensure_schema()
     selected_date = parse_date_or_none(payload.get("biz_date"))
     group_name = str(payload.get("group_name") or "供应链数据同步群").strip() or "供应链数据同步群"
-    message_tag = str(payload.get("message_tag") or "供应链BI系统测试消息").strip() or "供应链BI系统测试消息"
+    message_tag = str(payload.get("message_tag") or "北极星系统测试消息").strip() or "北极星系统测试消息"
     current_engine = get_engine()
     with current_engine.connect() as conn:
         widget = load_widget(conn, widget_id)

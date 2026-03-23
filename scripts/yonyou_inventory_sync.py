@@ -1062,7 +1062,7 @@ class YonyouOpenApiClient:
             params=params,
             timeout=self.config.request_timeout_seconds,
             verify=self.config.verify_ssl,
-            headers={"User-Agent": "FinvisPy-InventorySync/1.0"},
+            headers={"User-Agent": "Polaris-InventorySync/1.0"},
         )
         response.raise_for_status()
 
@@ -1103,7 +1103,7 @@ class YonyouOpenApiClient:
 
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "FinvisPy-InventorySync/1.0",
+            "User-Agent": "Polaris-InventorySync/1.0",
         }
 
         for attempt in range(1, self.config.max_retries + 1):

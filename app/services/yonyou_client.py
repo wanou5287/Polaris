@@ -73,7 +73,7 @@ class YonyouClient:
                 params=params,
                 timeout=30,
                 headers={
-                    "User-Agent": "FinVisPy/1.0.0",
+                    "User-Agent": "Polaris/1.0.0",
                     "Content-Type": "application/json"
                 }
             )
@@ -126,7 +126,7 @@ class YonyouClient:
             # 构建请求头
             headers = {
                 "Content-Type": "application/json",
-                "User-Agent": "FinVisPy/1.0.0"
+                "User-Agent": "Polaris/1.0.0"
             }
             
             logger.info(f"查询凭证参数: {query_params}")

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>供应链运营数据看板</title>
+  <title>北极星看板编辑台</title>
   <style>
     :root {
       --bg: #f5f5f7;
@@ -1390,7 +1390,7 @@
     <aside class="nav-rail glass">
       <div class="nav-brand">
         <div class="nav-brand-mark" style="width:auto;height:auto;background:none;box-shadow:none;">__BI_LOGO_BADGE_SMALL__</div>
-        <span>供应链运营</span>
+        <span>北极星</span>
       </div>
       <div class="nav-menu">
         <button class="nav-item active" type="button">
@@ -1413,6 +1413,10 @@
           <span class="nav-icon">预</span>
           <span>预警</span>
         </button>
+        <button class="nav-item" id="dataAgentBtn" type="button">
+          <span class="nav-icon">智</span>
+          <span>智能体</span>
+        </button>
         <button class="nav-item" id="syncScheduleBtn" type="button">
           <span class="nav-icon">定</span>
           <span>定时</span>
@@ -1430,8 +1434,8 @@
         <div class="brand">
           <div class="brand-mark" style="width:auto;height:auto;background:none;box-shadow:none;">__BI_LOGO_WORDMARK__</div>
           <div class="brand-copy">
-            <p class="eyebrow">Supply Chain BI</p>
-            <h1 id="headerTitle">供应链运营数据看板</h1>
+            <p class="eyebrow">Polaris</p>
+            <h1 id="headerTitle">北极星看板编辑台</h1>
           </div>
         </div>
         <div class="top-actions">
@@ -1449,7 +1453,7 @@
           <div class="hero-main">
             <div class="hero-head">
               <p class="eyebrow">经营中心</p>
-              <h2 id="heroTitle">供应链运营数据看板</h2>
+              <h2 id="heroTitle">北极星看板编辑台</h2>
               <p id="heroDescription">围绕库存、销售、退货、翻新生产和预测预警的核心指标，支持快速切换看板、统一筛选口径、沉淀 AI 解读与协同分享。</p>
             </div>
             <div class="view-tabs" id="viewTabList"></div>
@@ -1743,7 +1747,7 @@
         </div>
         <div>
           <label for="shareMessageTag">消息标注</label>
-          <input id="shareMessageTag" type="text" placeholder="例如：供应链BI系统测试消息" />
+          <input id="shareMessageTag" type="text" placeholder="例如：北极星系统测试消息" />
         </div>
         <div class="helper">系统会按当前图表配置生成图片并推送到钉钉机器人当前绑定的群，群名字段用于消息正文标注。</div>
         <div class="toolbar-row">
@@ -1764,9 +1768,10 @@
     const INVENTORY_MAPPING_PATH = "/financial/bi-dashboard/inventory-mappings";
     const REFURB_PRODUCTION_PATH = "/financial/bi-dashboard/refurb-production";
     const FORECAST_ALERT_PATH = "/financial/bi-dashboard/forecast-alerts";
+    const DATA_AGENT_PATH = "/financial/bi-dashboard/data-agent";
     const SYNC_SCHEDULE_PATH = "/financial/bi-dashboard/sync-schedule";
     const DEFAULT_SHARE_GROUP_NAME = "供应链数据同步群";
-    const DEFAULT_SHARE_MESSAGE_TAG = "供应链BI系统测试消息";
+    const DEFAULT_SHARE_MESSAGE_TAG = "北极星系统测试消息";
     const PREFERRED_VIEW_NAME = "销售/退货看板";
     const GRID_COLUMNS = 24;
     const GRID_ROW_HEIGHT = 56;
@@ -2738,8 +2743,8 @@
       const view = state.currentView;
       el.currentUserChip.textContent = CURRENT_USER;
       if (!view) {
-        el.headerTitle.textContent = "供应链运营数据看板";
-        el.heroTitle.textContent = "供应链运营数据看板";
+        el.headerTitle.textContent = "北极星看板编辑台";
+        el.heroTitle.textContent = "北极星看板编辑台";
         el.heroDescription.textContent = "请选择或创建一个看板。";
         el.currentViewName.value = "";
         el.currentViewDescription.value = "";
@@ -4400,6 +4405,7 @@
       document.getElementById("inventoryMappingBtn").addEventListener("click", openInventoryMappingEntry);
       document.getElementById("refurbProductionBtn").addEventListener("click", openRefurbProductionEntry);
       document.getElementById("forecastAlertBtn").addEventListener("click", openForecastAlertEntry);
+      document.getElementById("dataAgentBtn").addEventListener("click", () => { location.href = DATA_AGENT_PATH; });
       document.getElementById("syncScheduleBtn").addEventListener("click", openSyncScheduleEntry);
       document.getElementById("resetLayoutBtn").addEventListener("click", resetLayout);
       document.getElementById("openCreateDrawerBtn").addEventListener("click", () => openCreateDrawer("bar"));

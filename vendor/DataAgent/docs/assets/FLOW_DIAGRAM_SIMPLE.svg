@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1400" height="900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .title { font: bold 28px sans-serif; fill: #2c3e50; }
+      .subtitle { font: 16px sans-serif; fill: #7f8c8d; }
+      .node-text { font: 15px sans-serif; fill: #2c3e50; text-anchor: middle; font-weight: 500; }
+      .node-text-small { font: 12px sans-serif; fill: #555; text-anchor: middle; }
+      .arrow { stroke: #7f8c8d; stroke-width: 2.5; fill: none; marker-end: url(#arrowhead); }
+      .arrow-dotted { stroke: #95a5a6; stroke-width: 2; fill: none; stroke-dasharray: 8,4; marker-end: url(#arrowhead-light); }
+      .arrow-replan { stroke: #e67e22; stroke-width: 2; fill: none; stroke-dasharray: 8,4; marker-end: url(#arrowhead-orange); }
+      
+      .node-start { fill: #a8e6cf; stroke: #56ab2f; stroke-width: 2.5; }
+      .node-end { fill: #ffaaa5; stroke: #dd5e89; stroke-width: 2.5; }
+      .node-intent { fill: #a8dadc; stroke: #457b9d; stroke-width: 2.5; }
+      .node-rag { fill: #ffd6a5; stroke: #f77f00; stroke-width: 2.5; }
+      .node-plan { fill: #d4a5ff; stroke: #9d4edd; stroke-width: 2.5; }
+      .node-agent { fill: #ffb5d8; stroke: #ff006e; stroke-width: 2.5; }
+      .node-react { fill: #fdffb6; stroke: #ffc300; stroke-width: 2.5; }
+      .node-report { fill: #caffbf; stroke: #06d6a0; stroke-width: 2.5; }
+      .node-human { fill: #ffc6ff; stroke: #c77dff; stroke-width: 2.5; }
+      
+      .legend-text { font: 13px sans-serif; fill: #2c3e50; text-anchor: start; }
+    </style>
+    
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#7f8c8d" />
+    </marker>
+    
+    <marker id="arrowhead-light" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#95a5a6" />
+    </marker>
+    
+    <marker id="arrowhead-orange" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#e67e22" />
+    </marker>
+  </defs>
+  
+  <!-- Title -->
+  <text x="700" y="40" class="title" text-anchor="middle">Data Agent - Complete System Flow</text>
+  <text x="700" y="65" class="subtitle" text-anchor="middle">Multi-Agent Intelligent Data Analysis System</text>
+  
+  <!-- Main Flow -->
+  
+  <!-- 1. User Question -->
+  <ellipse cx="700" cy="130" rx="90" ry="38" class="node-start"/>
+  <text x="700" y="135" class="node-text">User Question</text>
+  
+  <path class="arrow" d="M 700 168 L 700 200"/>
+  
+  <!-- 2. Question Rewrite -->
+  <rect x="610" y="200" width="180" height="55" rx="10" class="node-intent"/>
+  <text x="700" y="222" class="node-text">Question Rewriting</text>
+  <text x="700" y="240" class="node-text-small">(Multi-turn Context)</text>
+  
+  <path class="arrow" d="M 700 255 L 700 290"/>
+  
+  <!-- 3. Intent Recognition -->
+  <rect x="610" y="290" width="180" height="55" rx="10" class="node-intent"/>
+  <text x="700" y="312" class="node-text">Intent Recognition</text>
+  <text x="700" y="330" class="node-text-small">SMALLTALK / PLAN</text>
+  
+  <path class="arrow" d="M 700 345 L 700 380"/>
+  
+  <!-- 4. RAG Retrieval -->
+  <rect x="610" y="380" width="180" height="55" rx="10" class="node-rag"/>
+  <text x="700" y="402" class="node-text">RAG Retrieval</text>
+  <text x="700" y="420" class="node-text-small">Knowledge Enhancement</text>
+  
+  <path class="arrow" d="M 700 435 L 700 470"/>
+  
+  <!-- 5. Plan Agent -->
+  <rect x="610" y="470" width="180" height="55" rx="10" class="node-plan"/>
+  <text x="700" y="492" class="node-text" font-weight="bold">Plan Agent</text>
+  <text x="700" y="510" class="node-text-small">Task Decomposition</text>
+  
+  <path class="arrow" d="M 700 525 L 700 565"/>
+  
+  <!-- 6. Sub-Agents (Parallel) -->
+  <g>
+    <!-- Sale Agent -->
+    <rect x="350" y="565" width="160" height="55" rx="10" class="node-agent"/>
+    <text x="430" y="587" class="node-text">Sale Agent</text>
+    <text x="430" y="605" class="node-text-small">Data Retrieval</text>
+    
+    <!-- Analysis Agent -->
+    <rect x="890" y="565" width="160" height="55" rx="10" class="node-agent"/>
+    <text x="970" y="587" class="node-text">Analysis Agent</text>
+    <text x="970" y="605" class="node-text-small">Computation</text>
+    
+    <!-- Arrows from Plan to Agents -->
+    <path class="arrow" d="M 650 525 L 460 565"/>
+    <path class="arrow" d="M 750 525 L 940 565"/>
+  </g>
+  
+  <path class="arrow" d="M 430 620 L 430 655 L 700 655"/>
+  <path class="arrow" d="M 970 620 L 970 655 L 700 655"/>
+  
+  <!-- 7. ReAct Loop -->
+  <rect x="610" y="655" width="180" height="55" rx="10" class="node-react"/>
+  <text x="700" y="677" class="node-text" font-weight="bold">ReAct Loop</text>
+  <text x="700" y="695" class="node-text-small">Think → Act → Observe</text>
+  
+  <!-- Retry Loop -->
+  <path class="arrow-dotted" d="M 610 682 L 540 682 L 540 592 L 610 592"/>
+  <text x="525" y="640" class="node-text-small" transform="rotate(-90 525 640)">Retry</text>
+  
+  <path class="arrow" d="M 700 710 L 700 755"/>
+  
+  <!-- 8. Replan Decision -->
+  <g>
+    <polygon points="700,755 790,790 700,825 610,790" class="node-plan"/>
+    <text x="700" y="785" class="node-text-small">Need</text>
+    <text x="700" y="800" class="node-text-small">Replan?</text>
+    
+    <!-- Replan Loop -->
+    <path class="arrow-replan" d="M 790 790 L 1100 790 L 1100 497 L 790 497"/>
+    <text x="1070" y="650" class="node-text-small" transform="rotate(-90 1070 650)" fill="#e67e22" font-weight="bold">Dynamic Replan</text>
+    
+    <!-- Human in the Loop -->
+    <rect x="140" y="762" width="160" height="55" rx="10" class="node-human"/>
+    <text x="220" y="784" class="node-text">Human-in-Loop</text>
+    <text x="220" y="802" class="node-text-small">Ask Clarification</text>
+    
+    <path class="arrow-dotted" d="M 610 790 L 300 790"/>
+    <path class="arrow-dotted" d="M 220 762 L 220 497 L 610 497"/>
+  </g>
+  
+  <path class="arrow" d="M 700 825 L 700 870"/>
+  
+  <!-- 9. Report Agent -->
+  <rect x="610" y="870" width="180" height="55" rx="10" class="node-report"/>
+  <text x="700" y="892" class="node-text" font-weight="bold">Report Agent</text>
+  <text x="700" y="910" class="node-text-small">Generate Report</text>
+  
+  <!-- 10. End -->
+  <path class="arrow" d="M 700 925 L 700 1010"/>
+  <ellipse cx="700" cy="1050" rx="90" ry="38" class="node-end"/>
+  <text x="700" y="1055" class="node-text">Response to User</text>
+  
+  <!-- Legend - Redesigned without boxes -->
+  <g transform="translate(80, 80)">
+    <text x="0" y="0" class="legend-text" font-weight="bold" font-size="15px">Legend:</text>
+    
+    <!-- Column 1 -->
+    <ellipse cx="15" cy="25" rx="30" ry="15" class="node-start"/>
+    <text x="55" y="30" class="legend-text">Start/End</text>
+    
+    <rect x="0" y="50" width="30" height="20" rx="4" class="node-intent"/>
+    <text x="55" y="64" class="legend-text">Intent/Process</text>
+    
+    <rect x="0" y="80" width="30" height="20" rx="4" class="node-rag"/>
+    <text x="55" y="94" class="legend-text">RAG/Knowledge</text>
+    
+    <rect x="0" y="110" width="30" height="20" rx="4" class="node-plan"/>
+    <text x="55" y="124" class="legend-text">Planning</text>
+  </g>
+  
+  <g transform="translate(1180, 80)">
+    <!-- Column 2 -->
+    <rect x="0" y="25" width="30" height="20" rx="4" class="node-agent"/>
+    <text x="40" y="39" class="legend-text">Sub-Agent</text>
+    
+    <rect x="0" y="55" width="30" height="20" rx="4" class="node-react"/>
+    <text x="40" y="69" class="legend-text">ReAct Loop</text>
+    
+    <rect x="0" y="85" width="30" height="20" rx="4" class="node-human"/>
+    <text x="40" y="99" class="legend-text">Human Input</text>
+    
+    <rect x="0" y="115" width="30" height="20" rx="4" class="node-report"/>
+    <text x="40" y="129" class="legend-text">Report Output</text>
+  </g>
+  
+  <!-- Footer -->
+  <text x="700" y="1120" class="subtitle" text-anchor="middle" fill="#95a5a6" font-size="14px">
+    🤖 Multi-Agent · 🔄 ReAct Pattern · 👤 Human-in-the-Loop · 🔍 RAG Enhanced · 📊 CSV &amp; Database Support
+  </text>
+</svg>

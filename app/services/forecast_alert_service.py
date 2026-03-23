@@ -729,7 +729,7 @@ def send_inventory_alert_notification(snapshot_date: date, alert_rows: Sequence[
         lines.append(f"... 其余 {len(alert_rows) - 20} 条请登录 BI 页面查看")
 
     try:
-        result = asyncio.run(notifier.send_text_notification("供应链安全库存预警", lines))
+        result = asyncio.run(notifier.send_text_notification("北极星安全库存预警", lines))
         return bool(result), "发送成功" if result else "发送失败"
     except Exception as exc:
         logger.exception("Send forecast inventory alert failed: %s", exc)

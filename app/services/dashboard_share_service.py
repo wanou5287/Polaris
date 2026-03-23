@@ -285,7 +285,7 @@ async def share_dashboard_widget(
     series_field: str = "",
     series_groups: list[dict[str, str]] | None = None,
     group_name: str = "供应链数据同步群",
-    message_tag: str = "供应链BI系统测试消息",
+    message_tag: str = "北极星系统测试消息",
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
     safe_output_dir = output_dir or (Path("output") / "widget-share")
