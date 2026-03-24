@@ -78,6 +78,8 @@ INVENTORY_FLOW_ENTRY_PATH = "/financial/bi-dashboard/inventory-flows"
 INVENTORY_FLOW_API_PATH = "/financial/bi-dashboard/api/inventory-flows"
 INVENTORY_FLOW_RULE_API_PATH = "/financial/bi-dashboard/api/inventory-flows/rules"
 INVENTORY_FLOW_TASK_API_PATH = "/financial/bi-dashboard/api/inventory-flows/tasks"
+TASK_CENTER_API_PATH = "/financial/bi-dashboard/api/task-center"
+TASK_CENTER_ITEM_API_PATH = "/financial/bi-dashboard/api/task-center/items"
 DATA_AGENT_ENTRY_PATH = "/financial/bi-dashboard/data-agent"
 DATA_AGENT_STATUS_API_PATH = "/financial/bi-dashboard/api/data-agent/status"
 DATA_AGENT_CHAT_API_PATH = "/financial/bi-dashboard/api/data-agent/chat"
@@ -3058,6 +3060,352 @@ def sync_procurement_inventory_flow_tasks(conn, procurement_item: Dict[str, Any]
     return task_stats
 
 
+def task_center_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "open", "label": "待处理"},
+        {"value": "in_progress", "label": "处理中"},
+        {"value": "blocked", "label": "阻塞"},
+        {"value": "completed", "label": "已完成"},
+    ]
+
+
+def task_center_source_module_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement", "label": "采购到货"},
+        {"value": "inventory_flow", "label": "库存流转"},
+    ]
+
+
+def task_center_category_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement_followup", "label": "到货跟进"},
+        {"value": "exception_followup", "label": "异常补偿"},
+        {"value": "inventory_execution", "label": "库存执行"},
+        {"value": "inventory_exception", "label": "库存阻塞"},
+    ]
+
+
+def task_center_status_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in task_center_status_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def task_center_source_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in task_center_source_module_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def task_center_category_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in task_center_category_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def inventory_flow_priority_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in inventory_flow_priority_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def task_center_status_sort(value: str) -> int:
+    ranks = {"blocked": 0, "open": 1, "in_progress": 2, "completed": 3}
+    return ranks.get(str(value or "").strip(), 9)
+
+
+def merge_task_center_status(existing_status: Any, derived_status: str) -> str:
+    current = str(existing_status or "").strip().lower()
+    if derived_status in {"blocked", "completed"}:
+        return derived_status
+    if current in {"in_progress", "blocked", "completed"}:
+        return current
+    return derived_status
+
+
+def normalize_task_center_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    task_status = str(item.get("task_status") or "open").strip().lower() or "open"
+    priority = str(item.get("priority") or "normal").strip().lower() or "normal"
+    valid_statuses = {option["value"] for option in task_center_status_options()}
+    valid_priorities = {option["value"] for option in inventory_flow_priority_options()}
+    if task_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="任务中心状态不合法")
+    if priority not in valid_priorities:
+        raise HTTPException(status_code=400, detail="任务中心优先级不合法")
+    task_id = parse_int_or_default(item.get("id"), 0)
+    if task_id <= 0:
+        raise HTTPException(status_code=400, detail="任务中心记录缺少有效 ID")
+    return {
+        "id": task_id,
+        "task_status": task_status,
+        "priority": priority,
+        "owner_name": str(item.get("owner_name") or "").strip(),
+        "owner_role": str(item.get("owner_role") or "").strip(),
+        "due_date": parse_date_or_none(str(item.get("due_date") or "").strip()),
+        "note": str(item.get("note") or "").strip(),
+    }
+
+
+def serialize_task_center_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["id"] = int(item.get("id") or 0)
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    due_date = parse_date_or_none(str(item.get("due_date") or "").strip())
+    item["is_overdue"] = bool(
+        due_date is not None and due_date < date.today() and str(item.get("task_status") or "") != "completed"
+    )
+    item["source_module_label"] = task_center_source_label(str(item.get("source_module") or ""))
+    item["task_category_label"] = task_center_category_label(str(item.get("task_category") or ""))
+    item["task_status_label"] = task_center_status_label(str(item.get("task_status") or ""))
+    item["priority_label"] = inventory_flow_priority_label(str(item.get("priority") or ""))
+    snapshot = json_loads(item.get("source_snapshot_json"), {})
+    item["source_snapshot"] = snapshot if isinstance(snapshot, dict) else {}
+    item.pop("source_snapshot_json", None)
+    return item
+
+
+def build_task_center_item_from_procurement(procurement_item: Dict[str, Any]) -> Dict[str, Any]:
+    source_status = str(procurement_item.get("status") or "draft").strip()
+    detail_status = str(procurement_item.get("document_status") or "pending").strip()
+    if source_status == "exception" or detail_status == "failed":
+        task_status = "blocked"
+        task_category = "exception_followup"
+        priority = "high"
+    elif source_status == "completed" and detail_status in {"generated", "synced"}:
+        task_status = "completed"
+        task_category = "procurement_followup"
+        priority = "low"
+    elif detail_status == "pending":
+        task_status = "open"
+        task_category = "procurement_followup"
+        priority = "high" if source_status != "draft" else "normal"
+    else:
+        task_status = "open"
+        task_category = "procurement_followup"
+        priority = "normal"
+
+    return {
+        "source_module": "procurement",
+        "source_type": "procurement_arrival",
+        "source_id": str(procurement_item.get("id") or ""),
+        "source_no": str(procurement_item.get("arrival_no") or ""),
+        "task_title": f"到货跟进 · {procurement_item.get('arrival_no') or procurement_item.get('purchase_order_no') or '未命名单据'}",
+        "task_category": task_category,
+        "task_status": task_status,
+        "priority": priority,
+        "owner_name": "",
+        "owner_role": "供应链运营",
+        "due_date": parse_date_or_none(str(procurement_item.get("arrival_date") or "").strip()),
+        "source_status": source_status,
+        "source_detail_status": detail_status,
+        "summary_text": (
+            f"采购单 {procurement_item.get('purchase_order_no') or '--'} / "
+            f"{procurement_item.get('supplier_name') or '--'} / "
+            f"实到 {procurement_item.get('arrived_qty') or 0}{procurement_item.get('unit') or ''}"
+        ),
+        "note": "",
+        "sort_order": 20 + task_center_status_sort(task_status) * 10,
+        "source_snapshot": {
+            "purchase_order_no": procurement_item.get("purchase_order_no"),
+            "supplier_name": procurement_item.get("supplier_name"),
+            "warehouse_name": procurement_item.get("warehouse_name"),
+            "channel_name": procurement_item.get("channel_name"),
+            "sku_code": procurement_item.get("sku_code"),
+            "sku_name": procurement_item.get("sku_name"),
+            "expected_qty": procurement_item.get("expected_qty"),
+            "arrived_qty": procurement_item.get("arrived_qty"),
+            "qualified_qty": procurement_item.get("qualified_qty"),
+            "exception_qty": procurement_item.get("exception_qty"),
+            "pending_qty": procurement_item.get("pending_qty"),
+            "status": source_status,
+            "document_status": detail_status,
+            "exception_reason": procurement_item.get("exception_reason"),
+            "remark": procurement_item.get("remark"),
+        },
+    }
+
+
+def build_task_center_item_from_inventory_task(task_item: Dict[str, Any]) -> Dict[str, Any]:
+    source_status = str(task_item.get("task_status") or "draft").strip()
+    action_type = str(task_item.get("action_type") or "status_transition").strip()
+    confirmed_qty = float(task_item.get("confirmed_qty") or 0.0)
+    if source_status == "blocked":
+        task_status = "blocked"
+        task_category = "inventory_exception"
+    elif source_status in {"completed", "cancelled"}:
+        task_status = "completed"
+        task_category = "inventory_execution"
+    elif confirmed_qty > 0:
+        task_status = "in_progress"
+        task_category = "inventory_execution"
+    else:
+        task_status = "open"
+        task_category = "inventory_execution"
+
+    return {
+        "source_module": "inventory_flow",
+        "source_type": "inventory_flow_task",
+        "source_id": str(task_item.get("id") or ""),
+        "source_no": str(task_item.get("task_no") or ""),
+        "task_title": f"库存执行 · {task_item.get('task_no') or task_item.get('source_record_no') or '未命名任务'}",
+        "task_category": task_category,
+        "task_status": task_status,
+        "priority": str(task_item.get("priority") or "normal"),
+        "owner_name": "",
+        "owner_role": "仓配执行",
+        "due_date": parse_date_or_none(str(task_item.get("planned_execute_date") or "").strip()),
+        "source_status": source_status,
+        "source_detail_status": action_type,
+        "summary_text": (
+            f"{task_item.get('sku_name') or '--'} / "
+            f"申请 {task_item.get('request_qty') or 0} / "
+            f"已确认 {task_item.get('confirmed_qty') or 0}"
+        ),
+        "note": "",
+        "sort_order": 10 + task_center_status_sort(task_status) * 10,
+        "source_snapshot": {
+            "source_record_no": task_item.get("source_record_no"),
+            "trigger_source": task_item.get("trigger_source"),
+            "action_type": action_type,
+            "sku_code": task_item.get("sku_code"),
+            "sku_name": task_item.get("sku_name"),
+            "request_qty": task_item.get("request_qty"),
+            "confirmed_qty": task_item.get("confirmed_qty"),
+            "completion_rate": task_item.get("completion_rate"),
+            "source_status_name": task_item.get("source_status_name"),
+            "target_status_name": task_item.get("target_status_name"),
+            "source_warehouse_name": task_item.get("source_warehouse_name"),
+            "target_warehouse_name": task_item.get("target_warehouse_name"),
+            "reason_text": task_item.get("reason_text"),
+            "note": task_item.get("note"),
+        },
+    }
+
+
+def upsert_task_center_item(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+    existing = conn.execute(
+        text(
+            """
+            SELECT id, task_status, owner_name, owner_role, due_date, note
+            FROM bi_task_center_item
+            WHERE source_module = :source_module AND source_type = :source_type AND source_id = :source_id
+            LIMIT 1
+            """
+        ),
+        {
+            "source_module": payload["source_module"],
+            "source_type": payload["source_type"],
+            "source_id": payload["source_id"],
+        },
+    ).mappings().first()
+
+    if existing:
+        task_status = merge_task_center_status(existing.get("task_status"), str(payload.get("task_status") or "open"))
+        record = {
+            **payload,
+            "id": int(existing["id"]),
+            "task_status": task_status,
+            "owner_name": str(existing.get("owner_name") or payload.get("owner_name") or "").strip(),
+            "owner_role": str(existing.get("owner_role") or payload.get("owner_role") or "").strip(),
+            "due_date": existing.get("due_date") or payload.get("due_date"),
+            "note": str(existing.get("note") or payload.get("note") or "").strip(),
+            "source_snapshot_json": json_dumps(payload.get("source_snapshot") or {}),
+            "updated_by": updated_by,
+        }
+        conn.execute(
+            text(
+                """
+                UPDATE bi_task_center_item
+                SET
+                    source_no = :source_no,
+                    task_title = :task_title,
+                    task_category = :task_category,
+                    task_status = :task_status,
+                    priority = :priority,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    due_date = :due_date,
+                    source_status = :source_status,
+                    source_detail_status = :source_detail_status,
+                    summary_text = :summary_text,
+                    note = :note,
+                    source_snapshot_json = :source_snapshot_json,
+                    sort_order = :sort_order,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            record,
+        )
+        return {"id": int(existing["id"]), "created": False}
+
+    record = {
+        **payload,
+        "owner_name": str(payload.get("owner_name") or "").strip(),
+        "owner_role": str(payload.get("owner_role") or "").strip(),
+        "note": str(payload.get("note") or "").strip(),
+        "source_snapshot_json": json_dumps(payload.get("source_snapshot") or {}),
+        "created_by": updated_by,
+        "updated_by": updated_by,
+    }
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_task_center_item(
+                source_module, source_type, source_id, source_no, task_title, task_category,
+                task_status, priority, owner_name, owner_role, due_date, source_status,
+                source_detail_status, summary_text, note, source_snapshot_json,
+                sort_order, created_by, updated_by
+            ) VALUES (
+                :source_module, :source_type, :source_id, :source_no, :task_title, :task_category,
+                :task_status, :priority, :owner_name, :owner_role, :due_date, :source_status,
+                :source_detail_status, :summary_text, :note, :source_snapshot_json,
+                :sort_order, :created_by, :updated_by
+            )
+            """
+        ),
+        record,
+    )
+    return {"id": int(result.lastrowid or 0), "created": True}
+
+
+def sync_task_center_snapshot(conn, updated_by: str = "system") -> Dict[str, int]:
+    procurement_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, arrival_no, purchase_order_no, supplier_name, warehouse_code, warehouse_name,
+                channel_code, channel_name, sku_code, sku_name, expected_qty, arrived_qty,
+                qualified_qty, exception_qty, unit, arrival_date, status, document_status,
+                exception_reason, remark, source_system, created_by, updated_by,
+                sort_order, created_at, updated_at
+            FROM bi_procurement_arrival
+            ORDER BY arrival_date DESC, sort_order, id DESC
+            """
+        )
+    ).mappings().all()
+    inventory_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, task_no, source_record_type, source_record_id, source_record_no, trigger_source,
+                action_type, task_status, priority, sku_code, sku_name, request_qty, confirmed_qty,
+                source_status_id, source_status_name, target_status_id, target_status_name,
+                source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                planned_execute_date, reason_text, note, created_by, updated_by, sort_order, created_at, updated_at
+            FROM bi_inventory_flow_task
+            ORDER BY updated_at DESC, id DESC
+            """
+        )
+    ).mappings().all()
+
+    stats = {"procurement_synced": 0, "inventory_synced": 0}
+    for row in procurement_rows:
+        upsert_task_center_item(conn, build_task_center_item_from_procurement(serialize_procurement_arrival_row(row)), updated_by)
+        stats["procurement_synced"] += 1
+    for row in inventory_rows:
+        upsert_task_center_item(conn, build_task_center_item_from_inventory_task(serialize_inventory_flow_task_row(row)), updated_by)
+        stats["inventory_synced"] += 1
+    return stats
+
+
 def ensure_master_data_seed(conn) -> None:
     ensure_table_columns(
         conn,
@@ -4249,6 +4597,40 @@ def ensure_schema() -> None:
                     INDEX idx_bi_inventory_flow_task_status (task_status, planned_execute_date, id),
                     INDEX idx_bi_inventory_flow_task_source (source_record_type, source_record_id),
                     INDEX idx_bi_inventory_flow_task_action (action_type, priority)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_task_center_item (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    source_module VARCHAR(32) NOT NULL,
+                    source_type VARCHAR(32) NOT NULL,
+                    source_id VARCHAR(64) NOT NULL,
+                    source_no VARCHAR(64) NOT NULL DEFAULT '',
+                    task_title VARCHAR(255) NOT NULL,
+                    task_category VARCHAR(32) NOT NULL DEFAULT 'procurement_followup',
+                    task_status VARCHAR(32) NOT NULL DEFAULT 'open',
+                    priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+                    owner_name VARCHAR(64) NOT NULL DEFAULT '',
+                    owner_role VARCHAR(64) NOT NULL DEFAULT '',
+                    due_date DATE NULL,
+                    source_status VARCHAR(32) NOT NULL DEFAULT '',
+                    source_detail_status VARCHAR(32) NOT NULL DEFAULT '',
+                    summary_text VARCHAR(255) NOT NULL DEFAULT '',
+                    note LONGTEXT NULL,
+                    source_snapshot_json LONGTEXT NULL,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_task_center_source (source_module, source_type, source_id),
+                    INDEX idx_bi_task_center_status (task_status, due_date, priority),
+                    INDEX idx_bi_task_center_source (source_module, task_category),
+                    INDEX idx_bi_task_center_sort (sort_order, updated_at, id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
@@ -7442,6 +7824,7 @@ async def save_procurement_arrival(
         ).mappings().first()
         item = serialize_procurement_arrival_row(saved_row)
         flow_sync = sync_procurement_inventory_flow_tasks(conn, item, username)
+        task_center_sync = sync_task_center_snapshot(conn, username)
 
     record_dashboard_audit(
         module_key="procurement",
@@ -7497,7 +7880,15 @@ async def save_procurement_arrival(
             source_method="POST",
             affected_count=int(flow_sync["created_count"] + flow_sync["updated_count"]),
         )
-    return JSONResponse({"saved": True, "created": created, "item": item, "inventory_flow_sync": flow_sync})
+    return JSONResponse(
+        {
+            "saved": True,
+            "created": created,
+            "item": item,
+            "inventory_flow_sync": flow_sync,
+            "task_center_sync": task_center_sync,
+        }
+    )
 
 
 @router.get("/bi-dashboard/api/inventory-flows")
@@ -7828,6 +8219,7 @@ async def save_inventory_flow_task(
             ),
             {"id": saved_id},
         ).mappings().first()
+        task_center_sync = sync_task_center_snapshot(conn, username)
     item = serialize_inventory_flow_task_row(saved_row)
     record_dashboard_audit(
         module_key="inventory_flow",
@@ -7844,7 +8236,195 @@ async def save_inventory_flow_task(
         source_method="POST",
         affected_count=1,
     )
-    return JSONResponse({"saved": True, "created": created, "item": item})
+    return JSONResponse({"saved": True, "created": created, "item": item, "task_center_sync": task_center_sync})
+
+
+@router.get("/bi-dashboard/api/task-center")
+async def list_task_center_items(
+    task_status: str | None = Query(None),
+    source_module: str | None = Query(None),
+    priority: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(160, ge=1, le=400),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    conditions = ["1 = 1"]
+    params: Dict[str, Any] = {}
+    if task_status:
+        conditions.append("task_status = :task_status")
+        params["task_status"] = str(task_status).strip()
+    if source_module:
+        conditions.append("source_module = :source_module")
+        params["source_module"] = str(source_module).strip()
+    if priority:
+        conditions.append("priority = :priority")
+        params["priority"] = str(priority).strip()
+    if keyword:
+        conditions.append(
+            "(task_title LIKE :keyword OR source_no LIKE :keyword OR summary_text LIKE :keyword OR note LIKE :keyword)"
+        )
+        params["keyword"] = f"%{str(keyword).strip()}%"
+    where_sql = " AND ".join(conditions)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        sync_task_center_snapshot(conn, "system")
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT
+                    id, source_module, source_type, source_id, source_no, task_title, task_category,
+                    task_status, priority, owner_name, owner_role, due_date, source_status,
+                    source_detail_status, summary_text, note, source_snapshot_json,
+                    sort_order, created_by, updated_by, created_at, updated_at
+                FROM bi_task_center_item
+                WHERE {where_sql}
+                ORDER BY FIELD(task_status, 'blocked', 'open', 'in_progress', 'completed'),
+                         FIELD(priority, 'high', 'normal', 'low'),
+                         CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
+                         due_date ASC,
+                         sort_order ASC,
+                         updated_at DESC,
+                         id DESC
+                LIMIT :limit
+                """
+            ),
+            {**params, "limit": int(limit)},
+        ).mappings().all()
+    items = [serialize_task_center_row(row) for row in rows]
+    summary = {
+        "total_count": len(items),
+        "open_count": sum(1 for item in items if item["task_status"] == "open"),
+        "in_progress_count": sum(1 for item in items if item["task_status"] == "in_progress"),
+        "blocked_count": sum(1 for item in items if item["task_status"] == "blocked"),
+        "completed_count": sum(1 for item in items if item["task_status"] == "completed"),
+        "overdue_count": sum(1 for item in items if item["is_overdue"]),
+        "procurement_count": sum(1 for item in items if item["source_module"] == "procurement"),
+        "inventory_flow_count": sum(1 for item in items if item["source_module"] == "inventory_flow"),
+        "high_priority_count": sum(1 for item in items if item["priority"] == "high"),
+        "latest_updated_at": max((item["updated_at"] for item in items if item["updated_at"]), default=None),
+    }
+    return JSONResponse(
+        {
+            "items": items,
+            "summary": summary,
+            "task_status_options": task_center_status_options(),
+            "source_module_options": task_center_source_module_options(),
+            "priority_options": inventory_flow_priority_options(),
+            "category_options": task_center_category_options(),
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/task-center/items")
+async def save_task_center_item(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    record = normalize_task_center_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        existing = conn.execute(
+            text(
+                """
+                SELECT
+                    id, source_module, source_type, source_id, source_no, task_title, task_category,
+                    task_status, priority, owner_name, owner_role, due_date, source_status,
+                    source_detail_status, summary_text, note, source_snapshot_json,
+                    sort_order, created_by, updated_by, created_at, updated_at
+                FROM bi_task_center_item
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": record["id"]},
+        ).mappings().first()
+        if not existing:
+            raise HTTPException(status_code=404, detail="任务中心记录不存在")
+
+        conn.execute(
+            text(
+                """
+                UPDATE bi_task_center_item
+                SET
+                    task_status = :task_status,
+                    priority = :priority,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    due_date = :due_date,
+                    note = :note,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {
+                **record,
+                "updated_by": username,
+            },
+        )
+
+        if str(existing["source_module"] or "") == "inventory_flow":
+            inventory_status = {
+                "open": "pending",
+                "in_progress": "pending",
+                "blocked": "blocked",
+                "completed": "completed",
+            }.get(record["task_status"], "pending")
+            conn.execute(
+                text(
+                    """
+                    UPDATE bi_inventory_flow_task
+                    SET
+                        task_status = :task_status,
+                        priority = :priority,
+                        planned_execute_date = :planned_execute_date,
+                        updated_by = :updated_by
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": parse_int_or_default(existing["source_id"], 0),
+                    "task_status": inventory_status,
+                    "priority": record["priority"],
+                    "planned_execute_date": record["due_date"],
+                    "updated_by": username,
+                },
+            )
+
+        sync_task_center_snapshot(conn, username)
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, source_module, source_type, source_id, source_no, task_title, task_category,
+                    task_status, priority, owner_name, owner_role, due_date, source_status,
+                    source_detail_status, summary_text, note, source_snapshot_json,
+                    sort_order, created_by, updated_by, created_at, updated_at
+                FROM bi_task_center_item
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": record["id"]},
+        ).mappings().first()
+    item = serialize_task_center_row(saved_row)
+    record_dashboard_audit(
+        module_key="task_center",
+        module_name="任务中心",
+        action_key="item.update",
+        action_name="更新任务中心待办",
+        target_type="task_center_item",
+        target_id=item["source_no"],
+        target_name=item["task_title"],
+        detail_summary=f"{item['task_status_label']} / {item['priority_label']} / {item['owner_name'] or item['owner_role'] or '未分配'}",
+        detail=item,
+        triggered_by=username,
+        source_path=TASK_CENTER_ITEM_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"saved": True, "item": item})
 
 
 @router.get("/bi-dashboard/api/return-unpack-attendance")

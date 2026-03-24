@@ -6,6 +6,7 @@ import {
   Boxes,
   ChartColumnIncreasing,
   LayoutGrid,
+  ListTodo,
   Package,
   ShieldCheck,
 } from "lucide-react";
@@ -61,6 +62,12 @@ export const navSections: NavSection[] = [
     title: "执行",
     items: [
       {
+        title: "任务中心",
+        href: "/operations/task-center",
+        icon: ListTodo,
+        description: "统一承接采购、库存执行和异常待办",
+      },
+      {
         title: "采购到货",
         href: "/operations/procurement-arrivals",
         icon: Package,
@@ -115,6 +122,11 @@ export const overviewQuickLinks = [
     title: "打开主数据",
     href: "/governance/master-data",
     icon: Boxes,
+  },
+  {
+    title: "进入任务中心",
+    href: "/operations/task-center",
+    icon: ListTodo,
   },
   {
     title: "录入采购到货",

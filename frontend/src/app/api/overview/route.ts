@@ -8,6 +8,7 @@ import type {
   MasterDataResponse,
   MetricDictionaryResponse,
   OverviewResponse,
+  TaskCenterResponse,
 } from "@/lib/polaris-types";
 import {
   POLARIS_SESSION_COOKIE,
@@ -34,6 +35,7 @@ export async function GET(request: NextRequest) {
     const [
       metricDictionary,
       masterData,
+      taskCenter,
       auditLogs,
       agentStatus,
       reports,
@@ -45,6 +47,11 @@ export async function GET(request: NextRequest) {
       ),
       fetchPolarisJson<MasterDataResponse>(
         "/financial/bi-dashboard/api/master-data",
+        undefined,
+        session,
+      ),
+      fetchPolarisJson<TaskCenterResponse>(
+        "/financial/bi-dashboard/api/task-center?limit=12",
         undefined,
         session,
       ),
@@ -71,6 +78,10 @@ export async function GET(request: NextRequest) {
     const payload: OverviewResponse = {
       metricSummary: metricDictionary.summary,
       masterSummary: masterData.summary,
+      taskCenterSummary: {
+        ...taskCenter.summary,
+        latestItems: taskCenter.items.slice(0, 5),
+      },
       auditSummary: {
         total: auditItems.length,
         success: auditItems.filter((item) => item.result_status === "success").length,
