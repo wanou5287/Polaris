@@ -1,4 +1,4 @@
-# 北极星 - 财务与供应链运营系统
+# 北极星 - 供应链运营协同平台
 
 一个基于FastAPI的财务报表自动化生成系统，支持从用友接口拉取数据、数据清洗、Excel模板填充和文件加密压缩。支持一次性下载链接与OSS上传，日志支持文件持久化。
 
@@ -25,7 +25,7 @@
 │   │   ├── base.py                 # 基础模型
 │   │   └── voucher.py              # 凭证数据模型
 │   ├── routes/                      # API路由
-│   │   └── financial_report.py     # 财务报表路由（仅保留生成与一次性下载）
+│   │   └── financial_report.py     # 报表路由（仅保留生成与一次性下载）
 │   └── services/                    # 业务服务
 │       ├── yonyou_client.py        # 用友API客户端
 │       ├── data_fetch_service.py   # 数据拉取服务

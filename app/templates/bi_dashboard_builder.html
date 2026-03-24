@@ -4,37 +4,39 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>北极星看板编辑台</title>
+  __BI_SHELL_HEAD__
   <style>
     :root {
-      --bg: #f5f5f7;
-      --bg-strong: #eef0f4;
-      --panel: rgba(255, 255, 255, 0.88);
+      --bg: #f5f5f5;
+      --bg-strong: #f0f0f0;
+      --panel: rgba(255, 255, 255, 0.94);
       --panel-strong: #ffffff;
       --line: rgba(15, 23, 42, 0.08);
-      --line-strong: rgba(15, 23, 42, 0.14);
-      --text: #1d1d1f;
-      --sub: #6e6e73;
-      --accent: #0071e3;
-      --accent-soft: rgba(0, 113, 227, 0.10);
+      --line-strong: rgba(15, 23, 42, 0.12);
+      --text: #111827;
+      --sub: #6b7280;
+      --accent: #111827;
+      --accent-soft: rgba(15, 23, 42, 0.05);
+      --cta: #dbeafe;
+      --cta-border: rgba(147, 197, 253, 0.58);
+      --cta-text: #1d4ed8;
       --success-soft: rgba(52, 199, 89, 0.12);
       --danger: #d93025;
-      --shadow-lg: 0 24px 56px rgba(15, 23, 42, 0.08);
-      --shadow-md: 0 12px 30px rgba(15, 23, 42, 0.05);
-      --radius-xl: 24px;
-      --radius-lg: 20px;
-      --radius-md: 16px;
-      --radius-sm: 12px;
+      --shadow-lg: 0 18px 40px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 10px 26px rgba(15, 23, 42, 0.05);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body {
       margin: 0;
-      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: "Avenir Next", "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
       font-size: 13px;
       color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(0,113,227,.05), transparent 24%),
-        linear-gradient(180deg, #fbfbfd 0%, var(--bg) 100%);
+      background: linear-gradient(180deg, #fcfcfc 0%, var(--bg) 100%);
     }
     button, input, select, textarea { font: inherit; }
     button {
@@ -60,16 +62,16 @@
     textarea { min-height: 120px; resize: vertical; }
     .shell {
       min-height: 100vh;
-      padding: 20px;
+      padding: 24px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 18px;
     }
     .glass {
       backdrop-filter: blur(14px) saturate(140%);
       -webkit-backdrop-filter: blur(14px) saturate(140%);
       background: var(--panel);
-      border: 1px solid rgba(15,23,42,.06);
+      border: 1px solid var(--line);
       box-shadow: var(--shadow-md);
     }
     .topbar {
@@ -132,14 +134,15 @@
       border: 1px solid transparent;
     }
     .pill, .ghost {
-      background: rgba(255,255,255,.78);
+      background: rgba(255,255,255,.92);
       border-color: var(--line);
       color: var(--text);
     }
     .primary {
-      background: linear-gradient(180deg, #2c77ff, #1558d8);
-      color: #fff;
-      box-shadow: 0 14px 28px rgba(31,109,255,.2);
+      background: linear-gradient(180deg, #eff6ff, var(--cta));
+      border-color: var(--cta-border);
+      color: var(--cta-text);
+      box-shadow: 0 10px 24px rgba(147, 197, 253, 0.18);
     }
     .danger-ghost {
       background: rgba(217,45,32,.08);
@@ -1386,6 +1389,10 @@
   </style>
 </head>
 <body>
+  __BI_TRANSITION_OVERLAY__
+  <div class="polaris-app-shell">
+    __BI_SIDE_NAV__
+    <main class="polaris-app-main">
   <div class="shell app-shell">
     <aside class="nav-rail glass">
       <div class="nav-brand">
@@ -1415,7 +1422,7 @@
         </button>
         <button class="nav-item" id="dataAgentBtn" type="button">
           <span class="nav-icon">智</span>
-          <span>智能体</span>
+          <span>分析Agent</span>
         </button>
         <button class="nav-item" id="syncScheduleBtn" type="button">
           <span class="nav-icon">定</span>
@@ -1763,6 +1770,7 @@
   <script>
     const CURRENT_USER = __BI_CURRENT_USER_JSON__;
     const LOGIN_PATH = __BI_LOGIN_PATH_JSON__;
+    const navigate = (url) => window.polarisNavigate ? window.polarisNavigate(url) : (window.location.href = url);
     const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
     const ATTENDANCE_PATH = "/financial/bi-dashboard/attendance";
     const INVENTORY_MAPPING_PATH = "/financial/bi-dashboard/inventory-mappings";
@@ -1911,7 +1919,7 @@
       });
       if (response.status === 401) {
         const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
-        window.location.href = `${LOGIN_PATH}?next=${next}`;
+        navigate(`${LOGIN_PATH}?next=${next}`);
         throw new Error("登录已失效");
       }
       if (!response.ok) {
@@ -4366,29 +4374,29 @@
     }
 
     function openAttendanceEntry() {
-      window.location.href = ATTENDANCE_PATH;
+      navigate(ATTENDANCE_PATH);
     }
 
     function openInventoryMappingEntry() {
-      window.location.href = INVENTORY_MAPPING_PATH;
+      navigate(INVENTORY_MAPPING_PATH);
     }
 
     function openRefurbProductionEntry() {
-      window.location.href = REFURB_PRODUCTION_PATH;
+      navigate(REFURB_PRODUCTION_PATH);
     }
 
     function openForecastAlertEntry() {
-      window.location.href = FORECAST_ALERT_PATH;
+      navigate(FORECAST_ALERT_PATH);
     }
 
     function openSyncScheduleEntry() {
-      window.location.href = SYNC_SCHEDULE_PATH;
+      navigate(SYNC_SCHEDULE_PATH);
     }
 
     async function logout() {
       try {
         const payload = await api(LOGOUT_PATH, { method: "POST" });
-        window.location.href = payload.redirect_to || LOGIN_PATH;
+        navigate(payload.redirect_to || LOGIN_PATH);
       } catch (error) {
         toast(error.message);
       }
@@ -4405,7 +4413,7 @@
       document.getElementById("inventoryMappingBtn").addEventListener("click", openInventoryMappingEntry);
       document.getElementById("refurbProductionBtn").addEventListener("click", openRefurbProductionEntry);
       document.getElementById("forecastAlertBtn").addEventListener("click", openForecastAlertEntry);
-      document.getElementById("dataAgentBtn").addEventListener("click", () => { location.href = DATA_AGENT_PATH; });
+      document.getElementById("dataAgentBtn").addEventListener("click", () => { navigate(DATA_AGENT_PATH); });
       document.getElementById("syncScheduleBtn").addEventListener("click", openSyncScheduleEntry);
       document.getElementById("resetLayoutBtn").addEventListener("click", resetLayout);
       document.getElementById("openCreateDrawerBtn").addEventListener("click", () => openCreateDrawer("bar"));
@@ -4525,5 +4533,8 @@
 
     bootstrap();
   </script>
+    </main>
+  </div>
+  __BI_PAGE_TRANSITION_SCRIPT__
 </body>
 </html>

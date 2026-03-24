@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+import requests
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -65,10 +66,27 @@ DASHBOARD_SESSION_COOKIE = "polaris_session"
 DASHBOARD_SESSION_MAX_AGE = 60 * 60 * 24 * 14
 DASHBOARD_DEFAULT_PATH = "/financial/bi-dashboard"
 DASHBOARD_EDITOR_PATH = "/financial/bi-dashboard/editor"
+AUDIT_LOG_ENTRY_PATH = "/financial/bi-dashboard/audit-logs"
+AUDIT_LOG_API_PATH = "/financial/bi-dashboard/api/audit-logs"
+MASTER_DATA_ENTRY_PATH = "/financial/bi-dashboard/master-data"
+MASTER_DATA_API_PATH = "/financial/bi-dashboard/api/master-data"
+METRIC_DICTIONARY_ENTRY_PATH = "/financial/bi-dashboard/metric-dictionary"
+METRIC_DICTIONARY_API_PATH = "/financial/bi-dashboard/api/metric-dictionary"
+PROCUREMENT_ARRIVAL_ENTRY_PATH = "/financial/bi-dashboard/procurement-arrivals"
+PROCUREMENT_ARRIVAL_API_PATH = "/financial/bi-dashboard/api/procurement-arrivals"
+INVENTORY_FLOW_ENTRY_PATH = "/financial/bi-dashboard/inventory-flows"
+INVENTORY_FLOW_API_PATH = "/financial/bi-dashboard/api/inventory-flows"
+INVENTORY_FLOW_RULE_API_PATH = "/financial/bi-dashboard/api/inventory-flows/rules"
+INVENTORY_FLOW_TASK_API_PATH = "/financial/bi-dashboard/api/inventory-flows/tasks"
 DATA_AGENT_ENTRY_PATH = "/financial/bi-dashboard/data-agent"
 DATA_AGENT_STATUS_API_PATH = "/financial/bi-dashboard/api/data-agent/status"
+DATA_AGENT_CHAT_API_PATH = "/financial/bi-dashboard/api/data-agent/chat"
+DATA_AGENT_REPORTS_API_PATH = "/financial/bi-dashboard/api/data-agent/reports"
+DATA_AGENT_REPORT_GENERATE_API_PATH = "/financial/bi-dashboard/api/data-agent/reports/generate"
 SYNC_SCHEDULE_KEY = "raw_yonyou_sync_default"
 SYNC_SCHEDULE_JOB_ID = "bi_raw_yonyou_sync"
+DATA_AGENT_WEEKLY_JOB_ID = "bi_data_agent_weekly_report"
+DATA_AGENT_MONTHLY_JOB_ID = "bi_data_agent_monthly_report"
 SYNC_SCHEDULER_TIMEZONE = "Asia/Shanghai"
 sync_scheduler: BackgroundScheduler | None = None
 sync_scheduler_lock = threading.RLock()
@@ -79,8 +97,11 @@ PREFERRED_INVENTORY_VIEW_NAME = "库存清洗看板"
 PREFERRED_INVENTORY_VIEW_DESCRIPTION = "基于库存清洗表预置的库存结构与明细看板"
 DATA_AGENT_GITHUB_URL = "https://github.com/3600818203/DataAgent"
 DATA_AGENT_REPO_DIR = project_root / "vendor" / "DataAgent"
-DATA_AGENT_API_URL = "http://127.0.0.1:10000"
-DATA_AGENT_UI_URL = "http://127.0.0.1:8501"
+DATA_AGENT_NAME = "???? Agent"
+DATA_AGENT_API_PORT = 18080
+DATA_AGENT_UI_PORT = 18501
+DATA_AGENT_API_URL = f"http://127.0.0.1:{DATA_AGENT_API_PORT}"
+DATA_AGENT_UI_URL = f"http://127.0.0.1:{DATA_AGENT_UI_PORT}"
 
 WIDGET_TYPES: Dict[str, str] = {
     "metric": "指标卡",
@@ -408,7 +429,7 @@ def render_template(template_name: str, replacements: Dict[str, str] | None = No
 
 def dashboard_logo_wordmark_svg() -> str:
     return """
-<svg width="248" height="72" viewBox="0 0 248 72" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="北极星">
+<svg width="248" height="72" viewBox="0 0 248 72" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="鍖楁瀬鏄?>
   <defs>
     <linearGradient id="polarisWordmarkBlue" x1="7" y1="8" x2="60" y2="62" gradientUnits="userSpaceOnUse">
       <stop stop-color="#1677FF"/>
@@ -422,8 +443,8 @@ def dashboard_logo_wordmark_svg() -> str:
   </g>
   <g transform="translate(88 13)">
     <text x="0" y="12" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="500" fill="#6E6E73" letter-spacing="0.48">Polaris</text>
-    <text x="0" y="39" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#1D1D1F" letter-spacing="-0.7">北极星</text>
-    <text x="0" y="57" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" fill="#1677FF">经营中心</text>
+    <text x="0" y="39" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#1D1D1F" letter-spacing="-0.7">鍖楁瀬鏄?/text>
+    <text x="0" y="57" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" fill="#1677FF">缁忚惀涓績</text>
   </g>
 </svg>
 """.strip()
@@ -431,7 +452,7 @@ def dashboard_logo_wordmark_svg() -> str:
 
 def dashboard_logo_badge_svg() -> str:
     return """
-<svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="北极星">
+<svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="鍖楁瀬鏄?>
   <defs>
     <linearGradient id="polarisBadgeBlue" x1="54" y1="46" x2="210" y2="214" gradientUnits="userSpaceOnUse">
       <stop stop-color="#1677FF"/>
@@ -441,7 +462,7 @@ def dashboard_logo_badge_svg() -> str:
   <rect x="10" y="10" width="240" height="240" rx="56" fill="white" stroke="#E6ECF5" stroke-width="1.5"/>
   <circle cx="130" cy="98" r="42" fill="url(#polarisBadgeBlue)" opacity="0.12"/>
   <path d="M130 48L141.4 76.1L171.6 78.1L148.4 97.4L155.8 127.2L130 111L104.2 127.2L111.6 97.4L88.4 78.1L118.6 76.1L130 48Z" fill="url(#polarisBadgeBlue)"/>
-  <text x="130" y="172" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="52" font-weight="700" fill="#111827" letter-spacing="-1.2">北极星</text>
+  <text x="130" y="172" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="52" font-weight="700" fill="#111827" letter-spacing="-1.2">鍖楁瀬鏄?/text>
   <text x="130" y="204" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Microsoft YaHei, sans-serif" font-size="20" font-weight="500" fill="#6E6E73" letter-spacing="0.5">Polaris</text>
 </svg>
 """.strip()
@@ -449,7 +470,7 @@ def dashboard_logo_badge_svg() -> str:
 
 def dashboard_logo_badge_small_svg() -> str:
     return """
-<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="北极星">
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="鍖楁瀬鏄?>
   <defs>
     <linearGradient id="polarisBadgeBlueSmall" x1="8" y1="6" x2="41" y2="42" gradientUnits="userSpaceOnUse">
       <stop stop-color="#1677FF"/>
@@ -463,6 +484,460 @@ def dashboard_logo_badge_small_svg() -> str:
 """.strip()
 
 
+def dashboard_shell_head() -> str:
+    return """
+<style>
+  .polaris-app-shell {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 20px;
+    padding: 20px;
+  }
+  .polaris-app-main {
+    min-width: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .polaris-side-panel {
+    position: sticky;
+    top: 16px;
+    height: calc(100vh - 32px);
+    padding: 14px 10px 12px;
+    border-radius: 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+  }
+  .polaris-side-brand {
+    width: 54px;
+    height: 54px;
+    display: grid;
+    place-items: center;
+    flex: none;
+  }
+  .polaris-side-brand svg {
+    width: 50px;
+    height: 50px;
+    display: block;
+  }
+  .polaris-side-nav {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+  }
+  .polaris-side-item,
+  .polaris-side-subitem,
+  .polaris-side-logout {
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+    transition: background .2s ease, color .2s ease, box-shadow .2s ease, transform .2s ease, border-color .2s ease;
+  }
+  .polaris-side-item {
+    width: 100%;
+    padding: 12px 6px;
+    border-radius: 20px;
+    background: transparent;
+    border: 1px solid transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: #6b7280;
+  }
+  .polaris-side-item:hover,
+  .polaris-side-item.is-active,
+  .polaris-side-group.is-open > .polaris-side-item,
+  .polaris-side-group.is-active > .polaris-side-item {
+    background: rgba(15, 23, 42, 0.04);
+    border-color: rgba(15, 23, 42, 0.06);
+    color: #111827;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+  }
+  .polaris-side-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: rgba(250, 250, 250, 0.96);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+  }
+  .polaris-side-item.is-active .polaris-side-icon,
+  .polaris-side-group.is-open > .polaris-side-item .polaris-side-icon,
+  .polaris-side-group.is-active > .polaris-side-item .polaris-side-icon {
+    background: rgba(255, 255, 255, 0.98);
+    border-color: rgba(15, 23, 42, 0.08);
+  }
+  .polaris-side-icon svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .polaris-side-item .polaris-side-label {
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .polaris-side-group {
+    position: relative;
+    width: 100%;
+  }
+  .polaris-side-item[data-nav-toggle]::after {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-right: 1.8px solid currentColor;
+    border-bottom: 1.8px solid currentColor;
+    transform: rotate(45deg);
+    margin-top: 2px;
+    opacity: 0.55;
+  }
+  .polaris-side-submenu {
+    position: absolute;
+    left: calc(100% + 14px);
+    top: 4px;
+    width: 224px;
+    padding: 14px;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+    display: grid;
+    gap: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-8px);
+    transition: opacity .2s ease, transform .2s ease;
+    z-index: 40;
+  }
+  .polaris-side-group:hover .polaris-side-submenu,
+  .polaris-side-group.is-open .polaris-side-submenu,
+  .polaris-side-group.is-active .polaris-side-submenu {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+  .polaris-side-submenu-title {
+    margin: 0 0 4px;
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .polaris-side-subitem {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 14px;
+    text-align: left;
+    background: rgba(249, 250, 251, 0.9);
+    border: 1px solid transparent;
+    color: #4b5563;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .polaris-side-subitem:hover,
+  .polaris-side-subitem.is-active {
+    background: rgba(15, 23, 42, 0.04);
+    border-color: rgba(15, 23, 42, 0.08);
+    color: #111827;
+  }
+  .polaris-side-logout {
+    width: 100%;
+    padding: 10px 4px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    color: #4b5563;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .polaris-side-logout:hover {
+    background: rgba(224, 79, 95, 0.08);
+    border-color: rgba(224, 79, 95, 0.14);
+    color: #c2414d;
+  }
+  .polaris-page-transition {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(circle at 20% 20%, rgba(219, 234, 254, 0.7), transparent 26%),
+      linear-gradient(180deg, rgba(250, 250, 250, 0.96), rgba(244, 244, 245, 0.98));
+    opacity: 1;
+    visibility: visible;
+    transition: opacity .28s ease, visibility .28s ease;
+  }
+  .polaris-page-transition.is-ready {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .polaris-page-transition.is-active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .polaris-page-transition-card {
+    min-width: 220px;
+    padding: 22px 24px;
+    border-radius: 28px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+  }
+  .polaris-page-transition-card svg {
+    width: 48px;
+    height: 48px;
+    display: block;
+  }
+  .polaris-page-transition-card strong {
+    color: #0f172a;
+    font-size: 16px;
+    letter-spacing: -0.02em;
+  }
+  .polaris-page-transition-card span {
+    color: #667085;
+    font-size: 12px;
+  }
+  .polaris-page-transition-bar {
+    width: 140px;
+    height: 5px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(15, 23, 42, 0.08);
+  }
+  .polaris-page-transition-bar::before {
+    content: "";
+    display: block;
+    width: 44%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #e0f2fe, #bfdbfe 36%, #93c5fd 70%, #dbeafe);
+    animation: polaris-buffer-move 1.05s ease-in-out infinite;
+  }
+  @keyframes polaris-buffer-move {
+    0% { transform: translateX(-115%); }
+    100% { transform: translateX(330%); }
+  }
+  @media (max-width: 980px) {
+    .polaris-app-shell {
+      grid-template-columns: 74px minmax(0, 1fr);
+      gap: 14px;
+      padding: 14px;
+    }
+    .polaris-side-panel {
+      top: 12px;
+      height: calc(100vh - 24px);
+      padding-inline: 6px;
+      border-radius: 24px;
+    }
+    .polaris-side-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 11px;
+    }
+    .polaris-side-submenu {
+      left: calc(100% + 10px);
+      width: 206px;
+    }
+  }
+</style>
+""".strip()
+
+
+def dashboard_sidebar_html(active_key: str) -> str:
+    report_group_active = active_key in {"attendance", "inventory", "refurb", "forecast"}
+    report_group_class = "polaris-side-group is-active is-open" if report_group_active else "polaris-side-group"
+    editor_active = "is-active" if active_key == "editor" else ""
+    dashboard_active = "is-active" if active_key == "dashboard" else ""
+    audit_active = "is-active" if active_key == "audit-logs" else ""
+    analysis_active = "is-active" if active_key == "data-agent" else ""
+    master_data_active = "is-active" if active_key == "master-data" else ""
+    governance_active = "is-active" if active_key == "metric-dictionary" else ""
+    sync_active = "is-active" if active_key == "sync" else ""
+
+    def submenu_item(label: str, path: str, key: str) -> str:
+        active = " is-active" if active_key == key else ""
+        return f'<button class="polaris-side-subitem{active}" type="button" data-nav-target="{path}">{label}</button>'
+
+    return f"""
+<aside class="polaris-side-panel">
+  <div class="polaris-side-brand">{dashboard_logo_badge_small_svg()}</div>
+  <nav class="polaris-side-nav" aria-label="鍖楁瀬鏄熷鑸?>
+    <button class="polaris-side-item {dashboard_active}" type="button" data-nav-target="{DASHBOARD_DEFAULT_PATH}">
+      <span class="polaris-side-icon">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M2.8 8.4L9 3.1l6.2 5.3"/><path d="M4.6 7.7v7h8.8v-7"/><path d="M7.3 14.7v-4.2h3.4v4.2"/></svg>
+      </span>
+      <span class="polaris-side-label">缁忚惀</span>
+    </button>
+    <button class="polaris-side-item {editor_active}" type="button" data-nav-target="{DASHBOARD_EDITOR_PATH}">
+      <span class="polaris-side-icon">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="2"/><path d="M6 6h6M6 9h6M6 12h3.4"/></svg>
+      </span>
+      <span class="polaris-side-label">鐪嬫澘</span>
+    </button>
+    <button class="polaris-side-item {analysis_active}" type="button" data-nav-target="{DATA_AGENT_ENTRY_PATH}">
+      <span class="polaris-side-icon">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M6.1 4.4h5.8"/><path d="M9 4.4v1.8"/><rect x="4.1" y="6.2" width="9.8" height="7.3" rx="2"/><circle cx="7.1" cy="9.8" r="0.7"/><circle cx="10.9" cy="9.8" r="0.7"/><path d="M7.5 12.1h3"/></svg>
+      </span>
+      <span class="polaris-side-label">鍒嗘瀽</span>
+    </button>
+    <div class="{report_group_class}">
+      <button class="polaris-side-item {'is-active' if report_group_active else ''}" type="button" data-nav-toggle="reports" aria-expanded="{'true' if report_group_active else 'false'}">
+        <span class="polaris-side-icon">
+          <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4.2 3.6h6.6l3 3v7.6a1.8 1.8 0 0 1-1.8 1.8H4.2a1.8 1.8 0 0 1-1.8-1.8v-8.8a1.8 1.8 0 0 1 1.8-1.8Z"/><path d="M10.8 3.8v3h3"/><path d="M5.8 9.2h6.3M5.8 12h4.4"/></svg>
+        </span>
+        <span class="polaris-side-label">鎶ヨ〃</span>
+      </button>
+      <div class="polaris-side-submenu" role="menu" aria-label="鎶ヨ〃鑿滃崟">
+        <p class="polaris-side-submenu-title">鎶ヨ〃涓庝笟鍔￠〉</p>
+        {submenu_item("鍑哄嫟璁板綍", "/financial/bi-dashboard/attendance", "attendance")}
+        {submenu_item("搴撳瓨鏄犲皠", "/financial/bi-dashboard/inventory-mappings", "inventory")}
+        {submenu_item("缈绘柊鐢熶骇", "/financial/bi-dashboard/refurb-production", "refurb")}
+        {submenu_item("棰勬祴棰勮", "/financial/bi-dashboard/forecast-alerts", "forecast")}
+      </div>
+    </div>
+    <button class="polaris-side-item {sync_active}" type="button" data-nav-target="/financial/bi-dashboard/sync-schedule">
+      <span class="polaris-side-icon">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="5.7"/><path d="M9 5.9v3.3l2.3 1.6"/><path d="M9 1.8v1.3M9 14.9v1.3M16.2 9h-1.3M3.1 9H1.8"/></svg>
+      </span>
+      <span class="polaris-side-label">璋冨害</span>
+    </button>
+    <button class="polaris-side-item {governance_active}" type="button" data-nav-target="{METRIC_DICTIONARY_ENTRY_PATH}">
+      <span class="polaris-side-icon">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4.1 4.2h9.8"/><path d="M4.1 9h9.8"/><path d="M4.1 13.8h6.2"/><circle cx="12.8" cy="13.8" r="1.5"/></svg>
+      </span>
+      <span class="polaris-side-label">娌荤悊</span>
+    </button>
+    <button class="polaris-side-item {master_data_active}" type="button" data-nav-target="{MASTER_DATA_ENTRY_PATH}">
+      <span class="polaris-side-icon">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3.2" width="12" height="11.6" rx="2"/><path d="M6 6.6h6M6 9h6M6 11.4h3.2"/></svg>
+      </span>
+      <span class="polaris-side-label">涓绘暟鎹?/span>
+    </button>
+    <button class="polaris-side-item {audit_active}" type="button" data-nav-target="{AUDIT_LOG_ENTRY_PATH}">
+      <span class="polaris-side-icon">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 4.2h10"/><path d="M4 8.2h10"/><path d="M4 12.2h6"/><circle cx="12.8" cy="12.2" r="1.5"/><path d="M12.8 10v-2"/></svg>
+      </span>
+      <span class="polaris-side-label">瀹¤</span>
+    </button>
+  </nav>
+  <button class="polaris-side-logout" type="button" data-nav-target="/financial/bi-dashboard/logout">閫€鍑?/button>
+</aside>
+""".strip()
+
+
+def dashboard_transition_overlay_markup() -> str:
+    return f"""
+<div class="polaris-page-transition" id="polarisPageTransition" aria-hidden="true">
+  <div class="polaris-page-transition-card">
+    {dashboard_logo_badge_small_svg()}
+    <strong>鍖楁瀬鏄熺粡钀ヤ腑蹇?/strong>
+    <span>椤甸潰鍒囨崲涓紝璇风◢鍊?..</span>
+    <div class="polaris-page-transition-bar"></div>
+  </div>
+</div>
+""".strip()
+
+
+def dashboard_transition_script() -> str:
+    return """
+<script>
+  (() => {
+    const overlay = document.getElementById("polarisPageTransition");
+    if (!overlay) return;
+
+    const closeOverlay = () => {
+      overlay.classList.add("is-ready");
+      overlay.classList.remove("is-active");
+    };
+
+    const openOverlay = () => {
+      overlay.classList.remove("is-ready");
+      overlay.classList.add("is-active");
+    };
+
+    window.polarisNavigate = (url, options = {}) => {
+      if (!url) return;
+      const target = String(url);
+      if (!target) return;
+      openOverlay();
+      window.setTimeout(() => {
+        window.location.href = target;
+      }, Number(options.delay || 240));
+    };
+
+    document.querySelectorAll("[data-nav-target]").forEach((node) => {
+      node.addEventListener("click", () => {
+        const target = node.getAttribute("data-nav-target");
+        if (target) window.polarisNavigate(target);
+      });
+    });
+
+    document.querySelectorAll("[data-nav-toggle]").forEach((node) => {
+      node.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const group = node.closest(".polaris-side-group");
+        if (!group) return;
+        const next = !group.classList.contains("is-open");
+        document.querySelectorAll(".polaris-side-group.is-open").forEach((item) => {
+          if (item !== group && !item.classList.contains("is-active")) item.classList.remove("is-open");
+          const toggle = item.querySelector("[data-nav-toggle]");
+          if (toggle && item !== group && !item.classList.contains("is-active")) toggle.setAttribute("aria-expanded", "false");
+        });
+        group.classList.toggle("is-open", next);
+        node.setAttribute("aria-expanded", next ? "true" : "false");
+      });
+    });
+
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".polaris-side-group.is-open").forEach((group) => {
+        if (group.classList.contains("is-active")) return;
+        group.classList.remove("is-open");
+        const toggle = group.querySelector("[data-nav-toggle]");
+        if (toggle) toggle.setAttribute("aria-expanded", "false");
+      });
+    });
+
+    window.addEventListener("pageshow", closeOverlay);
+    window.addEventListener("load", () => window.setTimeout(closeOverlay, 170));
+  })();
+</script>
+""".strip()
+
+
+def dashboard_page_context(active_key: str, replacements: Dict[str, str] | None = None) -> Dict[str, str]:
+    context = {
+        "__BI_SHELL_HEAD__": dashboard_shell_head(),
+        "__BI_SIDE_NAV__": dashboard_sidebar_html(active_key),
+        "__BI_TRANSITION_OVERLAY__": dashboard_transition_overlay_markup(),
+        "__BI_PAGE_TRANSITION_SCRIPT__": dashboard_transition_script(),
+    }
+    if replacements:
+        context.update(replacements)
+    return context
+
+
 def is_local_port_open(host: str, port: int, timeout: float = 0.35) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -471,34 +946,134 @@ def is_local_port_open(host: str, port: int, timeout: float = 0.35) -> bool:
         return False
 
 
+def ensure_data_agent_local_config() -> Path:
+    repo_dir = DATA_AGENT_REPO_DIR
+    runtime_workspace = repo_dir / "runtime" / "workspace"
+    runtime_csv = repo_dir / "runtime" / "csv"
+    runtime_workspace.mkdir(parents=True, exist_ok=True)
+    runtime_csv.mkdir(parents=True, exist_ok=True)
+    config_path = repo_dir / "conf.yaml"
+    if config_path.exists():
+        return config_path
+
+    config_content = f"""# 鏈湴鐢卞寳鏋佹槦鑷姩鐢熸垚鐨勬暟鎹垎鏋怉gent閰嶇疆
+app:
+  locale: "zh-CN"
+  max_steps: 6
+  max_retry_count: 3
+  max_replan_count: 10
+  plan_temperature: 0.8
+  query_limit: 100000
+  workspace_directory:
+    linux: "/data/data_agent"
+    windows: "{str(runtime_workspace).replace(chr(92), '/')}"
+  csv_data_directory:
+    linux: "/data/csv_files"
+    windows: "{str(runtime_csv).replace(chr(92), '/')}"
+
+llm:
+  react_agent: &default_llm
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4o-mini"
+    api_key: "$OPENAI_API_KEY"
+  report_agent: *default_llm
+  small_talk_agent: *default_llm
+  intent_recognition_agent: *default_llm
+  plan_agent: *default_llm
+  analysis_agent: *default_llm
+  extract: *default_llm
+
+database:
+  mysql:
+    host: "127.0.0.1"
+    port: 3306
+    user: "bi_client"
+    password: "$POLARIS_DATA_AGENT_DB_PASSWORD"
+    database: "bi_center"
+
+agents:
+  capabilities:
+    sale_agent:
+      capabilities:
+        - "鍒嗘瀽閿€鍞€佸簱瀛樸€侀€€璐с€佺炕鏂扮敓浜т笌缁忚惀缁撴灉"
+    analysis_agent:
+      capabilities:
+        - "瀵瑰巻鍙叉暟鎹仛璁＄畻銆佸綊绾炽€佹尝鍔ㄥ垽鏂拰寮傚父鍒嗘瀽"
+  data_sources:
+    sale_agent:
+      csv: []
+      tables: []
+
+ragflow:
+  base_url: "http://127.0.0.1:9380"
+  api_key: "$RAGFLOW_API_KEY"
+  datasets: {{}}
+"""
+    config_path.write_text(config_content, encoding="utf-8")
+    return config_path
+
+
+def is_data_agent_api_online() -> bool:
+    try:
+        response = requests.get(f"{DATA_AGENT_API_URL}/openapi.json", timeout=1.5)
+        if not response.ok:
+            return False
+        payload = response.json()
+        title = str(payload.get("info", {}).get("title") or "")
+        return "Data Agent" in title
+    except Exception:
+        return False
+
+
+def is_data_agent_ui_online() -> bool:
+    try:
+        response = requests.get(DATA_AGENT_UI_URL, timeout=1.5)
+        if not response.ok:
+            return False
+        body = response.text[:2000].lower()
+        return "streamlit" in body or "data agent" in body
+    except Exception:
+        return False
+
+
+def data_agent_env_snapshot() -> Dict[str, bool]:
+    return {
+        "openai_api_key": bool(os.getenv("OPENAI_API_KEY")),
+        "ragflow_api_key": bool(os.getenv("RAGFLOW_API_KEY")),
+        "db_password": bool(os.getenv("POLARIS_DATA_AGENT_DB_PASSWORD")),
+    }
+
+
 def data_agent_status_payload() -> Dict[str, Any]:
     repo_dir = DATA_AGENT_REPO_DIR
+    config_path = ensure_data_agent_local_config()
     files = {
         "readme": repo_dir / "README_CN.md",
         "backend": repo_dir / "server.py",
         "frontend": repo_dir / "streamlit_app.py",
         "example_config": repo_dir / "conf.example.yaml",
-        "config": repo_dir / "conf.yaml",
+        "config": config_path,
         "requirements": repo_dir / "requirements.txt",
     }
+    env_ready = data_agent_env_snapshot()
     return {
-        "module_name": "数据智能体",
-        "display_name": "DataAgent",
+        "module_name": DATA_AGENT_NAME,
+        "display_name": "鏁版嵁鍒嗘瀽Agent",
         "github_url": DATA_AGENT_GITHUB_URL,
         "repo_path": str(repo_dir),
         "repo_present": repo_dir.exists(),
         "config_ready": files["config"].exists(),
         "files": {name: path.exists() for name, path in files.items()},
+        "env_ready": env_ready,
         "api_url": DATA_AGENT_API_URL,
         "ui_url": DATA_AGENT_UI_URL,
-        "api_online": is_local_port_open("127.0.0.1", 10000),
-        "ui_online": is_local_port_open("127.0.0.1", 8501),
+        "api_online": is_data_agent_api_online(),
+        "ui_online": is_data_agent_ui_online(),
         "startup_steps": [
             "cd /d \"vendor\\DataAgent\"",
             "pip install -r requirements.txt",
-            "copy conf.example.yaml conf.yaml",
-            "python server.py --host 0.0.0.0 --port 10000",
-            "streamlit run streamlit_app.py --server.port 8501",
+            "python server.py --host 127.0.0.1 --port 18080",
+            "streamlit run streamlit_app.py --server.port 18501 --server.headless true",
         ],
         "capabilities": [
             "多智能体协作规划与执行",
@@ -506,9 +1081,8 @@ def data_agent_status_payload() -> Dict[str, Any]:
             "流式对话、代码执行与分析报告生成",
             "支持 MCP 与 RAGFlow 扩展",
         ],
-        "integration_note": "当前阶段先以独立模块形式接入北极星，前端提供统一入口与运行状态查看，后续再决定是否做统一代理和单点嵌入。",
+        "integration_note": "当前阶段已升级为数据分析 Agent：北极星负责统一入口、状态探测、问答代理、报告生成与 AI 洞察接入，底层仍复用 DataAgent 作为独立智能体服务。",
     }
-
 
 def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -525,12 +1099,112 @@ def json_loads(value: Any, fallback: Any) -> Any:
         return fallback
 
 
+def audit_preview_values(rows: Sequence[Dict[str, Any]], field_name: str, limit: int = 5) -> List[str]:
+    values: List[str] = []
+    seen: set[str] = set()
+    for item in rows:
+        raw_value = str(item.get(field_name) or "").strip()
+        if not raw_value or raw_value in seen:
+            continue
+        seen.add(raw_value)
+        values.append(raw_value)
+        if len(values) >= limit:
+            break
+    return values
+
+
 def to_plain(value: Any) -> Any:
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     return value
+
+
+def sanitize_audit_detail(value: Any, depth: int = 0) -> Any:
+    if depth >= 4:
+        return "..."
+    if isinstance(value, dict):
+        items: Dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 18:
+                items["__truncated__"] = f"+{len(value) - 18} more"
+                break
+            normalized_key = str(key)
+            lowered = normalized_key.lower()
+            if any(token in lowered for token in ("password", "token", "secret", "cookie", "authorization", "api_key")):
+                items[normalized_key] = "[REDACTED]"
+                continue
+            items[normalized_key] = sanitize_audit_detail(item, depth + 1)
+        return items
+    if isinstance(value, (list, tuple, set)):
+        values = list(value)
+        result = [sanitize_audit_detail(item, depth + 1) for item in values[:8]]
+        if len(values) > 8:
+            result.append(f"... +{len(values) - 8} more")
+        return result
+    plain_value = to_plain(value)
+    if isinstance(plain_value, str):
+        text_value = plain_value.strip()
+        return text_value if len(text_value) <= 240 else f"{text_value[:237]}..."
+    return plain_value
+
+
+def record_dashboard_audit(
+    *,
+    module_key: str,
+    module_name: str,
+    action_key: str,
+    action_name: str,
+    target_type: str = "",
+    target_id: Any = "",
+    target_name: str = "",
+    result_status: str = "success",
+    detail_summary: str = "",
+    detail: Any = None,
+    triggered_by: str = "",
+    source_path: str = "",
+    source_method: str = "",
+    affected_count: int = 0,
+) -> None:
+    try:
+        current_engine = get_engine()
+        with current_engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_audit_log(
+                        module_key, module_name, action_key, action_name,
+                        target_type, target_id, target_name, result_status,
+                        detail_summary, detail_json, source_path, source_method,
+                        triggered_by, affected_count
+                    ) VALUES (
+                        :module_key, :module_name, :action_key, :action_name,
+                        :target_type, :target_id, :target_name, :result_status,
+                        :detail_summary, :detail_json, :source_path, :source_method,
+                        :triggered_by, :affected_count
+                    )
+                    """
+                ),
+                {
+                    "module_key": module_key,
+                    "module_name": module_name,
+                    "action_key": action_key,
+                    "action_name": action_name,
+                    "target_type": str(target_type or "")[:64],
+                    "target_id": str(target_id or "")[:128],
+                    "target_name": str(target_name or "")[:255],
+                    "result_status": str(result_status or "success")[:32],
+                    "detail_summary": str(detail_summary or "")[:255],
+                    "detail_json": json_dumps(sanitize_audit_detail(detail or {})),
+                    "source_path": str(source_path or "")[:255],
+                    "source_method": str(source_method or "")[:16],
+                    "triggered_by": str(triggered_by or "")[:64] or None,
+                    "affected_count": max(0, int(affected_count or 0)),
+                },
+            )
+    except Exception as exc:
+        app_logger.warning("Dashboard audit write failed: %s", exc)
 
 
 def to_number(value: Any) -> float | None:
@@ -849,10 +1523,14 @@ def get_sync_scheduler() -> BackgroundScheduler:
 def sync_scheduler_snapshot() -> Dict[str, Any]:
     scheduler = sync_scheduler
     job = scheduler.get_job(SYNC_SCHEDULE_JOB_ID) if scheduler and scheduler.running else None
+    weekly_job = scheduler.get_job(DATA_AGENT_WEEKLY_JOB_ID) if scheduler and scheduler.running else None
+    monthly_job = scheduler.get_job(DATA_AGENT_MONTHLY_JOB_ID) if scheduler and scheduler.running else None
     return {
         "scheduler_running": bool(scheduler and scheduler.running),
         "is_running": sync_run_lock.locked(),
         "next_run_at": to_plain(job.next_run_time) if job and job.next_run_time else None,
+        "weekly_report_next_run_at": to_plain(weekly_job.next_run_time) if weekly_job and weekly_job.next_run_time else None,
+        "monthly_report_next_run_at": to_plain(monthly_job.next_run_time) if monthly_job and monthly_job.next_run_time else None,
         "timezone": SYNC_SCHEDULER_TIMEZONE,
     }
 
@@ -878,6 +1556,21 @@ def refresh_sync_scheduler() -> Dict[str, Any]:
                 id=SYNC_SCHEDULE_JOB_ID,
                 replace_existing=True,
             )
+        for job_id in (DATA_AGENT_WEEKLY_JOB_ID, DATA_AGENT_MONTHLY_JOB_ID):
+            if scheduler.get_job(job_id) is not None:
+                scheduler.remove_job(job_id)
+        scheduler.add_job(
+            run_weekly_data_agent_report,
+            trigger=CronTrigger(day_of_week="mon", hour=9, minute=5, timezone=scheduler_timezone()),
+            id=DATA_AGENT_WEEKLY_JOB_ID,
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            run_monthly_data_agent_report,
+            trigger=CronTrigger(day=1, hour=9, minute=10, timezone=scheduler_timezone()),
+            id=DATA_AGENT_MONTHLY_JOB_ID,
+            replace_existing=True,
+        )
     runtime = sync_scheduler_snapshot()
     return {**schedule, **runtime}
 
@@ -910,7 +1603,7 @@ def serialize_sync_schedule(schedule: Dict[str, Any]) -> Dict[str, Any]:
 def validate_sync_schedule_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     mode = str(payload.get("mode") or "all").strip().lower()
     if mode not in {"all", "inventory", "sales"}:
-        raise HTTPException(status_code=400, detail="同步模式无效")
+        raise HTTPException(status_code=400, detail="鍚屾妯″紡鏃犳晥")
     is_enabled = parse_bool_or_default(payload.get("is_enabled"), False)
     cron_expr = str(payload.get("cron_expr") or "").strip() or "59 23 * * *"
     if is_enabled:
@@ -940,7 +1633,7 @@ def parse_numeric_or_zero(raw_value: Any) -> Decimal:
         return Decimal("0")
 
 
-def parse_refurb_date(raw_value: Any, field_name: str = "日期") -> date:
+def parse_refurb_date(raw_value: Any, field_name: str = "鏃ユ湡") -> date:
     if isinstance(raw_value, datetime):
         return raw_value.date()
     if isinstance(raw_value, date):
@@ -997,9 +1690,9 @@ def normalize_refurb_production_payload(payload: Dict[str, Any] | None) -> Dict[
     refurb_category = str(raw.get("refurb_category") or "").strip()
     material_name = str(raw.get("material_name") or "").strip()
     if not refurb_category:
-        raise HTTPException(status_code=400, detail="翻新种类不能为空")
+        raise HTTPException(status_code=400, detail="缈绘柊绉嶇被涓嶈兘涓虹┖")
     if not material_name:
-        raise HTTPException(status_code=400, detail="物料名称不能为空")
+        raise HTTPException(status_code=400, detail="鐗╂枡鍚嶇О涓嶈兘涓虹┖")
     metrics = calculate_refurb_metrics(raw)
     return {
         "biz_date": biz_date,
@@ -1013,17 +1706,17 @@ def parse_refurb_excel_rows(upload_file: UploadFile, content: bytes) -> List[Dic
     try:
         workbook = load_workbook(io.BytesIO(content), data_only=True)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Excel 文件无法解析，请上传 .xlsx 文件") from exc
+        raise HTTPException(status_code=400, detail="Excel 鏂囦欢鏃犳硶瑙ｆ瀽锛岃涓婁紶 .xlsx 鏂囦欢") from exc
 
     worksheet = workbook.active
     rows = list(worksheet.iter_rows(values_only=True))
     if not rows:
-        raise HTTPException(status_code=400, detail="Excel 文件没有可导入的数据")
+        raise HTTPException(status_code=400, detail="Excel 鏂囦欢娌℃湁鍙鍏ョ殑鏁版嵁")
 
     header_row_index = None
     for index, row in enumerate(rows):
         normalized = [str(cell or "").strip() for cell in row]
-        if "日期" in normalized and "翻新种类" in normalized and "物料名称" in normalized:
+        if "鏃ユ湡" in normalized and "缈绘柊绉嶇被" in normalized and "鐗╂枡鍚嶇О" in normalized:
             header_row_index = index
             break
     if header_row_index is None:
@@ -1032,14 +1725,14 @@ def parse_refurb_excel_rows(upload_file: UploadFile, content: bytes) -> List[Dic
     header = [str(cell or "").strip() for cell in rows[header_row_index]]
     header_map = {name: idx for idx, name in enumerate(header) if name}
     required_headers = {
-        "日期": "biz_date",
-        "翻新种类": "refurb_category",
-        "物料名称": "material_name",
-        "领料数量": "feeding_qty",
-        "总耗费工时": "total_work_hours",
-        "计划数量": "plan_qty",
+        "鏃ユ湡": "biz_date",
+        "缈绘柊绉嶇被": "refurb_category",
+        "鐗╂枡鍚嶇О": "material_name",
+        "棰嗘枡鏁伴噺": "feeding_qty",
+        "鎬昏€楄垂宸ユ椂": "total_work_hours",
+        "璁″垝鏁伴噺": "plan_qty",
         "品质-检出不合格品": "quality_defect_qty",
-        "生产-产出良品数量": "production_good_qty",
+        "鐢熶骇-浜у嚭鑹搧鏁伴噺": "production_good_qty",
         "生产-产出不良品数量": "production_bad_qty",
     }
     missing_headers = [name for name in required_headers if name not in header_map]
@@ -1059,7 +1752,7 @@ def parse_refurb_excel_rows(upload_file: UploadFile, content: bytes) -> List[Dic
         except HTTPException as exc:
             raise HTTPException(status_code=400, detail=f"第 {row_number} 行导入失败：{exc.detail}") from exc
     if not normalized_rows:
-        raise HTTPException(status_code=400, detail=f"{upload_file.filename or 'Excel 文件'} 中没有可导入的数据行")
+        raise HTTPException(status_code=400, detail=f"{upload_file.filename or 'Excel 鏂囦欢'} 涓病鏈夊彲瀵煎叆鐨勬暟鎹")
     return normalized_rows
 
 
@@ -1169,16 +1862,16 @@ def refurb_production_summaries(conn, start_date: date | None = None, end_date: 
 
 def normalize_forecast_manual_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
     raw = payload or {}
-    forecast_date = parse_refurb_date(raw.get("forecast_date"), "预测日期")
+    forecast_date = parse_refurb_date(raw.get("forecast_date"), "棰勬祴鏃ユ湡")
     material_name = str(raw.get("material_name") or "").strip()
     demand_type = str(raw.get("demand_type") or "").strip().lower()
     if not material_name:
-        raise HTTPException(status_code=400, detail="物料名称不能为空")
+        raise HTTPException(status_code=400, detail="鐗╂枡鍚嶇О涓嶈兘涓虹┖")
     if demand_type not in {"sales", "refurb"}:
-        raise HTTPException(status_code=400, detail="需求类型仅支持 sales 或 refurb")
+        raise HTTPException(status_code=400, detail="闇€姹傜被鍨嬩粎鏀寔 sales 鎴?refurb")
     manual_qty = parse_numeric_or_zero(raw.get("manual_qty"))
     if manual_qty < 0:
-        raise HTTPException(status_code=400, detail="手动预测值不能为负数")
+        raise HTTPException(status_code=400, detail="鎵嬪姩棰勬祴鍊间笉鑳戒负璐熸暟")
     return {
         "forecast_date": forecast_date,
         "material_name": material_name,
@@ -1254,9 +1947,9 @@ def normalize_inventory_mapping_payload(
             if not stock_status_id and not stock_status_name:
                 continue
             if not stock_status_id or not stock_status_name:
-                raise HTTPException(status_code=400, detail="库存状态映射的状态ID和状态名称都不能为空")
+                raise HTTPException(status_code=400, detail="库存状态映射的状态 ID 和状态名称都不能为空")
             if stock_status_id in seen:
-                raise HTTPException(status_code=400, detail=f"库存状态映射重复：{stock_status_id}")
+                raise HTTPException(status_code=400, detail=f"搴撳瓨鐘舵€佹槧灏勯噸澶嶏細{stock_status_id}")
             seen.add(stock_status_id)
             normalized_item.update(
                 {
@@ -1269,6 +1962,1285 @@ def normalize_inventory_mapping_payload(
         normalized.append(normalized_item)
     return normalized
 
+
+def default_metric_dictionary_rows() -> List[Dict[str, Any]]:
+    effective_date = date.today().replace(month=1, day=1)
+    return [
+        {
+            "metric_key": "inventory_sellable_qty",
+            "metric_name": "可售库存",
+            "business_domain": "库存基础",
+            "owner_role": "计划 / 仓配",
+            "definition_text": "当前可直接用于销售或可计入口径供给的库存数量。",
+            "formula_text": "按库存清洗表中计入可售或可供给口径的状态数量求和。",
+            "source_table": "inventory_cleaning",
+            "source_fields": "snapshot_date, material_code, warehouse_name_clean, stock_status_name, qty",
+            "dimension_notes": "可按仓库 / SKU / 状态 / 日期统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 10,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "metric_key": "inventory_coverage_days",
+            "metric_name": "库存覆盖天数",
+            "business_domain": "计划预警",
+            "owner_role": "计划",
+            "definition_text": "当前可供库存按近期消耗节奏或预测需求可支撑的天数。",
+            "formula_text": "可供库存 / 日均需求。当日均需求为 0 时按空值处理。",
+            "source_table": "inventory_cleaning + bi_forecast_daily_snapshot",
+            "source_fields": "current_stock_qty, forecast_qty, threshold_days",
+            "dimension_notes": "可按物料 / 需求类型 / 日期统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 20,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "metric_key": "sales_income",
+            "metric_name": "销售收入",
+            "business_domain": "经营驾驶舱",
+            "owner_role": "供应链 / 财务",
+            "definition_text": "周期内按经营口径确认的销售收入。",
+            "formula_text": "按销售清洗表在选定周期内对收入金额求和。",
+            "source_table": "sales_cleaning",
+            "source_fields": "biz_date, amount, platform_name, sku_code",
+            "dimension_notes": "可按平台 / 店铺 / SKU / 日期统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 30,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "metric_key": "sales_return_amount",
+            "metric_name": "退货金额",
+            "business_domain": "退货分析",
+            "owner_role": "售后 / 财务",
+            "definition_text": "周期内发生的退货及其对应金额。",
+            "formula_text": "按退货口径对退货单或反向销售记录金额求和。",
+            "source_table": "sales_cleaning",
+            "source_fields": "return_qty, return_amount, warehouse_name_clean",
+            "dimension_notes": "可按平台 / SKU / 退货原因 / 日期统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 40,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "metric_key": "refurb_qualified_rate",
+            "metric_name": "翻新合格率",
+            "business_domain": "翻新生产",
+            "owner_role": "翻新 / 品质",
+            "definition_text": "翻新生产在给定周期内的合格率，用于反映产线质量表现。",
+            "formula_text": "final_good_qty / production_good_qty，当 production_good_qty 为 0 时返回 0。",
+            "source_table": "bi_refurb_production_daily",
+            "source_fields": "production_good_qty, final_good_qty, quality_defect_qty",
+            "dimension_notes": "可按日期 / 翻新类别 / 物料统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 50,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "metric_key": "forecast_bias_rate",
+            "metric_name": "预测偏差率",
+            "business_domain": "计划预警",
+            "owner_role": "计划",
+            "definition_text": "系统预测值与实际结果之间的偏离程度，用于衡量预测可信度。",
+            "formula_text": "|预测值 - 实际值| / max(实际值, 1)。",
+            "source_table": "bi_forecast_manual / bi_forecast_daily_snapshot / sales_cleaning",
+            "source_fields": "manual_qty, ai_qty, actual_sales_qty",
+            "dimension_notes": "可按物料 / 需求类型 / 月份统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 60,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "metric_key": "inventory_alert_count",
+            "metric_name": "安全库存预警数",
+            "business_domain": "计划预警",
+            "owner_role": "计划 / 采购",
+            "definition_text": "当前周期内触发安全库存风险的预警条数。",
+            "formula_text": "按阈值规则对每个物料进行判断，命中则计数。",
+            "source_table": "bi_forecast_daily_snapshot / bi_forecast_material_profile",
+            "source_fields": "current_stock_qty, forecast_qty, threshold_days, alert_level",
+            "dimension_notes": "可按物料 / 预警等级 / 日期统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 70,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "metric_key": "data_agent_report_coverage",
+            "metric_name": "AI 报告覆盖率",
+            "business_domain": "经营驾驶舱",
+            "owner_role": "管理层 / 数据",
+            "definition_text": "周报、月报对关键经营主题的覆盖情况，用于衡量 AI 报告的管理使用价值。",
+            "formula_text": "已生成报告数 / 应生成报告数，按周期统计。",
+            "source_table": "bi_data_agent_report",
+            "source_fields": "report_type, period_start, period_end, status",
+            "dimension_notes": "可按报告类型 / 周期统计",
+            "version_tag": "v1",
+            "effective_date": effective_date,
+            "sort_order": 80,
+            "is_enabled": 1,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+    ]
+
+
+def ensure_metric_dictionary_seed(conn) -> None:
+    count = int(conn.execute(text("SELECT COUNT(*) FROM bi_metric_dictionary")).scalar() or 0)
+    if count > 0:
+        return
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_metric_dictionary(
+                metric_key, metric_name, business_domain, owner_role,
+                definition_text, formula_text, source_table, source_fields,
+                dimension_notes, version_tag, effective_date, sort_order,
+                is_enabled, created_by, updated_by
+            ) VALUES (
+                :metric_key, :metric_name, :business_domain, :owner_role,
+                :definition_text, :formula_text, :source_table, :source_fields,
+                :dimension_notes, :version_tag, :effective_date, :sort_order,
+                :is_enabled, :created_by, :updated_by
+            )
+            """
+        ),
+        default_metric_dictionary_rows(),
+    )
+
+
+def normalize_metric_dictionary_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for index, item in enumerate(rows or []):
+        if not isinstance(item, dict):
+            continue
+        metric_key = str(item.get("metric_key") or "").strip()
+        metric_name = str(item.get("metric_name") or "").strip()
+        business_domain = str(item.get("business_domain") or "").strip()
+        owner_role = str(item.get("owner_role") or "").strip()
+        definition_text = str(item.get("definition_text") or "").strip()
+        formula_text = str(item.get("formula_text") or "").strip()
+        source_table = str(item.get("source_table") or "").strip()
+        source_fields = str(item.get("source_fields") or "").strip()
+        dimension_notes = str(item.get("dimension_notes") or "").strip()
+        version_tag = str(item.get("version_tag") or "v1").strip()
+        effective_date_raw = str(item.get("effective_date") or "").strip()
+        if not any(
+            [
+                metric_key,
+                metric_name,
+                business_domain,
+                owner_role,
+                definition_text,
+                formula_text,
+                source_table,
+                source_fields,
+                dimension_notes,
+            ]
+        ):
+            continue
+        if not metric_key or not metric_name:
+            raise HTTPException(status_code=400, detail=f"第 {index + 1} 条指标编码和名称不能为空")
+        if metric_key in seen_keys:
+            raise HTTPException(status_code=400, detail=f"指标编码重复：{metric_key}")
+        seen_keys.add(metric_key)
+        effective_date = None
+        if effective_date_raw:
+            try:
+                effective_date = datetime.strptime(effective_date_raw, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"指标 {metric_key} 的生效日期格式应为 YYYY-MM-DD") from exc
+        normalized.append(
+            {
+                "id": parse_int_or_default(item.get("id"), 0),
+                "metric_key": metric_key,
+                "metric_name": metric_name,
+                "business_domain": business_domain or "经营驾驶舱",
+                "owner_role": owner_role,
+                "definition_text": definition_text,
+                "formula_text": formula_text,
+                "source_table": source_table,
+                "source_fields": source_fields,
+                "dimension_notes": dimension_notes,
+                "version_tag": version_tag or "v1",
+                "effective_date": effective_date,
+                "sort_order": max(0, parse_int_or_default(item.get("sort_order"), (index + 1) * 10)),
+                "is_enabled": 1 if bool(item.get("is_enabled", True)) else 0,
+            }
+        )
+    return normalized
+
+
+def table_exists(conn, table_name: str) -> bool:
+    return bool(conn.execute(text("SHOW TABLES LIKE :table_name"), {"table_name": table_name}).fetchone())
+
+
+def ensure_table_columns(conn, table_name: str, column_definitions: Dict[str, str]) -> None:
+    existing = {row[0] for row in conn.execute(text(f"SHOW COLUMNS FROM {table_name}")).fetchall()}
+    for column_name, definition_sql in column_definitions.items():
+        if column_name in existing:
+            continue
+        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition_sql}"))
+
+
+def normalize_master_warehouse_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    seen_source_names: set[str] = set()
+    for index, item in enumerate(rows or []):
+        if not isinstance(item, dict):
+            continue
+        source_name = str(item.get("source_warehouse_name") or "").strip()
+        clean_name = str(item.get("warehouse_name_clean") or "").strip()
+        if not source_name and not clean_name:
+            continue
+        if not source_name or not clean_name:
+            raise HTTPException(status_code=400, detail=f"第 {index + 1} 条仓库主数据缺少原始仓库或统一仓库名称")
+        if source_name in seen_source_names:
+            raise HTTPException(status_code=400, detail=f"浠撳簱涓绘暟鎹噸澶嶏細{source_name}")
+        seen_source_names.add(source_name)
+        normalized.append(
+            {
+                "id": parse_int_or_default(item.get("id"), 0),
+                "source_warehouse_name": source_name,
+                "warehouse_name_clean": clean_name,
+                "warehouse_code": str(item.get("warehouse_code") or clean_name).strip(),
+                "warehouse_type": str(item.get("warehouse_type") or "").strip(),
+                "platform_owner": str(item.get("platform_owner") or "").strip(),
+                "city": str(item.get("city") or "").strip(),
+                "is_sellable_warehouse": 1 if parse_bool_or_default(item.get("is_sellable_warehouse"), False) else 0,
+                "is_reverse_warehouse": 1 if parse_bool_or_default(item.get("is_reverse_warehouse"), False) else 0,
+                "sort_order": max(0, parse_int_or_default(item.get("sort_order"), (index + 1) * 10)),
+                "is_enabled": 1 if parse_bool_or_default(item.get("is_enabled"), True) else 0,
+            }
+        )
+    return normalized
+
+
+def normalize_master_status_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    seen_status_ids: set[str] = set()
+    for index, item in enumerate(rows or []):
+        if not isinstance(item, dict):
+            continue
+        status_id = str(item.get("stock_status_id") or "").strip()
+        status_name = str(item.get("stock_status_name") or "").strip()
+        if not status_id and not status_name:
+            continue
+        if not status_id or not status_name:
+            raise HTTPException(status_code=400, detail=f"第 {index + 1} 条库存状态缺少状态 ID 或状态名称")
+        if status_id in seen_status_ids:
+            raise HTTPException(status_code=400, detail=f"搴撳瓨鐘舵€侀噸澶嶏細{status_id}")
+        seen_status_ids.add(status_id)
+        normalized.append(
+            {
+                "id": parse_int_or_default(item.get("id"), 0),
+                "stock_status_id": status_id,
+                "stock_status_name": status_name,
+                "status_group": str(item.get("status_group") or "").strip(),
+                "can_sell": 1 if parse_bool_or_default(item.get("can_sell"), False) else 0,
+                "can_forecast_supply": 1 if parse_bool_or_default(item.get("can_forecast_supply"), False) else 0,
+                "need_quality_check": 1 if parse_bool_or_default(item.get("need_quality_check"), False) else 0,
+                "next_default_status": str(item.get("next_default_status") or "").strip(),
+                "sort_order": max(0, parse_int_or_default(item.get("sort_order"), (index + 1) * 10)),
+                "is_enabled": 1 if parse_bool_or_default(item.get("is_enabled"), True) else 0,
+            }
+        )
+    return normalized
+
+
+def normalize_sku_master_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    seen_codes: set[str] = set()
+    for index, item in enumerate(rows or []):
+        if not isinstance(item, dict):
+            continue
+        sku_code = str(item.get("sku_code") or "").strip()
+        sku_name = str(item.get("sku_name") or "").strip()
+        if not sku_code and not sku_name:
+            continue
+        if not sku_code or not sku_name:
+            raise HTTPException(status_code=400, detail=f"第 {index + 1} 条 SKU 缺少编码或名称")
+        if sku_code in seen_codes:
+            raise HTTPException(status_code=400, detail=f"SKU 编码重复：{sku_code}")
+        seen_codes.add(sku_code)
+        normalized.append(
+            {
+                "id": parse_int_or_default(item.get("id"), 0),
+                "sku_code": sku_code,
+                "sku_name": sku_name,
+                "sku_type": str(item.get("sku_type") or "").strip(),
+                "product_line": str(item.get("product_line") or "").strip(),
+                "model": str(item.get("model") or "").strip(),
+                "spec_version": str(item.get("spec_version") or "").strip(),
+                "lifecycle_status": str(item.get("lifecycle_status") or "").strip(),
+                "owner_dept": str(item.get("owner_dept") or "").strip(),
+                "sort_order": max(0, parse_int_or_default(item.get("sort_order"), (index + 1) * 10)),
+                "is_active": 1 if parse_bool_or_default(item.get("is_active"), True) else 0,
+            }
+        )
+    return normalized
+
+
+def normalize_channel_shop_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for index, item in enumerate(rows or []):
+        if not isinstance(item, dict):
+            continue
+        channel_code = str(item.get("channel_code") or "").strip()
+        channel_name = str(item.get("channel_name") or "").strip()
+        shop_name = str(item.get("shop_name") or "").strip()
+        if not channel_code and not channel_name and not shop_name:
+            continue
+        if not channel_code or not channel_name:
+            raise HTTPException(status_code=400, detail=f"第 {index + 1} 条渠道店铺缺少渠道编码或渠道名称")
+        pair_key = (channel_code, shop_name)
+        if pair_key in seen_pairs:
+            raise HTTPException(status_code=400, detail=f"渠道店铺重复：{channel_code} / {shop_name}")
+        seen_pairs.add(pair_key)
+        normalized.append(
+            {
+                "id": parse_int_or_default(item.get("id"), 0),
+                "channel_code": channel_code,
+                "channel_name": channel_name,
+                "shop_name": shop_name,
+                "platform_name": str(item.get("platform_name") or "").strip(),
+                "owner_dept": str(item.get("owner_dept") or "").strip(),
+                "sort_order": max(0, parse_int_or_default(item.get("sort_order"), (index + 1) * 10)),
+                "is_active": 1 if parse_bool_or_default(item.get("is_active"), True) else 0,
+            }
+        )
+    return normalized
+
+
+def procurement_arrival_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "draft", "label": "草稿"},
+        {"value": "ready", "label": "待执行"},
+        {"value": "completed", "label": "已到货"},
+        {"value": "exception", "label": "异常"},
+    ]
+
+
+def procurement_document_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "pending", "label": "待编排"},
+        {"value": "generated", "label": "已生成"},
+        {"value": "synced", "label": "已回写"},
+        {"value": "failed", "label": "失败待补救"},
+    ]
+
+
+def generate_procurement_arrival_no() -> str:
+    return f"CGDH{datetime.now().strftime('%Y%m%d%H%M%S')}{int(time.time() * 1000) % 1000:03d}"
+
+
+def default_procurement_arrival_rows() -> List[Dict[str, Any]]:
+    today = date.today()
+    return [
+        {
+            "arrival_no": f"CGDH{today.strftime('%Y%m%d')}001",
+            "purchase_order_no": f"PO{today.strftime('%Y%m')}001",
+            "supplier_name": "深圳智学电子",
+            "warehouse_code": "SZ-FG",
+            "warehouse_name": "深圳成品仓",
+            "channel_code": "ALL",
+            "channel_name": "公共补货",
+            "sku_code": "TAB-A12-128G",
+            "sku_name": "学习平板 A12 128G",
+            "expected_qty": 600,
+            "arrived_qty": 560,
+            "qualified_qty": 552,
+            "exception_qty": 8,
+            "unit": "台",
+            "arrival_date": today - timedelta(days=1),
+            "status": "ready",
+            "document_status": "generated",
+            "exception_reason": "",
+            "remark": "首批到货，待系统回写入库结果",
+            "source_system": "manual",
+            "created_by": "system",
+            "updated_by": "system",
+            "sort_order": 10,
+        },
+        {
+            "arrival_no": f"CGDH{today.strftime('%Y%m%d')}002",
+            "purchase_order_no": f"PO{today.strftime('%Y%m')}002",
+            "supplier_name": "东莞启程包装",
+            "warehouse_code": "SZ-RV",
+            "warehouse_name": "深圳逆向仓",
+            "channel_code": "JD",
+            "channel_name": "京东自营",
+            "sku_code": "ACC-CASE-A12",
+            "sku_name": "学习平板 A12 原装保护套",
+            "expected_qty": 400,
+            "arrived_qty": 400,
+            "qualified_qty": 400,
+            "exception_qty": 0,
+            "unit": "件",
+            "arrival_date": today - timedelta(days=2),
+            "status": "completed",
+            "document_status": "synced",
+            "exception_reason": "",
+            "remark": "已完成到货和单据回写",
+            "source_system": "manual",
+            "created_by": "system",
+            "updated_by": "system",
+            "sort_order": 20,
+        },
+        {
+            "arrival_no": f"CGDH{today.strftime('%Y%m%d')}003",
+            "purchase_order_no": f"PO{today.strftime('%Y%m')}003",
+            "supplier_name": "上海优测屏显",
+            "warehouse_code": "SH-QC",
+            "warehouse_name": "上海质检仓",
+            "channel_code": "TMALL",
+            "channel_name": "天猫旗舰店",
+            "sku_code": "TAB-PRO-256G",
+            "sku_name": "学习平板 Pro 256G",
+            "expected_qty": 260,
+            "arrived_qty": 260,
+            "qualified_qty": 248,
+            "exception_qty": 12,
+            "unit": "台",
+            "arrival_date": today,
+            "status": "exception",
+            "document_status": "failed",
+            "exception_reason": "屏幕瑕疵 12 台，待供应商补发",
+            "remark": "异常已上报，等待补偿和重新编排",
+            "source_system": "manual",
+            "created_by": "system",
+            "updated_by": "system",
+            "sort_order": 30,
+        },
+        {
+            "arrival_no": f"CGDH{today.strftime('%Y%m%d')}004",
+            "purchase_order_no": f"PO{today.strftime('%Y%m')}004",
+            "supplier_name": "深圳智学电子",
+            "warehouse_code": "WH-EAST",
+            "warehouse_name": "武汉东区仓",
+            "channel_code": "DY",
+            "channel_name": "抖音商城",
+            "sku_code": "TAB-LITE-64G",
+            "sku_name": "学习平板 Lite 64G",
+            "expected_qty": 320,
+            "arrived_qty": 0,
+            "qualified_qty": 0,
+            "exception_qty": 0,
+            "unit": "台",
+            "arrival_date": today + timedelta(days=1),
+            "status": "draft",
+            "document_status": "pending",
+            "exception_reason": "",
+            "remark": "供应商已确认发车，待收货",
+            "source_system": "manual",
+            "created_by": "system",
+            "updated_by": "system",
+            "sort_order": 40,
+        },
+    ]
+
+
+def ensure_procurement_arrival_seed(conn) -> None:
+    count = int(conn.execute(text("SELECT COUNT(*) FROM bi_procurement_arrival")).scalar() or 0)
+    if count > 0:
+        return
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_procurement_arrival(
+                arrival_no, purchase_order_no, supplier_name, warehouse_code, warehouse_name,
+                channel_code, channel_name, sku_code, sku_name, expected_qty, arrived_qty,
+                qualified_qty, exception_qty, unit, arrival_date, status, document_status,
+                exception_reason, remark, source_system, created_by, updated_by, sort_order
+            ) VALUES (
+                :arrival_no, :purchase_order_no, :supplier_name, :warehouse_code, :warehouse_name,
+                :channel_code, :channel_name, :sku_code, :sku_name, :expected_qty, :arrived_qty,
+                :qualified_qty, :exception_qty, :unit, :arrival_date, :status, :document_status,
+                :exception_reason, :remark, :source_system, :created_by, :updated_by, :sort_order
+            )
+            """
+        ),
+        default_procurement_arrival_rows(),
+    )
+
+
+def normalize_procurement_arrival_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    purchase_order_no = str(item.get("purchase_order_no") or "").strip()
+    supplier_name = str(item.get("supplier_name") or "").strip()
+    warehouse_code = str(item.get("warehouse_code") or "").strip()
+    warehouse_name = str(item.get("warehouse_name") or "").strip()
+    sku_code = str(item.get("sku_code") or "").strip()
+    sku_name = str(item.get("sku_name") or "").strip()
+    arrival_date = parse_date_or_none(str(item.get("arrival_date") or "").strip())
+    if not purchase_order_no:
+        raise HTTPException(status_code=400, detail="采购单号不能为空")
+    if not supplier_name:
+        raise HTTPException(status_code=400, detail="供应商不能为空")
+    if not warehouse_code:
+        raise HTTPException(status_code=400, detail="到货仓不能为空")
+    if not sku_code or not sku_name:
+        raise HTTPException(status_code=400, detail="SKU 编码和 SKU 名称不能为空")
+    if arrival_date is None:
+        raise HTTPException(status_code=400, detail="到货日期不能为空，且格式必须为 YYYY-MM-DD")
+
+    expected_qty = max(0.0, to_number(item.get("expected_qty")) or 0.0)
+    arrived_qty = max(0.0, to_number(item.get("arrived_qty")) or 0.0)
+    qualified_qty = max(0.0, to_number(item.get("qualified_qty")) or 0.0)
+    exception_qty = max(0.0, to_number(item.get("exception_qty")) or 0.0)
+
+    if qualified_qty > arrived_qty:
+        qualified_qty = arrived_qty
+    exception_cap = max(arrived_qty - qualified_qty, 0.0)
+    if exception_qty == 0.0 and arrived_qty > qualified_qty:
+        exception_qty = exception_cap
+    elif exception_qty > exception_cap:
+        exception_qty = exception_cap
+
+    status = str(item.get("status") or "draft").strip().lower() or "draft"
+    document_status = str(item.get("document_status") or "pending").strip().lower() or "pending"
+    valid_statuses = {option["value"] for option in procurement_arrival_status_options()}
+    valid_document_statuses = {option["value"] for option in procurement_document_status_options()}
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="閲囪喘鍒拌揣鐘舵€佷笉鍚堟硶")
+    if document_status not in valid_document_statuses:
+        raise HTTPException(status_code=400, detail="鍗曟嵁缂栨帓鐘舵€佷笉鍚堟硶")
+
+    return {
+        "id": parse_int_or_default(item.get("id"), 0),
+        "arrival_no": str(item.get("arrival_no") or "").strip() or generate_procurement_arrival_no(),
+        "purchase_order_no": purchase_order_no,
+        "supplier_name": supplier_name,
+        "warehouse_code": warehouse_code,
+        "warehouse_name": warehouse_name or warehouse_code,
+        "channel_code": str(item.get("channel_code") or "").strip(),
+        "channel_name": str(item.get("channel_name") or "").strip(),
+        "sku_code": sku_code,
+        "sku_name": sku_name,
+        "expected_qty": round(expected_qty, 2),
+        "arrived_qty": round(arrived_qty, 2),
+        "qualified_qty": round(qualified_qty, 2),
+        "exception_qty": round(exception_qty, 2),
+        "unit": str(item.get("unit") or "台").strip() or "台",
+        "arrival_date": arrival_date,
+        "status": status,
+        "document_status": document_status,
+        "exception_reason": str(item.get("exception_reason") or "").strip(),
+        "remark": str(item.get("remark") or "").strip(),
+        "source_system": str(item.get("source_system") or "manual").strip() or "manual",
+        "sort_order": max(0, parse_int_or_default(item.get("sort_order"), 100)),
+    }
+
+
+def serialize_procurement_arrival_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    expected_qty = float(item.get("expected_qty") or 0.0)
+    arrived_qty = float(item.get("arrived_qty") or 0.0)
+    qualified_qty = float(item.get("qualified_qty") or 0.0)
+    exception_qty = float(item.get("exception_qty") or 0.0)
+    item["expected_qty"] = expected_qty
+    item["arrived_qty"] = arrived_qty
+    item["qualified_qty"] = qualified_qty
+    item["exception_qty"] = exception_qty
+    item["pending_qty"] = max(expected_qty - arrived_qty, 0.0)
+    item["fulfillment_rate"] = round(arrived_qty / expected_qty, 4) if expected_qty > 0 else 0.0
+    item["quality_rate"] = round(qualified_qty / arrived_qty, 4) if arrived_qty > 0 else 0.0
+    return item
+
+
+def inventory_flow_action_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "status_transition", "label": "状态流转"},
+        {"value": "warehouse_transfer", "label": "仓间调拨"},
+    ]
+
+
+def inventory_flow_task_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "draft", "label": "草稿"},
+        {"value": "pending", "label": "待执行"},
+        {"value": "completed", "label": "已完成"},
+        {"value": "blocked", "label": "阻塞"},
+        {"value": "cancelled", "label": "已取消"},
+    ]
+
+
+def inventory_flow_priority_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "high", "label": "高"},
+        {"value": "normal", "label": "中"},
+        {"value": "low", "label": "低"},
+    ]
+
+
+def inventory_flow_trigger_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement_arrival", "label": "采购到货"},
+        {"value": "manual", "label": "人工建单"},
+        {"value": "after_sales", "label": "售后逆向"},
+        {"value": "refurb", "label": "翻新生产"},
+    ]
+
+
+def generate_inventory_flow_task_no() -> str:
+    return f"KCLZ{datetime.now().strftime('%Y%m%d%H%M%S')}{int(time.time() * 1000) % 1000:03d}"
+
+
+def default_inventory_flow_rules(conn) -> List[Dict[str, Any]]:
+    status_rows = conn.execute(
+        text(
+            """
+            SELECT stock_status_id, stock_status_name
+            FROM bi_inventory_status_map
+            WHERE is_enabled = 1
+            """
+        )
+    ).mappings().all()
+    warehouse_rows = conn.execute(
+        text(
+            """
+            SELECT warehouse_code, warehouse_name_clean
+            FROM bi_inventory_warehouse_map
+            WHERE is_enabled = 1
+            """
+        )
+    ).mappings().all()
+    status_by_name = {
+        str(row["stock_status_name"] or "").strip(): {
+            "id": str(row["stock_status_id"] or "").strip(),
+            "name": str(row["stock_status_name"] or "").strip(),
+        }
+        for row in status_rows
+    }
+    warehouse_by_name = {
+        str(row["warehouse_name_clean"] or "").strip(): {
+            "code": str(row["warehouse_code"] or "").strip(),
+            "name": str(row["warehouse_name_clean"] or "").strip(),
+        }
+        for row in warehouse_rows
+    }
+
+    def status(name: str) -> tuple[str, str]:
+        matched = status_by_name.get(name) or {"id": "", "name": name}
+        return matched["id"], matched["name"]
+
+    def warehouse(name: str) -> tuple[str, str]:
+        matched = warehouse_by_name.get(name) or {"code": "", "name": name}
+        return matched["code"], matched["name"]
+
+    qc_id, qc_name = status("待检")
+    good_id, good_name = status("采购良品")
+    bad_id, bad_name = status("采购不良品")
+    reverse_bad_id, reverse_bad_name = status("不良品")
+    refurb_good_id, refurb_good_name = status("翻新良品")
+    sellable_wh_code, sellable_wh_name = warehouse("良品仓")
+    bad_wh_code, bad_wh_name = warehouse("涓嶈壇鍝佷粨")
+    reverse_wh_code, reverse_wh_name = warehouse("销退仓")
+    refurb_wh_code, refurb_wh_name = warehouse("生产仓")
+
+    return [
+        {
+            "rule_name": "采购到货合格转采购良品",
+            "trigger_source": "procurement_arrival",
+            "trigger_condition": "qualified",
+            "action_type": "status_transition",
+            "source_status_id": qc_id,
+            "source_status_name": qc_name,
+            "target_status_id": good_id,
+            "target_status_name": good_name,
+            "source_warehouse_code": "",
+            "source_warehouse_name": "",
+            "target_warehouse_code": sellable_wh_code,
+            "target_warehouse_name": sellable_wh_name,
+            "priority": "high",
+            "auto_create_task": 1,
+            "is_enabled": 1,
+            "sort_order": 10,
+            "note": "采购到货合格数量进入待执行库存流转。",
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "rule_name": "閲囪喘鍒拌揣寮傚父杞噰璐笉鑹搧",
+            "trigger_source": "procurement_arrival",
+            "trigger_condition": "exception",
+            "action_type": "warehouse_transfer",
+            "source_status_id": qc_id,
+            "source_status_name": qc_name,
+            "target_status_id": bad_id,
+            "target_status_name": bad_name,
+            "source_warehouse_code": "",
+            "source_warehouse_name": "",
+            "target_warehouse_code": bad_wh_code,
+            "target_warehouse_name": bad_wh_name,
+            "priority": "high",
+            "auto_create_task": 1,
+            "is_enabled": 1,
+            "sort_order": 20,
+            "note": "采购异常数量转入不良品仓，待后续补偿或报损。",
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "rule_name": "销退不良转翻新生产",
+            "trigger_source": "manual",
+            "trigger_condition": "manual",
+            "action_type": "warehouse_transfer",
+            "source_status_id": reverse_bad_id,
+            "source_status_name": reverse_bad_name,
+            "target_status_id": refurb_good_id,
+            "target_status_name": refurb_good_name,
+            "source_warehouse_code": reverse_wh_code,
+            "source_warehouse_name": reverse_wh_name,
+            "target_warehouse_code": refurb_wh_code,
+            "target_warehouse_name": refurb_wh_name,
+            "priority": "normal",
+            "auto_create_task": 0,
+            "is_enabled": 1,
+            "sort_order": 30,
+            "note": "售后逆向件转入翻新生产处理。",
+            "created_by": "system",
+            "updated_by": "system",
+        },
+    ]
+
+
+def ensure_inventory_flow_seed(conn) -> None:
+    count = int(conn.execute(text("SELECT COUNT(*) FROM bi_inventory_flow_rule")).scalar() or 0)
+    if count > 0:
+        return
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_inventory_flow_rule(
+                rule_name, trigger_source, trigger_condition, action_type,
+                source_status_id, source_status_name, target_status_id, target_status_name,
+                source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                priority, auto_create_task, is_enabled, sort_order, note, created_by, updated_by
+            ) VALUES (
+                :rule_name, :trigger_source, :trigger_condition, :action_type,
+                :source_status_id, :source_status_name, :target_status_id, :target_status_name,
+                :source_warehouse_code, :source_warehouse_name, :target_warehouse_code, :target_warehouse_name,
+                :priority, :auto_create_task, :is_enabled, :sort_order, :note, :created_by, :updated_by
+            )
+            """
+        ),
+        default_inventory_flow_rules(conn),
+    )
+
+
+def normalize_inventory_flow_rule_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    valid_actions = {item["value"] for item in inventory_flow_action_options()}
+    valid_priorities = {item["value"] for item in inventory_flow_priority_options()}
+    valid_sources = {item["value"] for item in inventory_flow_trigger_options()}
+    normalized: List[Dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for index, item in enumerate(rows or []):
+        if not isinstance(item, dict):
+            continue
+        rule_name = str(item.get("rule_name") or "").strip()
+        if not rule_name:
+            if any(str(item.get(key) or "").strip() for key in ("trigger_source", "action_type", "source_status_id", "target_status_id")):
+                raise HTTPException(status_code=400, detail=f"第 {index + 1} 条库存流转规则缺少规则名称")
+            continue
+        if rule_name in seen_names:
+            raise HTTPException(status_code=400, detail=f"库存流转规则重复：{rule_name}")
+        seen_names.add(rule_name)
+        trigger_source = str(item.get("trigger_source") or "manual").strip().lower() or "manual"
+        action_type = str(item.get("action_type") or "status_transition").strip().lower() or "status_transition"
+        priority = str(item.get("priority") or "normal").strip().lower() or "normal"
+        if trigger_source not in valid_sources:
+            raise HTTPException(status_code=400, detail=f"规则 {rule_name} 的触发来源不合法")
+        if action_type not in valid_actions:
+            raise HTTPException(status_code=400, detail=f"规则 {rule_name} 的动作类型不合法")
+        if priority not in valid_priorities:
+            raise HTTPException(status_code=400, detail=f"规则 {rule_name} 的优先级不合法")
+        normalized.append(
+            {
+                "id": parse_int_or_default(item.get("id"), 0),
+                "rule_name": rule_name,
+                "trigger_source": trigger_source,
+                "trigger_condition": str(item.get("trigger_condition") or "manual").strip().lower() or "manual",
+                "action_type": action_type,
+                "source_status_id": str(item.get("source_status_id") or "").strip(),
+                "target_status_id": str(item.get("target_status_id") or "").strip(),
+                "source_warehouse_code": str(item.get("source_warehouse_code") or "").strip(),
+                "target_warehouse_code": str(item.get("target_warehouse_code") or "").strip(),
+                "priority": priority,
+                "auto_create_task": 1 if parse_bool_or_default(item.get("auto_create_task"), False) else 0,
+                "is_enabled": 1 if parse_bool_or_default(item.get("is_enabled"), True) else 0,
+                "sort_order": max(0, parse_int_or_default(item.get("sort_order"), (index + 1) * 10)),
+                "note": str(item.get("note") or "").strip(),
+            }
+        )
+    return normalized
+
+
+def normalize_inventory_flow_task_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    valid_actions = {entry["value"] for entry in inventory_flow_action_options()}
+    valid_statuses = {entry["value"] for entry in inventory_flow_task_status_options()}
+    valid_priorities = {entry["value"] for entry in inventory_flow_priority_options()}
+    action_type = str(item.get("action_type") or "status_transition").strip().lower() or "status_transition"
+    task_status = str(item.get("task_status") or "draft").strip().lower() or "draft"
+    priority = str(item.get("priority") or "normal").strip().lower() or "normal"
+    if action_type not in valid_actions:
+        raise HTTPException(status_code=400, detail="库存流转任务动作类型不合法")
+    if task_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="搴撳瓨娴佽浆浠诲姟鐘舵€佷笉鍚堟硶")
+    if priority not in valid_priorities:
+        raise HTTPException(status_code=400, detail="搴撳瓨娴佽浆浠诲姟浼樺厛绾т笉鍚堟硶")
+
+    sku_code = str(item.get("sku_code") or "").strip()
+    sku_name = str(item.get("sku_name") or "").strip()
+    if not sku_code or not sku_name:
+        raise HTTPException(status_code=400, detail="库存流转任务需要 SKU 编码和名称")
+
+    request_qty = max(0.0, to_number(item.get("request_qty")) or 0.0)
+    confirmed_qty = max(0.0, to_number(item.get("confirmed_qty")) or 0.0)
+    if request_qty <= 0:
+        raise HTTPException(status_code=400, detail="库存流转任务数量必须大于 0")
+    if confirmed_qty > request_qty:
+        confirmed_qty = request_qty
+
+    planned_execute_date = parse_date_or_none(str(item.get("planned_execute_date") or "").strip())
+    return {
+        "id": parse_int_or_default(item.get("id"), 0),
+        "task_no": str(item.get("task_no") or "").strip() or generate_inventory_flow_task_no(),
+        "source_record_type": str(item.get("source_record_type") or "manual").strip() or "manual",
+        "source_record_id": str(item.get("source_record_id") or "").strip(),
+        "source_record_no": str(item.get("source_record_no") or "").strip(),
+        "trigger_source": str(item.get("trigger_source") or "manual").strip() or "manual",
+        "action_type": action_type,
+        "task_status": task_status,
+        "priority": priority,
+        "sku_code": sku_code,
+        "sku_name": sku_name,
+        "request_qty": round(request_qty, 2),
+        "confirmed_qty": round(confirmed_qty, 2),
+        "source_status_id": str(item.get("source_status_id") or "").strip(),
+        "target_status_id": str(item.get("target_status_id") or "").strip(),
+        "source_warehouse_code": str(item.get("source_warehouse_code") or "").strip(),
+        "target_warehouse_code": str(item.get("target_warehouse_code") or "").strip(),
+        "planned_execute_date": planned_execute_date,
+        "reason_text": str(item.get("reason_text") or "").strip(),
+        "note": str(item.get("note") or "").strip(),
+    }
+
+
+def serialize_inventory_flow_rule_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["auto_create_task"] = bool(item.get("auto_create_task"))
+    item["is_enabled"] = bool(item.get("is_enabled"))
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    item["id"] = int(item.get("id") or 0)
+    return item
+
+
+def serialize_inventory_flow_task_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["id"] = int(item.get("id") or 0)
+    item["request_qty"] = float(item.get("request_qty") or 0.0)
+    item["confirmed_qty"] = float(item.get("confirmed_qty") or 0.0)
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    item["completion_rate"] = round(item["confirmed_qty"] / item["request_qty"], 4) if item["request_qty"] > 0 else 0.0
+    return item
+
+
+def resolve_inventory_master_lookups(conn) -> tuple[Dict[str, str], Dict[str, str]]:
+    status_lookup = {
+        str(row["stock_status_id"] or "").strip(): str(row["stock_status_name"] or "").strip()
+        for row in conn.execute(
+            text(
+                """
+                SELECT stock_status_id, stock_status_name
+                FROM bi_inventory_status_map
+                WHERE is_enabled = 1
+                """
+            )
+        ).mappings().all()
+    }
+    warehouse_lookup = {
+        str(row["warehouse_code"] or "").strip(): str(row["warehouse_name_clean"] or "").strip()
+        for row in conn.execute(
+            text(
+                """
+                SELECT warehouse_code, warehouse_name_clean
+                FROM bi_inventory_warehouse_map
+                WHERE is_enabled = 1
+                """
+            )
+        ).mappings().all()
+    }
+    return status_lookup, warehouse_lookup
+
+
+def sync_procurement_inventory_flow_tasks(conn, procurement_item: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+    task_stats = {"created_count": 0, "updated_count": 0, "cancelled_count": 0, "task_nos": []}
+    rules = conn.execute(
+        text(
+            """
+            SELECT
+                id, rule_name, trigger_source, trigger_condition, action_type,
+                source_status_id, source_status_name, target_status_id, target_status_name,
+                source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                priority, auto_create_task, is_enabled, sort_order, note
+            FROM bi_inventory_flow_rule
+            WHERE trigger_source = 'procurement_arrival' AND auto_create_task = 1 AND is_enabled = 1
+            ORDER BY sort_order, id
+            """
+        )
+    ).mappings().all()
+    active_task_nos: List[str] = []
+
+    if procurement_item["status"] != "draft":
+        for rule in rules:
+            condition = str(rule["trigger_condition"] or "manual")
+            qty = 0.0
+            suffix = "GEN"
+            task_status = "pending"
+            if condition == "qualified" and float(procurement_item.get("qualified_qty") or 0.0) > 0:
+                qty = float(procurement_item.get("qualified_qty") or 0.0)
+                suffix = "Q"
+                task_status = "completed" if procurement_item["status"] == "completed" else "pending"
+            elif condition == "exception" and float(procurement_item.get("exception_qty") or 0.0) > 0:
+                qty = float(procurement_item.get("exception_qty") or 0.0)
+                suffix = "E"
+                task_status = "blocked" if procurement_item["status"] == "exception" else "pending"
+            if qty <= 0:
+                continue
+
+            task_no = f"{procurement_item['arrival_no']}-{suffix}"
+            active_task_nos.append(task_no)
+            task_stats["task_nos"].append(task_no)
+            source_warehouse_code = str(procurement_item.get("warehouse_code") or rule["source_warehouse_code"] or "").strip()
+            source_warehouse_name = str(procurement_item.get("warehouse_name") or rule["source_warehouse_name"] or source_warehouse_code).strip()
+            target_warehouse_code = str(rule["target_warehouse_code"] or source_warehouse_code or "").strip()
+            target_warehouse_name = str(rule["target_warehouse_name"] or source_warehouse_name or target_warehouse_code).strip()
+            payload = {
+                "task_no": task_no,
+                "source_record_type": "procurement_arrival",
+                "source_record_id": str(procurement_item["id"]),
+                "source_record_no": procurement_item["arrival_no"],
+                "trigger_source": "procurement_arrival",
+                "action_type": str(rule["action_type"] or "status_transition"),
+                "task_status": task_status,
+                "priority": str(rule["priority"] or "normal"),
+                "sku_code": procurement_item["sku_code"],
+                "sku_name": procurement_item["sku_name"],
+                "request_qty": qty,
+                "confirmed_qty": qty if task_status == "completed" else 0.0,
+                "source_status_id": str(rule["source_status_id"] or ""),
+                "source_status_name": str(rule["source_status_name"] or ""),
+                "target_status_id": str(rule["target_status_id"] or ""),
+                "target_status_name": str(rule["target_status_name"] or ""),
+                "source_warehouse_code": source_warehouse_code,
+                "source_warehouse_name": source_warehouse_name,
+                "target_warehouse_code": target_warehouse_code,
+                "target_warehouse_name": target_warehouse_name,
+                "planned_execute_date": procurement_item["arrival_date"],
+                "reason_text": procurement_item["exception_reason"] if condition == "exception" else "",
+                "note": f"鐢遍噰璐埌璐?{procurement_item['arrival_no']} 鑷姩瑙﹀彂",
+                "updated_by": updated_by,
+                "sort_order": 100,
+            }
+            existing = conn.execute(
+                text("SELECT id FROM bi_inventory_flow_task WHERE task_no = :task_no LIMIT 1"),
+                {"task_no": task_no},
+            ).fetchone()
+            if existing:
+                payload["id"] = int(existing[0])
+                conn.execute(
+                    text(
+                        """
+                        UPDATE bi_inventory_flow_task
+                        SET
+                            source_record_type = :source_record_type,
+                            source_record_id = :source_record_id,
+                            source_record_no = :source_record_no,
+                            trigger_source = :trigger_source,
+                            action_type = :action_type,
+                            task_status = :task_status,
+                            priority = :priority,
+                            sku_code = :sku_code,
+                            sku_name = :sku_name,
+                            request_qty = :request_qty,
+                            confirmed_qty = :confirmed_qty,
+                            source_status_id = :source_status_id,
+                            source_status_name = :source_status_name,
+                            target_status_id = :target_status_id,
+                            target_status_name = :target_status_name,
+                            source_warehouse_code = :source_warehouse_code,
+                            source_warehouse_name = :source_warehouse_name,
+                            target_warehouse_code = :target_warehouse_code,
+                            target_warehouse_name = :target_warehouse_name,
+                            planned_execute_date = :planned_execute_date,
+                            reason_text = :reason_text,
+                            note = :note,
+                            updated_by = :updated_by,
+                            sort_order = :sort_order
+                        WHERE id = :id
+                        """
+                    ),
+                    payload,
+                )
+                task_stats["updated_count"] += 1
+            else:
+                payload["created_by"] = updated_by
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO bi_inventory_flow_task(
+                            task_no, source_record_type, source_record_id, source_record_no, trigger_source,
+                            action_type, task_status, priority, sku_code, sku_name, request_qty, confirmed_qty,
+                            source_status_id, source_status_name, target_status_id, target_status_name,
+                            source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                            planned_execute_date, reason_text, note, created_by, updated_by, sort_order
+                        ) VALUES (
+                            :task_no, :source_record_type, :source_record_id, :source_record_no, :trigger_source,
+                            :action_type, :task_status, :priority, :sku_code, :sku_name, :request_qty, :confirmed_qty,
+                            :source_status_id, :source_status_name, :target_status_id, :target_status_name,
+                            :source_warehouse_code, :source_warehouse_name, :target_warehouse_code, :target_warehouse_name,
+                            :planned_execute_date, :reason_text, :note, :created_by, :updated_by, :sort_order
+                        )
+                        """
+                    ),
+                    payload,
+                )
+                task_stats["created_count"] += 1
+
+    existing_rows = conn.execute(
+        text(
+            """
+            SELECT id, task_no, task_status
+            FROM bi_inventory_flow_task
+            WHERE source_record_type = 'procurement_arrival' AND source_record_id = :source_record_id
+            """
+        ),
+        {"source_record_id": str(procurement_item["id"])},
+    ).mappings().all()
+    for row in existing_rows:
+        if row["task_no"] in active_task_nos or row["task_status"] == "cancelled":
+            continue
+        conn.execute(
+            text(
+                """
+                UPDATE bi_inventory_flow_task
+                SET task_status = 'cancelled', updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {"id": int(row["id"]), "updated_by": updated_by},
+        )
+        task_stats["cancelled_count"] += 1
+    return task_stats
+
+
+def ensure_master_data_seed(conn) -> None:
+    ensure_table_columns(
+        conn,
+        "bi_inventory_warehouse_map",
+        {
+            "warehouse_code": "VARCHAR(64) NOT NULL DEFAULT ''",
+            "warehouse_type": "VARCHAR(32) NOT NULL DEFAULT ''",
+            "platform_owner": "VARCHAR(32) NOT NULL DEFAULT ''",
+            "city": "VARCHAR(64) NOT NULL DEFAULT ''",
+            "is_sellable_warehouse": "TINYINT(1) NOT NULL DEFAULT 0",
+            "is_reverse_warehouse": "TINYINT(1) NOT NULL DEFAULT 0",
+        },
+    )
+    ensure_table_columns(
+        conn,
+        "bi_inventory_status_map",
+        {
+            "status_group": "VARCHAR(32) NOT NULL DEFAULT ''",
+            "can_sell": "TINYINT(1) NOT NULL DEFAULT 0",
+            "can_forecast_supply": "TINYINT(1) NOT NULL DEFAULT 0",
+            "need_quality_check": "TINYINT(1) NOT NULL DEFAULT 0",
+            "next_default_status": "VARCHAR(64) NOT NULL DEFAULT ''",
+        },
+    )
+
+    conn.execute(
+        text(
+            """
+            UPDATE bi_inventory_warehouse_map
+            SET
+                warehouse_code = CASE
+                    WHEN warehouse_code = '' THEN warehouse_name_clean
+                    ELSE warehouse_code
+                END,
+                warehouse_type = CASE
+                    WHEN warehouse_type <> '' THEN warehouse_type
+                    WHEN warehouse_name_clean LIKE '%閿€閫€%' OR warehouse_name_clean LIKE '%閫€璐?' THEN 'reverse'
+                    WHEN warehouse_name_clean LIKE '%寰呮%' THEN 'qc'
+                    WHEN warehouse_name_clean LIKE '%缈绘柊%' THEN 'refurb'
+                    WHEN warehouse_name_clean LIKE '%鑹搧%' OR warehouse_name_clean LIKE '%浜戜粨%' THEN 'sellable'
+                    ELSE 'general'
+                END,
+                platform_owner = CASE
+                    WHEN platform_owner = '' THEN '鐢ㄥ弸'
+                    ELSE platform_owner
+                END,
+                city = CASE
+                    WHEN city <> '' THEN city
+                    WHEN source_warehouse_name LIKE '%钀у北%' OR warehouse_name_clean LIKE '%钀у北%' THEN '鏉窞路钀у北'
+                    WHEN source_warehouse_name LIKE '%浣欐澀%' OR warehouse_name_clean LIKE '%浣欐澀%' THEN '鏉窞路浣欐澀'
+                    ELSE ''
+                END,
+                is_sellable_warehouse = CASE
+                    WHEN is_sellable_warehouse = 1 THEN 1
+                    WHEN warehouse_name_clean LIKE '%鑹搧%' OR warehouse_name_clean LIKE '%鍙敭%' THEN 1
+                    ELSE 0
+                END,
+                is_reverse_warehouse = CASE
+                    WHEN is_reverse_warehouse = 1 THEN 1
+                    WHEN warehouse_name_clean LIKE '%閿€閫€%' OR warehouse_name_clean LIKE '%閫€璐?' THEN 1
+                    ELSE 0
+                END
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            UPDATE bi_inventory_status_map
+            SET
+                status_group = CASE
+                    WHEN status_group <> '' THEN status_group
+                    WHEN stock_status_name LIKE '%寰呮%' THEN 'qc'
+                    WHEN stock_status_name LIKE '%缈绘柊%' THEN 'refurb'
+                    WHEN stock_status_name LIKE '%鍐荤粨%' OR stock_status_name LIKE '%涓嶈壇%' THEN 'exception'
+                    WHEN stock_status_name LIKE '%鑹搧%' OR stock_status_name LIKE '%鍙敭%' THEN 'sellable'
+                    ELSE 'general'
+                END,
+                can_sell = CASE
+                    WHEN can_sell = 1 THEN 1
+                    WHEN stock_status_name LIKE '%鑹搧%' OR stock_status_name LIKE '%鍙敭%' THEN 1
+                    ELSE 0
+                END,
+                can_forecast_supply = CASE
+                    WHEN can_forecast_supply = 1 THEN 1
+                    WHEN stock_status_name LIKE '%鑹搧%' OR stock_status_name LIKE '%鍙敭%' THEN 1
+                    ELSE 0
+                END,
+                need_quality_check = CASE
+                    WHEN need_quality_check = 1 THEN 1
+                    WHEN stock_status_name LIKE '%寰呮%' THEN 1
+                    ELSE 0
+                END,
+                next_default_status = CASE
+                    WHEN next_default_status <> '' THEN next_default_status
+                    WHEN stock_status_name LIKE '%寰呮%' THEN '鑹搧'
+                    WHEN stock_status_name LIKE '%缈绘柊瀹屾垚%' THEN '鑹搧'
+                    ELSE ''
+                END
+            """
+        )
+    )
+
+    if int(conn.execute(text("SELECT COUNT(*) FROM bi_sku_master")).scalar() or 0) == 0:
+        if table_exists(conn, "bi_inventory_snapshot_daily"):
+            conn.execute(
+                text(
+                    """
+                    INSERT IGNORE INTO bi_sku_master(
+                        sku_code, sku_name, sku_type, product_line, model, spec_version,
+                        lifecycle_status, owner_dept, sort_order, is_active, created_by, updated_by
+                    )
+                    SELECT DISTINCT
+                        COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, '')) AS sku_code,
+                        COALESCE(NULLIF(sku_name, ''), NULLIF(material_name, ''), COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, ''))) AS sku_name,
+                        '',
+                        '',
+                        '',
+                        '',
+                        'active',
+                        '',
+                        100,
+                        1,
+                        'system',
+                        'system'
+                    FROM bi_inventory_snapshot_daily
+                    WHERE COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, '')) IS NOT NULL
+                      AND COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, '')) <> ''
+                    """
+                )
+            )
+        if table_exists(conn, "bi_material_sales_daily"):
+            conn.execute(
+                text(
+                    """
+                    INSERT IGNORE INTO bi_sku_master(
+                        sku_code, sku_name, sku_type, product_line, model, spec_version,
+                        lifecycle_status, owner_dept, sort_order, is_active, created_by, updated_by
+                    )
+                    SELECT DISTINCT
+                        COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, '')) AS sku_code,
+                        COALESCE(NULLIF(sku_name, ''), NULLIF(material_name, ''), COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, ''))) AS sku_name,
+                        '',
+                        '',
+                        '',
+                        '',
+                        'active',
+                        '',
+                        100,
+                        1,
+                        'system',
+                        'system'
+                    FROM bi_material_sales_daily
+                    WHERE COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, '')) IS NOT NULL
+                      AND COALESCE(NULLIF(sku_code, ''), NULLIF(material_code, '')) <> ''
+                    """
+                )
+            )
+
+    if int(conn.execute(text("SELECT COUNT(*) FROM bi_channel_shop_master")).scalar() or 0) == 0 and table_exists(conn, "bi_material_sales_daily"):
+        conn.execute(
+            text(
+                """
+                INSERT IGNORE INTO bi_channel_shop_master(
+                    channel_code, channel_name, shop_name, platform_name,
+                    owner_dept, sort_order, is_active, created_by, updated_by
+                )
+                SELECT DISTINCT
+                    CONCAT('ch_', SUBSTRING(MD5(COALESCE(NULLIF(sales_org_name, ''), 'unknown')), 1, 12)) AS channel_code,
+                    COALESCE(NULLIF(sales_org_name, ''), '鏈綊绫绘笭閬?) AS channel_name,
+                    COALESCE(NULLIF(customer_name, ''), '') AS shop_name,
+                    '鐢ㄥ弸閿€鍞?,
+                    '',
+                    100,
+                    1,
+                    'system',
+                    'system'
+                FROM bi_material_sales_daily
+                WHERE COALESCE(NULLIF(sales_org_name, ''), NULLIF(customer_name, '')) IS NOT NULL
+                  AND COALESCE(NULLIF(sales_org_name, ''), NULLIF(customer_name, '')) <> ''
+                """
+            )
+        )
 
 def metric_label(dataset: str, field: str, agg: str) -> str:
     if agg == "count" and field == "*":
@@ -1823,7 +3795,7 @@ def normalize_template_widgets(raw_widgets: Sequence[Dict[str, Any]] | None) -> 
             continue
         normalized.append(
             {
-                "title": str(item.get("title") or f"卡片 {index + 1}"),
+                "title": str(item.get("title") or f"鍗＄墖 {index + 1}"),
                 "layout": normalize_layout(item.get("layout")),
             }
         )
@@ -1996,7 +3968,7 @@ def get_engine():
     raw = yaml.safe_load(yonyou_sync_config_path.read_text(encoding="utf-8")) or {}
     db_url = raw.get("database", {}).get("url", "")
     if not db_url:
-        raise RuntimeError("缺少 config/yonyou_inventory_sync.yaml 中的 database.url 配置")
+        raise RuntimeError("缂哄皯 config/yonyou_inventory_sync.yaml 涓殑 database.url 閰嶇疆")
     engine = create_engine(quote_mysql_url(db_url), pool_pre_ping=True, future=True)
     return engine
 
@@ -2116,10 +4088,256 @@ def ensure_schema() -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_data_agent_report (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    report_type VARCHAR(16) NOT NULL,
+                    period_start DATE NOT NULL,
+                    period_end DATE NOT NULL,
+                    period_label VARCHAR(64) NOT NULL,
+                    trigger_mode VARCHAR(16) NOT NULL DEFAULT 'manual',
+                    title VARCHAR(255) NOT NULL,
+                    summary_json LONGTEXT NULL,
+                    report_content LONGTEXT NOT NULL,
+                    generated_by VARCHAR(32) NOT NULL DEFAULT 'fallback',
+                    status VARCHAR(16) NOT NULL DEFAULT 'success',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_data_agent_report_period (report_type, period_start, period_end),
+                    INDEX idx_bi_data_agent_report_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_audit_log (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    module_key VARCHAR(64) NOT NULL,
+                    module_name VARCHAR(64) NOT NULL,
+                    action_key VARCHAR(64) NOT NULL,
+                    action_name VARCHAR(128) NOT NULL,
+                    target_type VARCHAR(64) NOT NULL DEFAULT '',
+                    target_id VARCHAR(128) NOT NULL DEFAULT '',
+                    target_name VARCHAR(255) NOT NULL DEFAULT '',
+                    result_status VARCHAR(32) NOT NULL DEFAULT 'success',
+                    detail_summary VARCHAR(255) NOT NULL DEFAULT '',
+                    detail_json LONGTEXT NULL,
+                    source_path VARCHAR(255) NOT NULL DEFAULT '',
+                    source_method VARCHAR(16) NOT NULL DEFAULT '',
+                    triggered_by VARCHAR(64) NULL,
+                    affected_count INT NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_bi_audit_log_created (created_at, id),
+                    INDEX idx_bi_audit_log_module (module_key, created_at),
+                    INDEX idx_bi_audit_log_status (result_status, created_at),
+                    INDEX idx_bi_audit_log_actor (triggered_by, created_at),
+                    INDEX idx_bi_audit_log_target (target_type, target_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_procurement_arrival (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    arrival_no VARCHAR(64) NOT NULL,
+                    purchase_order_no VARCHAR(64) NOT NULL,
+                    supplier_name VARCHAR(128) NOT NULL,
+                    warehouse_code VARCHAR(64) NOT NULL,
+                    warehouse_name VARCHAR(128) NOT NULL DEFAULT '',
+                    channel_code VARCHAR(64) NOT NULL DEFAULT '',
+                    channel_name VARCHAR(128) NOT NULL DEFAULT '',
+                    sku_code VARCHAR(64) NOT NULL,
+                    sku_name VARCHAR(255) NOT NULL,
+                    expected_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    arrived_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    qualified_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    exception_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    unit VARCHAR(16) NOT NULL DEFAULT '?',
+                    arrival_date DATE NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                    document_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                    exception_reason VARCHAR(255) NOT NULL DEFAULT '',
+                    remark LONGTEXT NULL,
+                    source_system VARCHAR(32) NOT NULL DEFAULT 'manual',
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_procurement_arrival_no (arrival_no),
+                    INDEX idx_bi_procurement_po (purchase_order_no, id),
+                    INDEX idx_bi_procurement_status (status, document_status, arrival_date),
+                    INDEX idx_bi_procurement_supplier (supplier_name, arrival_date),
+                    INDEX idx_bi_procurement_warehouse (warehouse_code, arrival_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_inventory_flow_rule (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    rule_name VARCHAR(128) NOT NULL,
+                    trigger_source VARCHAR(32) NOT NULL DEFAULT 'manual',
+                    trigger_condition VARCHAR(32) NOT NULL DEFAULT 'manual',
+                    action_type VARCHAR(32) NOT NULL DEFAULT 'status_transition',
+                    source_status_id VARCHAR(64) NOT NULL DEFAULT '',
+                    source_status_name VARCHAR(128) NOT NULL DEFAULT '',
+                    target_status_id VARCHAR(64) NOT NULL DEFAULT '',
+                    target_status_name VARCHAR(128) NOT NULL DEFAULT '',
+                    source_warehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    source_warehouse_name VARCHAR(128) NOT NULL DEFAULT '',
+                    target_warehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    target_warehouse_name VARCHAR(128) NOT NULL DEFAULT '',
+                    priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+                    auto_create_task TINYINT(1) NOT NULL DEFAULT 0,
+                    is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    note VARCHAR(255) NOT NULL DEFAULT '',
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_inventory_flow_rule_name (rule_name),
+                    INDEX idx_bi_inventory_flow_rule_sort (sort_order, id),
+                    INDEX idx_bi_inventory_flow_rule_source (trigger_source, is_enabled)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_inventory_flow_task (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    task_no VARCHAR(64) NOT NULL,
+                    source_record_type VARCHAR(32) NOT NULL DEFAULT 'manual',
+                    source_record_id VARCHAR(64) NOT NULL DEFAULT '',
+                    source_record_no VARCHAR(64) NOT NULL DEFAULT '',
+                    trigger_source VARCHAR(32) NOT NULL DEFAULT 'manual',
+                    action_type VARCHAR(32) NOT NULL DEFAULT 'status_transition',
+                    task_status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                    priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+                    sku_code VARCHAR(64) NOT NULL,
+                    sku_name VARCHAR(255) NOT NULL,
+                    request_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    confirmed_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    source_status_id VARCHAR(64) NOT NULL DEFAULT '',
+                    source_status_name VARCHAR(128) NOT NULL DEFAULT '',
+                    target_status_id VARCHAR(64) NOT NULL DEFAULT '',
+                    target_status_name VARCHAR(128) NOT NULL DEFAULT '',
+                    source_warehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    source_warehouse_name VARCHAR(128) NOT NULL DEFAULT '',
+                    target_warehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    target_warehouse_name VARCHAR(128) NOT NULL DEFAULT '',
+                    planned_execute_date DATE NULL,
+                    reason_text VARCHAR(255) NOT NULL DEFAULT '',
+                    note VARCHAR(255) NOT NULL DEFAULT '',
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_inventory_flow_task_no (task_no),
+                    INDEX idx_bi_inventory_flow_task_status (task_status, planned_execute_date, id),
+                    INDEX idx_bi_inventory_flow_task_source (source_record_type, source_record_id),
+                    INDEX idx_bi_inventory_flow_task_action (action_type, priority)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_metric_dictionary (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    metric_key VARCHAR(64) NOT NULL,
+                    metric_name VARCHAR(128) NOT NULL,
+                    business_domain VARCHAR(64) NOT NULL DEFAULT '????',
+                    owner_role VARCHAR(64) NOT NULL DEFAULT '',
+                    definition_text LONGTEXT NOT NULL,
+                    formula_text LONGTEXT NOT NULL,
+                    source_table VARCHAR(255) NOT NULL DEFAULT '',
+                    source_fields VARCHAR(512) NOT NULL DEFAULT '',
+                    dimension_notes VARCHAR(512) NOT NULL DEFAULT '',
+                    version_tag VARCHAR(32) NOT NULL DEFAULT 'v1',
+                    effective_date DATE NULL,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_metric_dictionary_key (metric_key),
+                    INDEX idx_bi_metric_dictionary_sort (sort_order, id),
+                    INDEX idx_bi_metric_dictionary_domain (business_domain),
+                    INDEX idx_bi_metric_dictionary_enabled (is_enabled)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_sku_master (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    sku_code VARCHAR(64) NOT NULL,
+                    sku_name VARCHAR(255) NOT NULL,
+                    sku_type VARCHAR(32) NOT NULL DEFAULT '',
+                    product_line VARCHAR(64) NOT NULL DEFAULT '',
+                    model VARCHAR(64) NOT NULL DEFAULT '',
+                    spec_version VARCHAR(64) NOT NULL DEFAULT '',
+                    lifecycle_status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    owner_dept VARCHAR(64) NOT NULL DEFAULT '',
+                    sort_order INT NOT NULL DEFAULT 100,
+                    is_active TINYINT(1) NOT NULL DEFAULT 1,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_sku_master_code (sku_code),
+                    INDEX idx_bi_sku_master_sort (sort_order, id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_channel_shop_master (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    channel_code VARCHAR(64) NOT NULL,
+                    channel_name VARCHAR(128) NOT NULL,
+                    shop_name VARCHAR(128) NOT NULL DEFAULT '',
+                    platform_name VARCHAR(64) NOT NULL DEFAULT '',
+                    owner_dept VARCHAR(64) NOT NULL DEFAULT '',
+                    sort_order INT NOT NULL DEFAULT 100,
+                    is_active TINYINT(1) NOT NULL DEFAULT 1,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_channel_shop_pair (channel_code, shop_name),
+                    INDEX idx_bi_channel_shop_sort (sort_order, id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
         columns = {row[0] for row in conn.execute(text("SHOW COLUMNS FROM bi_dashboard_view")).fetchall()}
         if "global_filters_json" not in columns:
             conn.execute(text("ALTER TABLE bi_dashboard_view ADD COLUMN global_filters_json LONGTEXT NULL"))
         ensure_sync_schedule_seed(conn)
+        ensure_metric_dictionary_seed(conn)
+        ensure_master_data_seed(conn)
+        ensure_procurement_arrival_seed(conn)
+        ensure_inventory_flow_seed(conn)
         count = int(conn.execute(text("SELECT COUNT(*) FROM bi_dashboard_view")).scalar() or 0)
         if count == 0:
             conn.execute(
@@ -2130,8 +4348,8 @@ def ensure_schema() -> None:
                     """
                 ),
                 {
-                    "name": "默认看板",
-                    "description": "库存与销售的日常经营概览",
+                    "name": "榛樿鐪嬫澘",
+                    "description": "搴撳瓨涓庨攢鍞殑鏃ュ父缁忚惀姒傝",
                     "global_filters_json": "[]",
                 },
             )
@@ -2152,7 +4370,7 @@ def load_view(conn, view_id: int) -> Dict[str, Any]:
         {"id": view_id},
     ).mappings().first()
     if not row:
-        raise HTTPException(status_code=404, detail=f"看板不存在：{view_id}")
+        raise HTTPException(status_code=404, detail=f"鐪嬫澘涓嶅瓨鍦細{view_id}")
     global_filters = normalize_global_filters(json_loads(row.get("global_filters_json"), []))
     return {
         "id": int(row["id"]),
@@ -2194,7 +4412,7 @@ def load_widget(conn, widget_id: int) -> Dict[str, Any]:
         {"id": widget_id},
     ).mappings().first()
     if not row:
-        raise HTTPException(status_code=404, detail=f"图表不存在：{widget_id}")
+        raise HTTPException(status_code=404, detail=f"鍥捐〃涓嶅瓨鍦細{widget_id}")
     return widget_from_row(dict(row))
 
 
@@ -2210,7 +4428,7 @@ def load_layout_template(conn, template_id: int) -> Dict[str, Any]:
         {"id": template_id},
     ).mappings().first()
     if not row:
-        raise HTTPException(status_code=404, detail=f"布局模板不存在：{template_id}")
+        raise HTTPException(status_code=404, detail=f"甯冨眬妯℃澘涓嶅瓨鍦細{template_id}")
     return layout_template_from_row(dict(row), include_layout=True)
 
 
@@ -2631,7 +4849,7 @@ def resolve_widget_date_context(
             return ([{"field": date_col, "op": "lte", "value": end_value}], None, label, mode)
 
     if mode == "all":
-        return ([], None, "全部日期", mode)
+        return ([], None, "鍏ㄩ儴鏃ユ湡", mode)
 
     target_date = normalize_date(selected_date or latest_date(conn, dataset))
     return ([], target_date, to_plain(target_date), "follow_page")
@@ -2962,14 +5180,14 @@ def build_ai_text(widget: Dict[str, Any], payload: Dict[str, Any]) -> str:
     rows = payload.get("rows") or []
     metrics = payload.get("metrics") or []
     if not rows:
-        return f"{payload.get('target_date') or '未知日期'} 当前组件没有可分析数据。建议检查筛选条件或切换日期。"
+        return f"{payload.get('target_date') or '未知日期'} 当前组件没有可分析数据，建议检查筛选条件或切换日期。"
     if not metrics:
         return f"{payload.get('target_date') or '未知日期'} 共返回 {len(rows)} 条记录。"
     metric = metrics[0]
     alias = metric["alias"]
     dimension = payload["dimensions"][0] if payload["dimensions"] else None
     total = 0.0
-    peak_name = "整体"
+    peak_name = "鏁翠綋"
     peak_value = None
     for row in rows:
         value = to_number(row.get(alias))
@@ -2978,14 +5196,406 @@ def build_ai_text(widget: Dict[str, Any], payload: Dict[str, Any]) -> str:
         total += value
         if peak_value is None or value > peak_value:
             peak_value = value
-            peak_name = str(row.get(dimension) or "整体") if dimension else "整体"
+            peak_name = str(row.get(dimension) or "鏁翠綋") if dimension else "鏁翠綋"
     if peak_value is None:
-        return f"{payload.get('target_date') or '未知日期'} {metric['label']}暂无可量化值。"
+        return f"{payload.get('target_date') or '未知日期'} {metric['label']} 暂无可量化值。"
     return (
-        f"{payload.get('target_date') or '未知日期'}，{metric['label']}合计 {total:.2f}。"
+        f"{payload.get('target_date') or '未知日期'}，{metric['label']} 合计 {total:.2f}。"
         f"最高项为 {peak_name}，数值 {peak_value:.2f}。"
         "建议结合组织、仓库或物料继续下钻确认结构变化。"
     )
+
+
+def data_agent_session_id(prefix: str = "polaris-agent") -> str:
+    return f"{prefix}-{int(time.time())}-{secrets.token_hex(4)}"
+
+
+def call_data_agent_chat(message: str, session_id: str | None = None, timeout: int = 180) -> Dict[str, Any]:
+    if not is_data_agent_api_online():
+        raise RuntimeError(f"{DATA_AGENT_NAME} 服务未启动")
+    session_id = session_id or data_agent_session_id()
+    response = requests.post(
+        f"{DATA_AGENT_API_URL}/api/chat/stream",
+        json={"messages": [{"role": "user", "content": message}], "session_id": session_id},
+        headers={"Content-Type": "application/json"},
+        stream=True,
+        timeout=timeout,
+    )
+    if response.status_code != 200:
+        detail = response.text[:400] if response.text else f"HTTP {response.status_code}"
+        raise RuntimeError(f"{DATA_AGENT_NAME} 调用失败：{detail}")
+
+    parts: List[str] = []
+    last_message_id = ""
+    current_event_type = ""
+    for raw_line in response.iter_lines(decode_unicode=True):
+        if not raw_line or raw_line.strip() == "":
+            continue
+        if raw_line.startswith("event:"):
+            current_event_type = raw_line.split(":", 1)[1].strip()
+            continue
+        if not raw_line.startswith("data:"):
+            continue
+        data_str = raw_line.split(":", 1)[1].strip()
+        try:
+            payload = json.loads(data_str)
+        except Exception:
+            continue
+        if current_event_type not in {"message", "message_chunk"} and payload.get("type") == "separator":
+            continue
+        message_id = str(payload.get("id") or "")
+        content = str(payload.get("content") or "")
+        if not content:
+            continue
+        if parts and message_id and last_message_id and message_id != last_message_id:
+            parts.append("\n")
+        parts.append(content)
+        if message_id:
+            last_message_id = message_id
+
+    result = "".join(parts).strip()
+    if not result:
+        raise RuntimeError(f"{DATA_AGENT_NAME} 未返回有效内容")
+    return {"session_id": session_id, "content": result}
+
+
+def build_widget_agent_prompt(widget: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    dataset_label = DATASETS.get(widget["dataset"], {}).get("label", widget["dataset"])
+    preview_rows = list(payload.get("rows") or [])[:12]
+    normalized_rows = [{key: to_plain(value) for key, value in row.items()} for row in preview_rows]
+    return (
+        f"你是北极星系统中的 {DATA_AGENT_NAME}。\n"
+        "请基于以下图表数据，输出一段简洁、可直接展示在经营看板右侧的中文分析结论。\n"
+        "要求：\n"
+        "1. 只输出中文。\n"
+        "2. 控制在 4 到 6 句话。\n"
+        "3. 先写核心结论，再写可能原因，最后给出一条建议。\n"
+        "4. 不要编造未提供的数据。\n\n"
+        f"图表标题：{widget['title']}\n"
+        f"图表类型：{WIDGET_TYPES.get(widget['widget_type'], widget['widget_type'])}\n"
+        f"数据集：{dataset_label}\n"
+        f"目标日期：{payload.get('target_date') or payload.get('applied_target_date') or '--'}\n"
+        f"维度字段：{json.dumps(payload.get('dimensions') or [], ensure_ascii=False)}\n"
+        f"指标字段：{json.dumps(payload.get('metrics') or [], ensure_ascii=False)}\n"
+        f"数据预览：{json.dumps(normalized_rows, ensure_ascii=False)}"
+    )
+
+
+def build_data_agent_report_period(conn, report_type: str) -> Dict[str, Any]:
+    candidate_dates: List[date] = []
+    sales_date = conn.execute(text("SELECT MAX(biz_date) FROM bi_material_sales_daily_cleaning")).scalar()
+    inventory_date = conn.execute(text("SELECT MAX(snapshot_date) FROM bi_inventory_snapshot_daily_cleaning")).scalar()
+    refurb_date = conn.execute(text("SELECT MAX(biz_date) FROM bi_refurb_production_daily")).scalar()
+    for item in (sales_date, inventory_date, refurb_date):
+        if isinstance(item, date):
+            candidate_dates.append(item)
+    anchor = max(candidate_dates) if candidate_dates else date.today()
+    report_type = str(report_type or "weekly").strip().lower()
+    if report_type == "monthly":
+        period_start = anchor.replace(day=1)
+        period_end = anchor
+        period_label = f"{anchor:%Y-%m} 鏈堟姤"
+    else:
+        report_type = "weekly"
+        period_end = anchor
+        period_start = anchor - timedelta(days=6)
+        period_label = f"{period_start.isoformat()} ~ {period_end.isoformat()} 鍛ㄦ姤"
+    return {
+        "report_type": report_type,
+        "period_start": period_start,
+        "period_end": period_end,
+        "period_label": period_label,
+        "anchor_date": anchor,
+    }
+
+
+def build_data_agent_report_summary(conn, report_type: str) -> Dict[str, Any]:
+    period = build_data_agent_report_period(conn, report_type)
+    start_date = period["period_start"]
+    end_date = period["period_end"]
+
+    sales_row = conn.execute(
+        text(
+            """
+            SELECT
+                COALESCE(SUM(total_sales_qty), 0) AS total_sales_qty,
+                COALESCE(SUM(total_return_qty), 0) AS total_return_qty,
+                COUNT(DISTINCT biz_date) AS active_days,
+                COUNT(DISTINCT material_name) AS material_count
+            FROM bi_material_sales_daily_cleaning
+            WHERE biz_date BETWEEN :start_date AND :end_date
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().first() or {}
+
+    top_sales_rows = conn.execute(
+        text(
+            """
+            SELECT material_name,
+                   ROUND(COALESCE(SUM(total_sales_qty), 0), 2) AS total_sales_qty,
+                   ROUND(COALESCE(SUM(total_return_qty), 0), 2) AS total_return_qty
+            FROM bi_material_sales_daily_cleaning
+            WHERE biz_date BETWEEN :start_date AND :end_date
+            GROUP BY material_name
+            HAVING COALESCE(SUM(total_sales_qty), 0) > 0
+            ORDER BY total_sales_qty DESC, material_name ASC
+            LIMIT 5
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().all()
+
+    latest_inventory_date = conn.execute(
+        text("SELECT MAX(snapshot_date) FROM bi_inventory_snapshot_daily_cleaning WHERE snapshot_date <= :end_date"),
+        {"end_date": end_date},
+    ).scalar()
+    inventory_total_row = {}
+    inventory_by_warehouse: List[Dict[str, Any]] = []
+    if isinstance(latest_inventory_date, date):
+        inventory_total_row = conn.execute(
+            text(
+                """
+                SELECT ROUND(COALESCE(SUM(qty), 0), 2) AS total_qty,
+                       COUNT(DISTINCT material_code) AS material_count
+                FROM bi_inventory_snapshot_daily_cleaning
+                WHERE snapshot_date = :snapshot_date
+                """
+            ),
+            {"snapshot_date": latest_inventory_date},
+        ).mappings().first() or {}
+        inventory_by_warehouse = [
+            {key: to_plain(value) for key, value in row.items()}
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT warehouse_name_clean,
+                           ROUND(COALESCE(SUM(qty), 0), 2) AS total_qty
+                    FROM bi_inventory_snapshot_daily_cleaning
+                    WHERE snapshot_date = :snapshot_date
+                    GROUP BY warehouse_name_clean
+                    ORDER BY total_qty DESC, warehouse_name_clean ASC
+                    LIMIT 8
+                    """
+                ),
+                {"snapshot_date": latest_inventory_date},
+            ).mappings().all()
+        ]
+
+    refurb_row = conn.execute(
+        text(
+            """
+            SELECT
+                ROUND(COALESCE(SUM(plan_qty), 0), 2) AS plan_qty,
+                ROUND(COALESCE(SUM(final_good_qty), 0), 2) AS final_good_qty,
+                ROUND(COALESCE(AVG(plan_achievement_rate), 0), 4) AS avg_plan_achievement_rate,
+                ROUND(COALESCE(AVG(refurb_efficiency), 0), 4) AS avg_refurb_efficiency
+            FROM bi_refurb_production_daily
+            WHERE biz_date BETWEEN :start_date AND :end_date
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().first() or {}
+
+    alert_snapshot_date = conn.execute(
+        text("SELECT MAX(snapshot_date) FROM bi_inventory_alert_log WHERE snapshot_date <= :end_date"),
+        {"end_date": end_date},
+    ).scalar()
+    alert_row = {}
+    if isinstance(alert_snapshot_date, date):
+        alert_row = conn.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) AS alert_count,
+                    ROUND(COALESCE(SUM(shortage_qty_14d), 0), 2) AS shortage_qty_14d
+                FROM bi_inventory_alert_log
+                WHERE snapshot_date = :snapshot_date AND alert_level <> 'safe'
+                """
+            ),
+            {"snapshot_date": alert_snapshot_date},
+        ).mappings().first() or {}
+
+    return {
+        **period,
+        "sales": {key: to_plain(value) for key, value in dict(sales_row).items()},
+        "top_sales_materials": [{key: to_plain(value) for key, value in row.items()} for row in top_sales_rows],
+        "inventory": {
+            "snapshot_date": to_plain(latest_inventory_date),
+            **{key: to_plain(value) for key, value in dict(inventory_total_row).items()},
+        },
+        "inventory_by_warehouse": inventory_by_warehouse,
+        "refurb": {key: to_plain(value) for key, value in dict(refurb_row).items()},
+        "alerts": {
+            "snapshot_date": to_plain(alert_snapshot_date),
+            **{key: to_plain(value) for key, value in dict(alert_row).items()},
+        },
+    }
+
+
+def build_data_agent_report_prompt(summary: Dict[str, Any]) -> str:
+    return (
+        f"你是北极星系统中的 {DATA_AGENT_NAME}。\n"
+        "请基于以下经营摘要生成一份中文分析报告。\n"
+        "要求：\n"
+        "1. 使用中文输出。\n"
+        "2. 结构包含：经营概览、销售与退货、库存结构、翻新生产、风险提示、建议动作。\n"
+        "3. 只基于提供的数据得出结论，不要编造额外数字。\n"
+        "4. 语气专业、简洁，适合作为周报或月报正文。\n\n"
+        f"摘要数据：{json.dumps(summary, ensure_ascii=False, default=to_plain)}"
+    )
+
+def build_local_agent_report(summary: Dict[str, Any]) -> str:
+    sales = summary.get("sales") or {}
+    inventory = summary.get("inventory") or {}
+    refurb = summary.get("refurb") or {}
+    alerts = summary.get("alerts") or {}
+    top_items = summary.get("top_sales_materials") or []
+    top_text = "、".join(
+        f"{item.get('material_name', '--')}（销量 {item.get('total_sales_qty', 0)}）" for item in top_items[:3]
+    ) or "暂无头部物料"
+    return (
+        f"{summary.get('period_label', '--')} 经营分析报告\n\n"
+        "一、经营概览\n"
+        f"本期累计销量 {sales.get('total_sales_qty', 0)}，累计退货 {sales.get('total_return_qty', 0)}，覆盖 {sales.get('active_days', 0)} 个业务日，涉及 {sales.get('material_count', 0)} 个物料。\n\n"
+        "二、销售与退货\n"
+        f"销量头部物料主要集中在 {top_text}。建议重点复盘头部 SKU 的退货结构与渠道节奏，确认销量增长是否伴随异常退货。\n\n"
+        "三、库存结构\n"
+        f"最新库存快照日期为 {inventory.get('snapshot_date') or '--'}，库存总量 {inventory.get('total_qty', 0)}，覆盖物料 {inventory.get('material_count', 0)} 个。建议结合仓库分布继续判断良品、委外与销退仓的结构变化。\n\n"
+        "四、翻新生产\n"
+        f"本期翻新计划量 {refurb.get('plan_qty', 0)}，最终合格数量 {refurb.get('final_good_qty', 0)}，平均计划达成率 {round(float(refurb.get('avg_plan_achievement_rate') or 0) * 100, 2)}%，平均翻新人效 {refurb.get('avg_refurb_efficiency', 0)}。\n\n"
+        "五、风险提示\n"
+        f"最近一次预警快照日期 {alerts.get('snapshot_date') or '--'}，风险预警数量 {alerts.get('alert_count', 0)}，14 天缺口合计 {alerts.get('shortage_qty_14d', 0)}。建议优先核对缺口较大的整机和翻新物料。\n\n"
+        "六、建议动作\n"
+        "建议结合组织、仓库或物料继续下钻确认结构变化。"
+    )
+
+def upsert_data_agent_report(conn, report_type: str, trigger_mode: str, summary: Dict[str, Any], report_content: str, generated_by: str) -> Dict[str, Any]:
+    title = f"{summary.get('period_label', '--')} {DATA_AGENT_NAME}鎶ュ憡"
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_data_agent_report(
+                report_type, period_start, period_end, period_label, trigger_mode, title,
+                summary_json, report_content, generated_by, status
+            )
+            VALUES(
+                :report_type, :period_start, :period_end, :period_label, :trigger_mode, :title,
+                :summary_json, :report_content, :generated_by, 'success'
+            )
+            ON DUPLICATE KEY UPDATE
+                trigger_mode = VALUES(trigger_mode),
+                title = VALUES(title),
+                summary_json = VALUES(summary_json),
+                report_content = VALUES(report_content),
+                generated_by = VALUES(generated_by),
+                status = 'success'
+            """
+        ),
+        {
+            "report_type": report_type,
+            "period_start": summary["period_start"],
+            "period_end": summary["period_end"],
+            "period_label": summary["period_label"],
+            "trigger_mode": trigger_mode,
+            "title": title,
+            "summary_json": json.dumps(summary, ensure_ascii=False, default=to_plain),
+            "report_content": report_content,
+            "generated_by": generated_by,
+        },
+    )
+    row = conn.execute(
+        text(
+            """
+            SELECT id, report_type, period_start, period_end, period_label, trigger_mode, title,
+                   summary_json, report_content, generated_by, status, created_at, updated_at
+            FROM bi_data_agent_report
+            WHERE report_type = :report_type AND period_start = :period_start AND period_end = :period_end
+            """
+        ),
+        {
+            "report_type": report_type,
+            "period_start": summary["period_start"],
+            "period_end": summary["period_end"],
+        },
+    ).mappings().first()
+    return dict(row) if row else {}
+
+
+def report_row_to_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+    result = {key: to_plain(value) for key, value in row.items()}
+    result["summary"] = json_loads(result.pop("summary_json", "{}"), {})
+    return result
+
+
+def list_data_agent_reports(conn, limit: int = 20) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        text(
+            """
+            SELECT id, report_type, period_start, period_end, period_label, trigger_mode, title,
+                   summary_json, report_content, generated_by, status, created_at, updated_at
+            FROM bi_data_agent_report
+            ORDER BY period_end DESC, created_at DESC
+            LIMIT :limit
+            """
+        ),
+        {"limit": max(1, min(int(limit), 100))},
+    ).mappings().all()
+    return [report_row_to_payload(dict(row)) for row in rows]
+
+
+def generate_data_agent_report(report_type: str, trigger_mode: str = "manual") -> Dict[str, Any]:
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        summary = build_data_agent_report_summary(conn, report_type)
+        generated_by = "fallback"
+        report_content = build_local_agent_report(summary)
+        if is_data_agent_api_online() and data_agent_env_snapshot().get("openai_api_key"):
+            try:
+                result = call_data_agent_chat(
+                    build_data_agent_report_prompt(summary),
+                    session_id=data_agent_session_id(f"polaris-{report_type}-report"),
+                    timeout=240,
+                )
+                if result.get("content"):
+                    report_content = str(result["content"]).strip()
+                    generated_by = "data-agent"
+            except Exception as exc:
+                app_logger.warning("Data agent report fallback used: %s", exc)
+        row = upsert_data_agent_report(conn, report_type, trigger_mode, summary, report_content, generated_by)
+    return report_row_to_payload(row)
+
+
+def run_weekly_data_agent_report() -> None:
+    try:
+        generate_data_agent_report("weekly", "scheduled")
+    except Exception as exc:  # pragma: no cover - scheduler guard
+        app_logger.warning("Weekly data agent report generation failed: %s", exc)
+
+
+def run_monthly_data_agent_report() -> None:
+    try:
+        generate_data_agent_report("monthly", "scheduled")
+    except Exception as exc:  # pragma: no cover - scheduler guard
+        app_logger.warning("Monthly data agent report generation failed: %s", exc)
+
+
+def generate_widget_ai_text(widget: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    fallback_text = build_ai_text(widget, payload)
+    if widget["widget_type"] == "text":
+        return fallback_text
+    if not data_agent_env_snapshot().get("openai_api_key") or not is_data_agent_api_online():
+        return fallback_text
+    try:
+        result = call_data_agent_chat(
+            build_widget_agent_prompt(widget, payload),
+            session_id=data_agent_session_id(f"polaris-widget-{widget['id']}"),
+            timeout=120,
+        )
+        return str(result.get("content") or "").strip() or fallback_text
+    except Exception as exc:
+        app_logger.warning("Widget AI analysis fallback used: %s", exc)
+        return fallback_text
 
 
 @router.get("/bi-dashboard/login", response_class=HTMLResponse)
@@ -3012,7 +5622,7 @@ async def bi_dashboard_login_submit(payload: Dict[str, Any] = Body(default={})) 
     remember = bool(payload.get("remember"))
     next_path = sanitize_next_path(payload.get("next"))
     if not authenticate_dashboard_user(username, password):
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        raise HTTPException(status_code=401, detail="鐢ㄦ埛鍚嶆垨瀵嗙爜閿欒")
 
     response = JSONResponse({"ok": True, "redirect_to": next_path, "username": username})
     response.set_cookie(
@@ -3053,14 +5663,17 @@ async def bi_dashboard(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_dashboard_runtime.html",
-            {
+            dashboard_page_context(
+                "dashboard",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_LOGIN_PATH_JSON__": json.dumps("/financial/bi-dashboard/login", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
                 "__BI_EDITOR_PATH_JSON__": json.dumps(DASHBOARD_EDITOR_PATH, ensure_ascii=False),
                 "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
                 "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
-            },
+                },
+            ),
         )
     )
 
@@ -3078,13 +5691,16 @@ async def bi_dashboard_editor(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_dashboard_builder.html",
-            {
+            dashboard_page_context(
+                "editor",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_LOGIN_PATH_JSON__": json.dumps("/financial/bi-dashboard/login", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
                 "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
                 "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
-            },
+                },
+            ),
         )
     )
 
@@ -3102,11 +5718,14 @@ async def bi_dashboard_attendance_entry(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_attendance_entry.html",
-            {
+            dashboard_page_context(
+                "attendance",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
-            },
+                },
+            ),
         )
     )
 
@@ -3124,11 +5743,95 @@ async def bi_dashboard_inventory_mappings(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_inventory_mapping_entry.html",
-            {
+            dashboard_page_context(
+                "inventory",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
-            },
+                },
+            ),
+        )
+    )
+
+
+@router.get("/bi-dashboard/metric-dictionary", response_class=HTMLResponse)
+async def bi_dashboard_metric_dictionary(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_metric_dictionary_entry.html",
+            dashboard_page_context(
+                "metric-dictionary",
+                {
+                    "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                    "__BI_DASHBOARD_PATH_JSON__": json.dumps(DASHBOARD_DEFAULT_PATH, ensure_ascii=False),
+                    "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+                    "__BI_METRIC_DICTIONARY_API_PATH_JSON__": json.dumps(METRIC_DICTIONARY_API_PATH, ensure_ascii=False),
+                },
+            ),
+        )
+    )
+
+
+@router.get("/bi-dashboard/master-data", response_class=HTMLResponse)
+async def bi_dashboard_master_data(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_master_data_entry.html",
+            dashboard_page_context(
+                "master-data",
+                {
+                    "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                    "__BI_DASHBOARD_PATH_JSON__": json.dumps(DASHBOARD_DEFAULT_PATH, ensure_ascii=False),
+                    "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+                    "__BI_METRIC_DICTIONARY_PATH_JSON__": json.dumps(METRIC_DICTIONARY_ENTRY_PATH, ensure_ascii=False),
+                    "__BI_MASTER_DATA_API_PATH_JSON__": json.dumps(MASTER_DATA_API_PATH, ensure_ascii=False),
+                },
+            ),
+        )
+    )
+
+
+@router.get("/bi-dashboard/audit-logs", response_class=HTMLResponse)
+async def bi_dashboard_audit_logs(request: Request) -> Response:
+    ensure_schema()
+    username = current_dashboard_user(request)
+    if not username:
+        current_path = request.url.path
+        if request.url.query:
+            current_path = f"{current_path}?{request.url.query}"
+        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
+        return RedirectResponse(url=login_url, status_code=303)
+    return HTMLResponse(
+        render_template(
+            "bi_audit_log_center.html",
+            dashboard_page_context(
+                "audit-logs",
+                {
+                    "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
+                    "__BI_DASHBOARD_PATH_JSON__": json.dumps(DASHBOARD_DEFAULT_PATH, ensure_ascii=False),
+                    "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
+                    "__BI_MASTER_DATA_PATH_JSON__": json.dumps(MASTER_DATA_ENTRY_PATH, ensure_ascii=False),
+                    "__BI_SYNC_SCHEDULE_PATH_JSON__": json.dumps("/financial/bi-dashboard/sync-schedule", ensure_ascii=False),
+                    "__BI_AUDIT_LOG_API_PATH_JSON__": json.dumps(AUDIT_LOG_API_PATH, ensure_ascii=False),
+                },
+            ),
         )
     )
 
@@ -3146,11 +5849,14 @@ async def bi_dashboard_refurb_production(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_refurb_production_entry.html",
-            {
+            dashboard_page_context(
+                "refurb",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
-            },
+                },
+            ),
         )
     )
 
@@ -3168,11 +5874,14 @@ async def bi_dashboard_forecast_alerts(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_forecast_alert_entry.html",
-            {
+            dashboard_page_context(
+                "forecast",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
-            },
+                },
+            ),
         )
     )
 
@@ -3190,11 +5899,14 @@ async def bi_dashboard_sync_schedule(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_sync_schedule_entry.html",
-            {
+            dashboard_page_context(
+                "sync",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_DASHBOARD_PATH_JSON__": json.dumps("/financial/bi-dashboard", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
-            },
+                },
+            ),
         )
     )
 
@@ -3212,15 +5924,21 @@ async def bi_dashboard_data_agent_entry(request: Request) -> Response:
     return HTMLResponse(
         render_template(
             "bi_data_agent_entry.html",
-            {
+            dashboard_page_context(
+                "data-agent",
+                {
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_DASHBOARD_PATH_JSON__": json.dumps(DASHBOARD_DEFAULT_PATH, ensure_ascii=False),
                 "__BI_EDITOR_PATH_JSON__": json.dumps(DASHBOARD_EDITOR_PATH, ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
                 "__BI_DATA_AGENT_STATUS_API_PATH_JSON__": json.dumps(DATA_AGENT_STATUS_API_PATH, ensure_ascii=False),
+                "__BI_DATA_AGENT_CHAT_API_PATH_JSON__": json.dumps(DATA_AGENT_CHAT_API_PATH, ensure_ascii=False),
+                "__BI_DATA_AGENT_REPORTS_API_PATH_JSON__": json.dumps(DATA_AGENT_REPORTS_API_PATH, ensure_ascii=False),
+                "__BI_DATA_AGENT_REPORT_GENERATE_API_PATH_JSON__": json.dumps(DATA_AGENT_REPORT_GENERATE_API_PATH, ensure_ascii=False),
                 "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
                 "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
-            },
+                },
+            ),
         )
     )
 
@@ -3229,6 +5947,56 @@ async def bi_dashboard_data_agent_entry(request: Request) -> Response:
 async def bi_dashboard_data_agent_status(_auth: str = Depends(require_auth)) -> JSONResponse:
     ensure_schema()
     return JSONResponse(data_agent_status_payload())
+
+
+@router.post("/bi-dashboard/api/data-agent/chat")
+async def bi_dashboard_data_agent_chat(
+    payload: Dict[str, Any] = Body(default={}),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    message = str(payload.get("message") or "").strip()
+    session_id = str(payload.get("session_id") or "").strip() or data_agent_session_id()
+    if not message:
+        raise HTTPException(status_code=400, detail="请输入问题")
+    if not data_agent_env_snapshot().get("openai_api_key"):
+        raise HTTPException(status_code=400, detail="数据分析 Agent 尚未配置 OPENAI_API_KEY，当前无法进行问答")
+    try:
+        result = call_data_agent_chat(message, session_id=session_id, timeout=240)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse(
+        {
+            "session_id": result["session_id"],
+            "answer": result["content"],
+            "source": "data-agent",
+        }
+    )
+
+
+@router.get("/bi-dashboard/api/data-agent/reports")
+async def bi_dashboard_data_agent_reports(
+    limit: int = Query(20, ge=1, le=100),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rows = list_data_agent_reports(conn, limit=limit)
+    return JSONResponse({"items": rows})
+
+
+@router.post("/bi-dashboard/api/data-agent/reports/generate")
+async def bi_dashboard_data_agent_generate_report(
+    payload: Dict[str, Any] = Body(default={}),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    report_type = str(payload.get("report_type") or "weekly").strip().lower()
+    if report_type not in {"weekly", "monthly"}:
+        raise HTTPException(status_code=400, detail="浠呮敮鎸?weekly 鎴?monthly")
+    item = generate_data_agent_report(report_type, "manual")
+    return JSONResponse({"item": item})
 
 
 @router.get("/bi-dashboard/api/sync-schedule")
@@ -3291,9 +6059,32 @@ async def save_sync_schedule(
         )
         schedule = load_sync_schedule(conn)
     refreshed = refresh_sync_scheduler()
+    record_dashboard_audit(
+        module_key="sync",
+        module_name="鍚屾璋冨害",
+        action_key="schedule.save",
+        action_name="淇濆瓨鍘熷鍚屾璁″垝",
+        target_type="schedule",
+        target_id=SYNC_SCHEDULE_KEY,
+        target_name="鍘熷鏁版嵁鍚屾璁″垝",
+        detail_summary=f"{normalized['mode']} / {normalized['cron_expr']}",
+        detail={
+            "is_enabled": normalized["is_enabled"],
+            "mode": normalized["mode"],
+            "cron_expr": normalized["cron_expr"],
+            "sales_days_behind": normalized["sales_days_behind"],
+            "sales_window_days": normalized["sales_window_days"],
+            "snapshot_days_behind": normalized["snapshot_days_behind"],
+            "runtime": refreshed,
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/sync-schedule",
+        source_method="PUT",
+        affected_count=1,
+    )
     return JSONResponse(
         {
-            "message": "定时配置已保存并生效",
+            "message": "瀹氭椂閰嶇疆宸蹭繚瀛樺苟鐢熸晥",
             "schedule": {**schedule, **sync_scheduler_snapshot()},
             "runtime": refreshed,
         }
@@ -3301,7 +6092,7 @@ async def save_sync_schedule(
 
 
 @router.post("/bi-dashboard/api/sync-schedule/run-now")
-async def run_sync_schedule_now(_auth: str = Depends(require_auth)) -> JSONResponse:
+async def run_sync_schedule_now(username: str = Depends(require_auth)) -> JSONResponse:
     ensure_schema()
     if sync_run_lock.locked():
         raise HTTPException(status_code=409, detail="已有原始数据同步任务在执行，请稍后再试")
@@ -3316,6 +6107,22 @@ async def run_sync_schedule_now(_auth: str = Depends(require_auth)) -> JSONRespo
     current_engine = get_engine()
     with current_engine.connect() as conn:
         schedule = load_sync_schedule(conn)
+    record_dashboard_audit(
+        module_key="sync",
+        module_name="同步调度",
+        action_key="schedule.run_now",
+        action_name="手动触发原始同步",
+        target_type="schedule",
+        target_id=SYNC_SCHEDULE_KEY,
+        target_name="原始数据同步计划",
+        result_status="submitted",
+        detail_summary=f"已提交 {schedule.get('mode') or 'all'} 模式同步",
+        detail={"schedule": serialize_sync_schedule(schedule)},
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/sync-schedule/run-now",
+        source_method="POST",
+        affected_count=1,
+    )
     return JSONResponse(
         {
             "message": "已提交原始数据同步任务，请稍后刷新查看执行结果",
@@ -3378,6 +6185,26 @@ async def upsert_refurb_production(
         ),
         None,
     )
+    record_dashboard_audit(
+        module_key="refurb",
+        module_name="缈绘柊鐢熶骇",
+        action_key="daily.upsert",
+        action_name="保存翻新生产日报",
+        target_type="refurb_daily",
+        target_id=f"{normalized['biz_date'].isoformat()}|{normalized['refurb_category']}|{normalized['material_name']}",
+        target_name=f"{normalized['biz_date'].isoformat()} / {normalized['refurb_category']} / {normalized['material_name']}",
+        detail_summary=f"写入 {saved_rows} 行翻新生产数据",
+        detail={
+            "biz_date": normalized["biz_date"],
+            "refurb_category": normalized["refurb_category"],
+            "material_name": normalized["material_name"],
+            "saved_rows": saved_rows,
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/refurb-production",
+        source_method="POST",
+        affected_count=saved_rows,
+    )
     return JSONResponse(
         {
             "message": "翻新生产数据已保存",
@@ -3398,7 +6225,7 @@ async def import_refurb_production(
 ) -> JSONResponse:
     ensure_schema()
     if not str(file.filename or "").lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="仅支持导入 .xlsx 文件")
+        raise HTTPException(status_code=400, detail="浠呮敮鎸佸鍏?.xlsx 鏂囦欢")
     content = await file.read()
     rows = parse_refurb_excel_rows(file, content)
     current_engine = get_engine()
@@ -3411,6 +6238,28 @@ async def import_refurb_production(
             end_date=max(date_values),
             limit=1000,
         )
+    record_dashboard_audit(
+        module_key="refurb",
+        module_name="缈绘柊鐢熶骇",
+        action_key="daily.import_excel",
+        action_name="导入翻新生产 Excel",
+        target_type="refurb_import",
+        target_id=str(file.filename or ""),
+        target_name=str(file.filename or "refurb-production.xlsx"),
+        detail_summary=f"Excel 导入 {saved_rows} 行",
+        detail={
+            "filename": file.filename or "",
+            "saved_rows": saved_rows,
+            "start_date": min(date_values),
+            "end_date": max(date_values),
+            "categories": audit_preview_values(rows, "refurb_category"),
+            "materials": audit_preview_values(rows, "material_name"),
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/refurb-production/import",
+        source_method="POST",
+        affected_count=saved_rows,
+    )
     return JSONResponse(
         {
             "message": f"Excel 导入完成，共写入 {saved_rows} 行",
@@ -3504,6 +6353,26 @@ async def upsert_forecast_manual(
         ),
         None,
     )
+    record_dashboard_audit(
+        module_key="forecast",
+        module_name="棰勬祴棰勮",
+        action_key="manual.upsert",
+        action_name="保存手动预测",
+        target_type="manual_forecast",
+        target_id=f"{normalized['forecast_date'].isoformat()}|{normalized['material_name']}|{normalized['demand_type']}",
+        target_name=f"{normalized['forecast_date'].isoformat()} / {normalized['material_name']} / {normalized['demand_type']}",
+        detail_summary="保存手动预测并完成预测重算",
+        detail={
+            "forecast_date": normalized["forecast_date"],
+            "material_name": normalized["material_name"],
+            "demand_type": normalized["demand_type"],
+            "manual_qty": normalized.get("manual_qty"),
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/forecast-alerts/manual",
+        source_method="POST",
+        affected_count=1,
+    )
     return JSONResponse({"message": "手动预测已保存并重算 AI 预测", "row": current_row})
 
 
@@ -3526,6 +6395,24 @@ async def put_forecast_events(
     current_engine = get_engine()
     save_promotion_events(current_engine, rows)
     result = recalculate_forecasts_and_alerts(current_engine, updated_by=username, send_notifications=False)
+    record_dashboard_audit(
+        module_key="forecast",
+        module_name="预测预警",
+        action_key="events.bulk_save",
+        action_name="保存促销事件",
+        target_type="promotion_events",
+        target_name="促销事件批量维护",
+        detail_summary=f"保存 {len(rows)} 条促销事件并完成重算",
+        detail={
+            "row_count": len(rows),
+            "event_names": audit_preview_values(rows, "event_name"),
+            "result": result,
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/forecast-alerts/events",
+        source_method="PUT",
+        affected_count=len(rows),
+    )
     return JSONResponse({"message": "促销事件已保存并完成预测重算", "result": result})
 
 
@@ -3534,6 +6421,20 @@ async def post_forecast_recalculate(username: str = Depends(require_auth)) -> JS
     ensure_schema()
     current_engine = get_engine()
     result = recalculate_forecasts_and_alerts(current_engine, updated_by=username, send_notifications=True)
+    record_dashboard_audit(
+        module_key="forecast",
+        module_name="预测预警",
+        action_key="recalculate.run",
+        action_name="重算预测与预警",
+        target_type="forecast_engine",
+        target_name="预测与安全库存预警",
+        detail_summary="执行预测与预警重算",
+        detail={"result": result, "send_notifications": True},
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/forecast-alerts/recalculate",
+        source_method="POST",
+        affected_count=int(result.get("saved_rows") or result.get("forecast_count") or 0) if isinstance(result, dict) else 0,
+    )
     return JSONResponse({"message": "预测与安全库存预警已重算", "result": result})
 
 
@@ -3597,7 +6498,7 @@ async def list_inventory_mappings(_auth: str = Depends(require_auth)) -> JSONRes
 @router.put("/bi-dashboard/api/inventory-mappings")
 async def save_inventory_mappings(
     payload: Dict[str, Any] = Body(default={}),
-    _auth: str = Depends(require_auth),
+    username: str = Depends(require_auth),
 ) -> JSONResponse:
     ensure_schema()
     warehouse_rows = normalize_inventory_mapping_payload(payload.get("warehouses"), mapping_type="warehouse")
@@ -3697,6 +6598,27 @@ async def save_inventory_mappings(
     refreshed_rows = refresh_inventory_cleaning(current_engine)
     with current_engine.connect() as conn:
         latest_cleaning = to_plain(latest_date(conn, "inventory_cleaning"))
+    record_dashboard_audit(
+        module_key="governance",
+        module_name="治理中心",
+        action_key="inventory_mappings.save",
+        action_name="保存库存映射",
+        target_type="inventory_mappings",
+        target_name="仓库与状态映射",
+        detail_summary=f"保存 {len(warehouse_rows)} 条仓库映射、{len(status_rows)} 条状态映射",
+        detail={
+            "warehouse_count": len(warehouse_rows),
+            "status_count": len(status_rows),
+            "warehouse_names": audit_preview_values(warehouse_rows, "warehouse_name_clean"),
+            "status_names": audit_preview_values(status_rows, "stock_status_name"),
+            "refreshed_rows": int(refreshed_rows),
+            "latest_cleaning_date": latest_cleaning,
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/inventory-mappings",
+        source_method="PUT",
+        affected_count=len(warehouse_rows) + len(status_rows),
+    )
     return JSONResponse(
         {
             "saved": True,
@@ -3706,6 +6628,1223 @@ async def save_inventory_mappings(
             "latest_cleaning_date": latest_cleaning,
         }
     )
+
+
+@router.get("/bi-dashboard/api/metric-dictionary")
+async def list_metric_dictionary(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id, metric_key, metric_name, business_domain, owner_role,
+                    definition_text, formula_text, source_table, source_fields,
+                    dimension_notes, version_tag, effective_date, sort_order,
+                    is_enabled, created_by, updated_by, created_at, updated_at
+                FROM bi_metric_dictionary
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+    items = [
+        {
+            "id": int(row["id"]),
+            "metric_key": str(row["metric_key"] or ""),
+            "metric_name": str(row["metric_name"] or ""),
+            "business_domain": str(row["business_domain"] or ""),
+            "owner_role": str(row["owner_role"] or ""),
+            "definition_text": str(row["definition_text"] or ""),
+            "formula_text": str(row["formula_text"] or ""),
+            "source_table": str(row["source_table"] or ""),
+            "source_fields": str(row["source_fields"] or ""),
+            "dimension_notes": str(row["dimension_notes"] or ""),
+            "version_tag": str(row["version_tag"] or "v1"),
+            "effective_date": to_plain(row["effective_date"]),
+            "sort_order": int(row["sort_order"] or 0),
+            "is_enabled": bool(row["is_enabled"]),
+            "created_by": to_plain(row["created_by"]),
+            "updated_by": to_plain(row["updated_by"]),
+            "created_at": to_plain(row["created_at"]),
+            "updated_at": to_plain(row["updated_at"]),
+        }
+        for row in rows
+    ]
+    active_count = sum(1 for item in items if item["is_enabled"])
+    domain_count = len({item["business_domain"] for item in items if item["business_domain"]})
+    latest_updated_at = max((item["updated_at"] for item in items if item["updated_at"]), default=None)
+    return JSONResponse(
+        {
+            "items": items,
+            "summary": {
+                "total_count": len(items),
+                "active_count": active_count,
+                "domain_count": domain_count,
+                "latest_updated_at": latest_updated_at,
+            },
+        }
+    )
+
+
+@router.put("/bi-dashboard/api/metric-dictionary")
+async def save_metric_dictionary(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    rows = normalize_metric_dictionary_payload(payload.get("items"))
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        existing_ids = {
+            int(row[0])
+            for row in conn.execute(text("SELECT id FROM bi_metric_dictionary")).fetchall()
+        }
+        submitted_ids = {item["id"] for item in rows if item["id"] > 0}
+        for item in rows:
+            record = {**item, "updated_by": username}
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_metric_dictionary
+                        SET
+                            metric_key = :metric_key,
+                            metric_name = :metric_name,
+                            business_domain = :business_domain,
+                            owner_role = :owner_role,
+                            definition_text = :definition_text,
+                            formula_text = :formula_text,
+                            source_table = :source_table,
+                            source_fields = :source_fields,
+                            dimension_notes = :dimension_notes,
+                            version_tag = :version_tag,
+                            effective_date = :effective_date,
+                            sort_order = :sort_order,
+                            is_enabled = :is_enabled,
+                            updated_by = :updated_by
+                        WHERE id = :id
+                        """
+                    ),
+                    record,
+                )
+                if result.rowcount:
+                    continue
+            record["created_by"] = username
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_metric_dictionary(
+                        metric_key, metric_name, business_domain, owner_role,
+                        definition_text, formula_text, source_table, source_fields,
+                        dimension_notes, version_tag, effective_date, sort_order,
+                        is_enabled, created_by, updated_by
+                    ) VALUES (
+                        :metric_key, :metric_name, :business_domain, :owner_role,
+                        :definition_text, :formula_text, :source_table, :source_fields,
+                        :dimension_notes, :version_tag, :effective_date, :sort_order,
+                        :is_enabled, :created_by, :updated_by
+                    )
+                    """
+                ),
+                record,
+            )
+        disabled_ids = sorted(existing_ids - submitted_ids)
+        if disabled_ids:
+            placeholders = ", ".join(f":mid_{idx}" for idx, _ in enumerate(disabled_ids))
+            params = {f"mid_{idx}": row_id for idx, row_id in enumerate(disabled_ids)}
+            params["updated_by"] = username
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE bi_metric_dictionary
+                    SET is_enabled = 0, updated_by = :updated_by
+                    WHERE id IN ({placeholders})
+                    """
+                ),
+                params,
+            )
+    record_dashboard_audit(
+        module_key="governance",
+        module_name="治理中心",
+        action_key="metric_dictionary.save",
+        action_name="保存指标口径",
+        target_type="metric_dictionary",
+        target_name="指标口径中心",
+        detail_summary=f"保存 {len(rows)} 条指标口径",
+        detail={
+            "item_count": len(rows),
+            "metric_keys": audit_preview_values(rows, "metric_key"),
+            "domains": audit_preview_values(rows, "business_domain"),
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/metric-dictionary",
+        source_method="PUT",
+        affected_count=len(rows),
+    )
+    return JSONResponse({"saved": True, "item_count": len(rows)})
+
+
+@router.get("/bi-dashboard/api/master-data")
+async def list_master_data(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        sku_rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id, sku_code, sku_name, sku_type, product_line, model, spec_version,
+                    lifecycle_status, owner_dept, sort_order, is_active, created_at, updated_at
+                FROM bi_sku_master
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        warehouse_rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id, source_warehouse_name, warehouse_name_clean, warehouse_code,
+                    warehouse_type, platform_owner, city, is_sellable_warehouse,
+                    is_reverse_warehouse, sort_order, is_enabled, created_at, updated_at
+                FROM bi_inventory_warehouse_map
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        status_rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id, stock_status_id, stock_status_name, status_group, can_sell,
+                    can_forecast_supply, need_quality_check, next_default_status,
+                    sort_order, is_enabled, created_at, updated_at
+                FROM bi_inventory_status_map
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        channel_rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id, channel_code, channel_name, shop_name, platform_name,
+                    owner_dept, sort_order, is_active, created_at, updated_at
+                FROM bi_channel_shop_master
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        latest_cleaning = to_plain(latest_date(conn, "inventory_cleaning"))
+        latest_sales = to_plain(latest_date(conn, "sales"))
+    return JSONResponse(
+        {
+            "skus": [{key: to_plain(value) for key, value in row.items()} for row in sku_rows],
+            "warehouses": [{key: to_plain(value) for key, value in row.items()} for row in warehouse_rows],
+            "statuses": [{key: to_plain(value) for key, value in row.items()} for row in status_rows],
+            "channels": [{key: to_plain(value) for key, value in row.items()} for row in channel_rows],
+            "summary": {
+                "sku_count": len(sku_rows),
+                "warehouse_count": len(warehouse_rows),
+                "status_count": len(status_rows),
+                "channel_count": len(channel_rows),
+                "latest_inventory_cleaning_date": latest_cleaning,
+                "latest_sales_date": latest_sales,
+            },
+        }
+    )
+
+
+@router.put("/bi-dashboard/api/master-data")
+async def save_master_data(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    sku_rows = normalize_sku_master_payload(payload.get("skus"))
+    warehouse_rows = normalize_master_warehouse_payload(payload.get("warehouses"))
+    status_rows = normalize_master_status_payload(payload.get("statuses"))
+    channel_rows = normalize_channel_shop_payload(payload.get("channels"))
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        existing_sku_ids = {int(row[0]) for row in conn.execute(text("SELECT id FROM bi_sku_master")).fetchall()}
+        existing_warehouse_ids = {int(row[0]) for row in conn.execute(text("SELECT id FROM bi_inventory_warehouse_map")).fetchall()}
+        existing_status_ids = {int(row[0]) for row in conn.execute(text("SELECT id FROM bi_inventory_status_map")).fetchall()}
+        existing_channel_ids = {int(row[0]) for row in conn.execute(text("SELECT id FROM bi_channel_shop_master")).fetchall()}
+
+        submitted_sku_ids = {item["id"] for item in sku_rows if item["id"] > 0}
+        submitted_warehouse_ids = {item["id"] for item in warehouse_rows if item["id"] > 0}
+        submitted_status_ids = {item["id"] for item in status_rows if item["id"] > 0}
+        submitted_channel_ids = {item["id"] for item in channel_rows if item["id"] > 0}
+
+        for item in sku_rows:
+            record = {**item, "updated_by": username}
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_sku_master
+                        SET
+                            sku_code = :sku_code,
+                            sku_name = :sku_name,
+                            sku_type = :sku_type,
+                            product_line = :product_line,
+                            model = :model,
+                            spec_version = :spec_version,
+                            lifecycle_status = :lifecycle_status,
+                            owner_dept = :owner_dept,
+                            sort_order = :sort_order,
+                            is_active = :is_active,
+                            updated_by = :updated_by
+                        WHERE id = :id
+                        """
+                    ),
+                    record,
+                )
+                if result.rowcount:
+                    continue
+            record["created_by"] = username
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_sku_master(
+                        sku_code, sku_name, sku_type, product_line, model, spec_version,
+                        lifecycle_status, owner_dept, sort_order, is_active, created_by, updated_by
+                    ) VALUES (
+                        :sku_code, :sku_name, :sku_type, :product_line, :model, :spec_version,
+                        :lifecycle_status, :owner_dept, :sort_order, :is_active, :created_by, :updated_by
+                    )
+                    """
+                ),
+                record,
+            )
+
+        for item in warehouse_rows:
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_inventory_warehouse_map
+                        SET
+                            source_warehouse_name = :source_warehouse_name,
+                            warehouse_name_clean = :warehouse_name_clean,
+                            warehouse_code = :warehouse_code,
+                            warehouse_type = :warehouse_type,
+                            platform_owner = :platform_owner,
+                            city = :city,
+                            is_sellable_warehouse = :is_sellable_warehouse,
+                            is_reverse_warehouse = :is_reverse_warehouse,
+                            sort_order = :sort_order,
+                            is_enabled = :is_enabled
+                        WHERE id = :id
+                        """
+                    ),
+                    item,
+                )
+                if result.rowcount:
+                    continue
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_inventory_warehouse_map(
+                        source_warehouse_name, warehouse_name_clean, warehouse_code, warehouse_type,
+                        platform_owner, city, is_sellable_warehouse, is_reverse_warehouse, sort_order, is_enabled
+                    ) VALUES (
+                        :source_warehouse_name, :warehouse_name_clean, :warehouse_code, :warehouse_type,
+                        :platform_owner, :city, :is_sellable_warehouse, :is_reverse_warehouse, :sort_order, :is_enabled
+                    )
+                    """
+                ),
+                item,
+            )
+
+        for item in status_rows:
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_inventory_status_map
+                        SET
+                            stock_status_id = :stock_status_id,
+                            stock_status_name = :stock_status_name,
+                            status_group = :status_group,
+                            can_sell = :can_sell,
+                            can_forecast_supply = :can_forecast_supply,
+                            need_quality_check = :need_quality_check,
+                            next_default_status = :next_default_status,
+                            sort_order = :sort_order,
+                            is_enabled = :is_enabled
+                        WHERE id = :id
+                        """
+                    ),
+                    item,
+                )
+                if result.rowcount:
+                    continue
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_inventory_status_map(
+                        stock_status_id, stock_status_name, status_group, can_sell,
+                        can_forecast_supply, need_quality_check, next_default_status, sort_order, is_enabled
+                    ) VALUES (
+                        :stock_status_id, :stock_status_name, :status_group, :can_sell,
+                        :can_forecast_supply, :need_quality_check, :next_default_status, :sort_order, :is_enabled
+                    )
+                    """
+                ),
+                item,
+            )
+
+        for item in channel_rows:
+            record = {**item, "updated_by": username}
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_channel_shop_master
+                        SET
+                            channel_code = :channel_code,
+                            channel_name = :channel_name,
+                            shop_name = :shop_name,
+                            platform_name = :platform_name,
+                            owner_dept = :owner_dept,
+                            sort_order = :sort_order,
+                            is_active = :is_active,
+                            updated_by = :updated_by
+                        WHERE id = :id
+                        """
+                    ),
+                    record,
+                )
+                if result.rowcount:
+                    continue
+            record["created_by"] = username
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_channel_shop_master(
+                        channel_code, channel_name, shop_name, platform_name,
+                        owner_dept, sort_order, is_active, created_by, updated_by
+                    ) VALUES (
+                        :channel_code, :channel_name, :shop_name, :platform_name,
+                        :owner_dept, :sort_order, :is_active, :created_by, :updated_by
+                    )
+                    """
+                ),
+                record,
+            )
+
+        disabled_sku_ids = sorted(existing_sku_ids - submitted_sku_ids)
+        disabled_warehouse_ids = sorted(existing_warehouse_ids - submitted_warehouse_ids)
+        disabled_status_ids = sorted(existing_status_ids - submitted_status_ids)
+        disabled_channel_ids = sorted(existing_channel_ids - submitted_channel_ids)
+        if disabled_sku_ids:
+            placeholders = ", ".join(f":sku_{idx}" for idx, _ in enumerate(disabled_sku_ids))
+            params = {f"sku_{idx}": row_id for idx, row_id in enumerate(disabled_sku_ids)}
+            conn.execute(text(f"UPDATE bi_sku_master SET is_active = 0 WHERE id IN ({placeholders})"), params)
+        if disabled_warehouse_ids:
+            placeholders = ", ".join(f":wid_{idx}" for idx, _ in enumerate(disabled_warehouse_ids))
+            params = {f"wid_{idx}": row_id for idx, row_id in enumerate(disabled_warehouse_ids)}
+            conn.execute(text(f"UPDATE bi_inventory_warehouse_map SET is_enabled = 0 WHERE id IN ({placeholders})"), params)
+        if disabled_status_ids:
+            placeholders = ", ".join(f":sid_{idx}" for idx, _ in enumerate(disabled_status_ids))
+            params = {f"sid_{idx}": row_id for idx, row_id in enumerate(disabled_status_ids)}
+            conn.execute(text(f"UPDATE bi_inventory_status_map SET is_enabled = 0 WHERE id IN ({placeholders})"), params)
+        if disabled_channel_ids:
+            placeholders = ", ".join(f":cid_{idx}" for idx, _ in enumerate(disabled_channel_ids))
+            params = {f"cid_{idx}": row_id for idx, row_id in enumerate(disabled_channel_ids)}
+            conn.execute(text(f"UPDATE bi_channel_shop_master SET is_active = 0 WHERE id IN ({placeholders})"), params)
+
+    refreshed_rows = refresh_inventory_cleaning(current_engine)
+    record_dashboard_audit(
+        module_key="governance",
+        module_name="治理中心",
+        action_key="master_data.save",
+        action_name="保存主数据",
+        target_type="master_data",
+        target_name="SKU / 仓库 / 状态 / 渠道主数据",
+        detail_summary=(
+            f"SKU {len(sku_rows)} / 仓库 {len(warehouse_rows)} / 状态 {len(status_rows)} / 渠道 {len(channel_rows)}"
+        ),
+        detail={
+            "sku_count": len(sku_rows),
+            "warehouse_count": len(warehouse_rows),
+            "status_count": len(status_rows),
+            "channel_count": len(channel_rows),
+            "sku_codes": audit_preview_values(sku_rows, "sku_code"),
+            "warehouse_names": audit_preview_values(warehouse_rows, "warehouse_name_clean"),
+            "status_names": audit_preview_values(status_rows, "stock_status_name"),
+            "channel_names": audit_preview_values(channel_rows, "channel_name"),
+            "refreshed_rows": int(refreshed_rows),
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/master-data",
+        source_method="PUT",
+        affected_count=len(sku_rows) + len(warehouse_rows) + len(status_rows) + len(channel_rows),
+    )
+    return JSONResponse(
+        {
+            "saved": True,
+            "sku_count": len(sku_rows),
+            "warehouse_count": len(warehouse_rows),
+            "status_count": len(status_rows),
+            "channel_count": len(channel_rows),
+            "refreshed_rows": int(refreshed_rows),
+        }
+    )
+
+
+@router.get("/bi-dashboard/api/audit-logs")
+async def list_audit_logs(
+    module_key: str | None = Query(None),
+    result_status: str | None = Query(None),
+    actor: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(120, ge=1, le=400),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    conditions = ["1 = 1"]
+    params: Dict[str, Any] = {}
+    if module_key:
+        conditions.append("module_key = :module_key")
+        params["module_key"] = str(module_key).strip()
+    if result_status:
+        conditions.append("result_status = :result_status")
+        params["result_status"] = str(result_status).strip()
+    if actor:
+        conditions.append("triggered_by = :actor")
+        params["actor"] = str(actor).strip()
+    if keyword:
+        conditions.append(
+            "(action_name LIKE :keyword OR target_name LIKE :keyword OR detail_summary LIKE :keyword OR target_id LIKE :keyword)"
+        )
+        params["keyword"] = f"%{str(keyword).strip()}%"
+    where_sql = " AND ".join(conditions)
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT
+                    id, module_key, module_name, action_key, action_name,
+                    target_type, target_id, target_name, result_status,
+                    detail_summary, detail_json, source_path, source_method,
+                    triggered_by, affected_count, created_at
+                FROM bi_audit_log
+                WHERE {where_sql}
+                ORDER BY id DESC
+                LIMIT :limit
+                """
+            ),
+            {**params, "limit": int(limit)},
+        ).mappings().all()
+        summary_row = conn.execute(
+            text(
+                f"""
+                SELECT
+                    COUNT(*) AS total_count,
+                    SUM(CASE WHEN result_status = 'success' THEN 1 ELSE 0 END) AS success_count,
+                    SUM(CASE WHEN result_status = 'submitted' THEN 1 ELSE 0 END) AS submitted_count,
+                    SUM(CASE WHEN result_status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                    COUNT(DISTINCT module_key) AS module_count,
+                    MAX(created_at) AS latest_at
+                FROM bi_audit_log
+                WHERE {where_sql}
+                """
+            ),
+            params,
+        ).mappings().first()
+        module_rows = conn.execute(
+            text(
+                """
+                SELECT module_key, module_name, COUNT(*) AS item_count
+                FROM bi_audit_log
+                GROUP BY module_key, module_name
+                ORDER BY MAX(created_at) DESC, module_name ASC
+                """
+            )
+        ).mappings().all()
+    items = [
+        {
+            "id": int(row["id"]),
+            "module_key": row["module_key"],
+            "module_name": row["module_name"],
+            "action_key": row["action_key"],
+            "action_name": row["action_name"],
+            "target_type": row["target_type"],
+            "target_id": row["target_id"],
+            "target_name": row["target_name"],
+            "result_status": row["result_status"],
+            "detail_summary": row["detail_summary"],
+            "detail": json_loads(row.get("detail_json"), {}),
+            "source_path": row["source_path"],
+            "source_method": row["source_method"],
+            "triggered_by": row["triggered_by"] or "",
+            "affected_count": int(row["affected_count"] or 0),
+            "created_at": to_plain(row["created_at"]),
+        }
+        for row in rows
+    ]
+    summary = summary_row or {}
+    return JSONResponse(
+        {
+            "items": items,
+            "summary": {
+                "total_count": int(summary.get("total_count") or 0),
+                "success_count": int(summary.get("success_count") or 0),
+                "submitted_count": int(summary.get("submitted_count") or 0),
+                "failed_count": int(summary.get("failed_count") or 0),
+                "module_count": int(summary.get("module_count") or 0),
+                "latest_at": to_plain(summary.get("latest_at")),
+            },
+            "module_options": [
+                {
+                    "value": row["module_key"],
+                    "label": row["module_name"],
+                    "item_count": int(row["item_count"] or 0),
+                }
+                for row in module_rows
+            ],
+            "status_options": [
+                {"value": "success", "label": "鎴愬姛"},
+                {"value": "submitted", "label": "已提交"},
+                {"value": "failed", "label": "澶辫触"},
+            ],
+        }
+    )
+
+
+@router.get("/bi-dashboard/api/procurement-arrivals")
+async def list_procurement_arrivals(
+    status: str | None = Query(None),
+    document_status: str | None = Query(None),
+    warehouse_code: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(80, ge=1, le=300),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    conditions = ["1 = 1"]
+    params: Dict[str, Any] = {}
+    if status:
+        conditions.append("status = :status")
+        params["status"] = str(status).strip()
+    if document_status:
+        conditions.append("document_status = :document_status")
+        params["document_status"] = str(document_status).strip()
+    if warehouse_code:
+        conditions.append("warehouse_code = :warehouse_code")
+        params["warehouse_code"] = str(warehouse_code).strip()
+    if keyword:
+        conditions.append(
+            "(arrival_no LIKE :keyword OR purchase_order_no LIKE :keyword OR supplier_name LIKE :keyword OR sku_code LIKE :keyword OR sku_name LIKE :keyword)"
+        )
+        params["keyword"] = f"%{str(keyword).strip()}%"
+    where_sql = " AND ".join(conditions)
+
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT
+                    id, arrival_no, purchase_order_no, supplier_name, warehouse_code, warehouse_name,
+                    channel_code, channel_name, sku_code, sku_name, expected_qty, arrived_qty,
+                    qualified_qty, exception_qty, unit, arrival_date, status, document_status,
+                    exception_reason, remark, source_system, created_by, updated_by,
+                    sort_order, created_at, updated_at
+                FROM bi_procurement_arrival
+                WHERE {where_sql}
+                ORDER BY arrival_date DESC, sort_order, id DESC
+                LIMIT :limit
+                """
+            ),
+            {**params, "limit": int(limit)},
+        ).mappings().all()
+        warehouse_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT warehouse_code, warehouse_name_clean
+                FROM bi_inventory_warehouse_map
+                WHERE is_enabled = 1
+                ORDER BY warehouse_name_clean, warehouse_code
+                """
+            )
+        ).mappings().all()
+        channel_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT channel_code, channel_name
+                FROM bi_channel_shop_master
+                WHERE is_active = 1
+                ORDER BY channel_name, channel_code
+                """
+            )
+        ).mappings().all()
+        supplier_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT supplier_name
+                FROM bi_procurement_arrival
+                WHERE supplier_name <> ''
+                ORDER BY supplier_name
+                """
+            )
+        ).fetchall()
+
+    items = [serialize_procurement_arrival_row(row) for row in rows]
+    summary = {
+        "total_count": len(items),
+        "draft_count": sum(1 for item in items if item["status"] == "draft"),
+        "ready_count": sum(1 for item in items if item["status"] == "ready"),
+        "completed_count": sum(1 for item in items if item["status"] == "completed"),
+        "exception_count": sum(1 for item in items if item["status"] == "exception"),
+        "pending_document_count": sum(1 for item in items if item["document_status"] in {"pending", "failed"}),
+        "total_expected_qty": round(sum(float(item["expected_qty"]) for item in items), 2),
+        "total_arrived_qty": round(sum(float(item["arrived_qty"]) for item in items), 2),
+        "total_qualified_qty": round(sum(float(item["qualified_qty"]) for item in items), 2),
+        "latest_arrival_date": max((item["arrival_date"] for item in items if item["arrival_date"]), default=None),
+    }
+
+    return JSONResponse(
+        {
+            "items": items,
+            "summary": summary,
+            "status_options": procurement_arrival_status_options(),
+            "document_status_options": procurement_document_status_options(),
+            "warehouse_options": [
+                {
+                    "value": str(row["warehouse_code"] or ""),
+                    "label": str(row["warehouse_name_clean"] or row["warehouse_code"] or ""),
+                }
+                for row in warehouse_rows
+                if str(row["warehouse_code"] or "").strip()
+            ],
+            "channel_options": [
+                {
+                    "value": str(row["channel_code"] or ""),
+                    "label": str(row["channel_name"] or row["channel_code"] or ""),
+                }
+                for row in channel_rows
+                if str(row["channel_code"] or "").strip()
+            ],
+            "supplier_options": [
+                {"value": str(row[0] or ""), "label": str(row[0] or "")}
+                for row in supplier_rows
+                if str(row[0] or "").strip()
+            ],
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/procurement-arrivals")
+async def save_procurement_arrival(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    record = normalize_procurement_arrival_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        duplicate = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_procurement_arrival
+                WHERE arrival_no = :arrival_no AND id <> :id
+                LIMIT 1
+                """
+            ),
+            {"arrival_no": record["arrival_no"], "id": record["id"]},
+        ).fetchone()
+        if duplicate:
+            raise HTTPException(status_code=400, detail=f"鍒拌揣鍗曞彿宸插瓨鍦細{record['arrival_no']}")
+
+        payload_with_user = {**record, "updated_by": username}
+        created = False
+        saved_id = int(record["id"] or 0)
+        if record["id"] > 0:
+            result = conn.execute(
+                text(
+                    """
+                    UPDATE bi_procurement_arrival
+                    SET
+                        arrival_no = :arrival_no,
+                        purchase_order_no = :purchase_order_no,
+                        supplier_name = :supplier_name,
+                        warehouse_code = :warehouse_code,
+                        warehouse_name = :warehouse_name,
+                        channel_code = :channel_code,
+                        channel_name = :channel_name,
+                        sku_code = :sku_code,
+                        sku_name = :sku_name,
+                        expected_qty = :expected_qty,
+                        arrived_qty = :arrived_qty,
+                        qualified_qty = :qualified_qty,
+                        exception_qty = :exception_qty,
+                        unit = :unit,
+                        arrival_date = :arrival_date,
+                        status = :status,
+                        document_status = :document_status,
+                        exception_reason = :exception_reason,
+                        remark = :remark,
+                        source_system = :source_system,
+                        updated_by = :updated_by,
+                        sort_order = :sort_order
+                    WHERE id = :id
+                    """
+                ),
+                payload_with_user,
+            )
+            if not result.rowcount:
+                saved_id = 0
+
+        if saved_id <= 0:
+            created = True
+            payload_with_user["created_by"] = username
+            insert_result = conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_procurement_arrival(
+                        arrival_no, purchase_order_no, supplier_name, warehouse_code, warehouse_name,
+                        channel_code, channel_name, sku_code, sku_name, expected_qty, arrived_qty,
+                        qualified_qty, exception_qty, unit, arrival_date, status, document_status,
+                        exception_reason, remark, source_system, created_by, updated_by, sort_order
+                    ) VALUES (
+                        :arrival_no, :purchase_order_no, :supplier_name, :warehouse_code, :warehouse_name,
+                        :channel_code, :channel_name, :sku_code, :sku_name, :expected_qty, :arrived_qty,
+                        :qualified_qty, :exception_qty, :unit, :arrival_date, :status, :document_status,
+                        :exception_reason, :remark, :source_system, :created_by, :updated_by, :sort_order
+                    )
+                    """
+                ),
+                payload_with_user,
+            )
+            saved_id = int(insert_result.lastrowid or 0)
+
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, arrival_no, purchase_order_no, supplier_name, warehouse_code, warehouse_name,
+                    channel_code, channel_name, sku_code, sku_name, expected_qty, arrived_qty,
+                    qualified_qty, exception_qty, unit, arrival_date, status, document_status,
+                    exception_reason, remark, source_system, created_by, updated_by,
+                    sort_order, created_at, updated_at
+                FROM bi_procurement_arrival
+                WHERE id = :id
+                """
+            ),
+            {"id": saved_id},
+        ).mappings().first()
+        item = serialize_procurement_arrival_row(saved_row)
+        flow_sync = sync_procurement_inventory_flow_tasks(conn, item, username)
+
+    record_dashboard_audit(
+        module_key="procurement",
+        module_name="采购到货",
+        action_key="arrival.upsert",
+        action_name="保存采购到货单",
+        target_type="procurement_arrival",
+        target_id=item["arrival_no"],
+        target_name=f"{item['purchase_order_no']} / {item['sku_name']}",
+        detail_summary=f"{item['status']} / {item['document_status']} / 鍒拌揣 {item['arrived_qty']} {item['unit']}",
+        detail={
+            "arrival_no": item["arrival_no"],
+            "purchase_order_no": item["purchase_order_no"],
+            "supplier_name": item["supplier_name"],
+            "warehouse_name": item["warehouse_name"],
+            "sku_code": item["sku_code"],
+            "sku_name": item["sku_name"],
+            "status": item["status"],
+            "document_status": item["document_status"],
+            "expected_qty": item["expected_qty"],
+            "arrived_qty": item["arrived_qty"],
+            "qualified_qty": item["qualified_qty"],
+            "exception_qty": item["exception_qty"],
+            "inventory_flow_sync": flow_sync,
+        },
+        triggered_by=username,
+        source_path=PROCUREMENT_ARRIVAL_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    if any(int(flow_sync[key]) for key in ("created_count", "updated_count", "cancelled_count")):
+        record_dashboard_audit(
+            module_key="inventory_flow",
+            module_name="库存流转",
+            action_key="task.auto_sync",
+            action_name="采购到货触发库存流转任务同步",
+            target_type="inventory_flow_task",
+            target_id=item["arrival_no"],
+            target_name=item["sku_name"],
+            detail_summary=(
+                f"新增 / 更新 / 取消 {flow_sync['created_count']} / {flow_sync['updated_count']} / "
+                f"{flow_sync['cancelled_count']}"
+            ),
+            detail={
+                "arrival_no": item["arrival_no"],
+                "task_nos": flow_sync["task_nos"],
+                "created_count": flow_sync["created_count"],
+                "updated_count": flow_sync["updated_count"],
+                "cancelled_count": flow_sync["cancelled_count"],
+            },
+            triggered_by=username,
+            source_path=PROCUREMENT_ARRIVAL_API_PATH,
+            source_method="POST",
+            affected_count=int(flow_sync["created_count"] + flow_sync["updated_count"]),
+        )
+    return JSONResponse({"saved": True, "created": created, "item": item, "inventory_flow_sync": flow_sync})
+
+
+@router.get("/bi-dashboard/api/inventory-flows")
+async def list_inventory_flows(
+    task_status: str | None = Query(None),
+    action_type: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(120, ge=1, le=400),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    conditions = ["1 = 1"]
+    params: Dict[str, Any] = {}
+    if task_status:
+        conditions.append("task_status = :task_status")
+        params["task_status"] = str(task_status).strip()
+    if action_type:
+        conditions.append("action_type = :action_type")
+        params["action_type"] = str(action_type).strip()
+    if keyword:
+        conditions.append(
+            "(task_no LIKE :keyword OR source_record_no LIKE :keyword OR sku_code LIKE :keyword OR sku_name LIKE :keyword OR note LIKE :keyword)"
+        )
+        params["keyword"] = f"%{str(keyword).strip()}%"
+    where_sql = " AND ".join(conditions)
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        rule_rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id, rule_name, trigger_source, trigger_condition, action_type,
+                    source_status_id, source_status_name, target_status_id, target_status_name,
+                    source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                    priority, auto_create_task, is_enabled, sort_order, note, created_by, updated_by,
+                    created_at, updated_at
+                FROM bi_inventory_flow_rule
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        task_rows = conn.execute(
+            text(
+                f"""
+                SELECT
+                    id, task_no, source_record_type, source_record_id, source_record_no, trigger_source,
+                    action_type, task_status, priority, sku_code, sku_name, request_qty, confirmed_qty,
+                    source_status_id, source_status_name, target_status_id, target_status_name,
+                    source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                    planned_execute_date, reason_text, note, created_by, updated_by, sort_order, created_at, updated_at
+                FROM bi_inventory_flow_task
+                WHERE {where_sql}
+                ORDER BY FIELD(task_status, 'pending', 'blocked', 'draft', 'completed', 'cancelled'),
+                         planned_execute_date DESC, updated_at DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            {**params, "limit": int(limit)},
+        ).mappings().all()
+        status_rows = conn.execute(
+            text(
+                """
+                SELECT stock_status_id, stock_status_name
+                FROM bi_inventory_status_map
+                WHERE is_enabled = 1
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+        warehouse_rows = conn.execute(
+            text(
+                """
+                SELECT warehouse_code, warehouse_name_clean
+                FROM bi_inventory_warehouse_map
+                WHERE is_enabled = 1
+                ORDER BY sort_order, id
+                """
+            )
+        ).mappings().all()
+    rules = [serialize_inventory_flow_rule_row(row) for row in rule_rows]
+    tasks = [serialize_inventory_flow_task_row(row) for row in task_rows]
+    summary = {
+        "task_count": len(tasks),
+        "pending_count": sum(1 for item in tasks if item["task_status"] == "pending"),
+        "blocked_count": sum(1 for item in tasks if item["task_status"] == "blocked"),
+        "completed_count": sum(1 for item in tasks if item["task_status"] == "completed"),
+        "enabled_rule_count": sum(1 for item in rules if item["is_enabled"]),
+        "auto_rule_count": sum(1 for item in rules if item["is_enabled"] and item["auto_create_task"]),
+        "transfer_count": sum(1 for item in tasks if item["action_type"] == "warehouse_transfer"),
+    }
+    return JSONResponse(
+        {
+            "rules": rules,
+            "tasks": tasks,
+            "summary": summary,
+            "action_options": inventory_flow_action_options(),
+            "task_status_options": inventory_flow_task_status_options(),
+            "priority_options": inventory_flow_priority_options(),
+            "trigger_source_options": inventory_flow_trigger_options(),
+            "status_options": [
+                {"value": str(row["stock_status_id"] or ""), "label": str(row["stock_status_name"] or "")}
+                for row in status_rows
+                if str(row["stock_status_id"] or "").strip()
+            ],
+            "warehouse_options": [
+                {"value": str(row["warehouse_code"] or ""), "label": str(row["warehouse_name_clean"] or "")}
+                for row in warehouse_rows
+                if str(row["warehouse_code"] or "").strip()
+            ],
+        }
+    )
+
+
+@router.put("/bi-dashboard/api/inventory-flows/rules")
+async def save_inventory_flow_rules(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    rules = normalize_inventory_flow_rule_payload(payload.get("rules"))
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        status_lookup, warehouse_lookup = resolve_inventory_master_lookups(conn)
+        existing_ids = {int(row[0]) for row in conn.execute(text("SELECT id FROM bi_inventory_flow_rule")).fetchall()}
+        submitted_ids = {item["id"] for item in rules if item["id"] > 0}
+        for item in rules:
+            record = {
+                **item,
+                "source_status_name": status_lookup.get(item["source_status_id"], ""),
+                "target_status_name": status_lookup.get(item["target_status_id"], ""),
+                "source_warehouse_name": warehouse_lookup.get(item["source_warehouse_code"], ""),
+                "target_warehouse_name": warehouse_lookup.get(item["target_warehouse_code"], ""),
+                "updated_by": username,
+            }
+            if item["id"] > 0:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE bi_inventory_flow_rule
+                        SET
+                            rule_name = :rule_name,
+                            trigger_source = :trigger_source,
+                            trigger_condition = :trigger_condition,
+                            action_type = :action_type,
+                            source_status_id = :source_status_id,
+                            source_status_name = :source_status_name,
+                            target_status_id = :target_status_id,
+                            target_status_name = :target_status_name,
+                            source_warehouse_code = :source_warehouse_code,
+                            source_warehouse_name = :source_warehouse_name,
+                            target_warehouse_code = :target_warehouse_code,
+                            target_warehouse_name = :target_warehouse_name,
+                            priority = :priority,
+                            auto_create_task = :auto_create_task,
+                            is_enabled = :is_enabled,
+                            sort_order = :sort_order,
+                            note = :note,
+                            updated_by = :updated_by
+                        WHERE id = :id
+                        """
+                    ),
+                    record,
+                )
+                if result.rowcount:
+                    continue
+            record["created_by"] = username
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_inventory_flow_rule(
+                        rule_name, trigger_source, trigger_condition, action_type,
+                        source_status_id, source_status_name, target_status_id, target_status_name,
+                        source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                        priority, auto_create_task, is_enabled, sort_order, note, created_by, updated_by
+                    ) VALUES (
+                        :rule_name, :trigger_source, :trigger_condition, :action_type,
+                        :source_status_id, :source_status_name, :target_status_id, :target_status_name,
+                        :source_warehouse_code, :source_warehouse_name, :target_warehouse_code, :target_warehouse_name,
+                        :priority, :auto_create_task, :is_enabled, :sort_order, :note, :created_by, :updated_by
+                    )
+                    """
+                ),
+                record,
+            )
+        disabled_ids = sorted(existing_ids - submitted_ids)
+        if disabled_ids:
+            placeholders = ", ".join(f":rid_{idx}" for idx, _ in enumerate(disabled_ids))
+            params_disabled = {f"rid_{idx}": row_id for idx, row_id in enumerate(disabled_ids)}
+            params_disabled["updated_by"] = username
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE bi_inventory_flow_rule
+                    SET is_enabled = 0, updated_by = :updated_by
+                    WHERE id IN ({placeholders})
+                    """
+                ),
+                params_disabled,
+            )
+    record_dashboard_audit(
+        module_key="inventory_flow",
+        module_name="库存流转",
+        action_key="rules.save",
+        action_name="保存库存流转规则",
+        target_type="inventory_flow_rule",
+        target_name="库存状态流转与调拨规则",
+        detail_summary=f"保存 {len(rules)} 条规则",
+        detail={
+            "rule_count": len(rules),
+            "rule_names": audit_preview_values(rules, "rule_name"),
+            "enabled_rule_count": sum(1 for item in rules if item["is_enabled"]),
+            "auto_rule_count": sum(1 for item in rules if item["auto_create_task"]),
+        },
+        triggered_by=username,
+        source_path=INVENTORY_FLOW_RULE_API_PATH,
+        source_method="PUT",
+        affected_count=len(rules),
+    )
+    return JSONResponse({"saved": True, "rule_count": len(rules)})
+
+
+@router.post("/bi-dashboard/api/inventory-flows/tasks")
+async def save_inventory_flow_task(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    task = normalize_inventory_flow_task_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        duplicate = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_inventory_flow_task
+                WHERE task_no = :task_no AND id <> :id
+                LIMIT 1
+                """
+            ),
+            {"task_no": task["task_no"], "id": task["id"]},
+        ).fetchone()
+        if duplicate:
+            raise HTTPException(status_code=400, detail=f"库存流转任务号已存在：{task['task_no']}")
+        status_lookup, warehouse_lookup = resolve_inventory_master_lookups(conn)
+        record = {
+            **task,
+            "source_status_name": status_lookup.get(task["source_status_id"], ""),
+            "target_status_name": status_lookup.get(task["target_status_id"], ""),
+            "source_warehouse_name": warehouse_lookup.get(task["source_warehouse_code"], ""),
+            "target_warehouse_name": warehouse_lookup.get(task["target_warehouse_code"], ""),
+            "updated_by": username,
+        }
+        saved_id = int(task["id"] or 0)
+        created = False
+        if saved_id > 0:
+            result = conn.execute(
+                text(
+                    """
+                    UPDATE bi_inventory_flow_task
+                    SET
+                        task_no = :task_no,
+                        source_record_type = :source_record_type,
+                        source_record_id = :source_record_id,
+                        source_record_no = :source_record_no,
+                        trigger_source = :trigger_source,
+                        action_type = :action_type,
+                        task_status = :task_status,
+                        priority = :priority,
+                        sku_code = :sku_code,
+                        sku_name = :sku_name,
+                        request_qty = :request_qty,
+                        confirmed_qty = :confirmed_qty,
+                        source_status_id = :source_status_id,
+                        source_status_name = :source_status_name,
+                        target_status_id = :target_status_id,
+                        target_status_name = :target_status_name,
+                        source_warehouse_code = :source_warehouse_code,
+                        source_warehouse_name = :source_warehouse_name,
+                        target_warehouse_code = :target_warehouse_code,
+                        target_warehouse_name = :target_warehouse_name,
+                        planned_execute_date = :planned_execute_date,
+                        reason_text = :reason_text,
+                        note = :note,
+                        updated_by = :updated_by
+                    WHERE id = :id
+                    """
+                ),
+                record,
+            )
+            if not result.rowcount:
+                saved_id = 0
+        if saved_id <= 0:
+            created = True
+            record["created_by"] = username
+            insert_result = conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_inventory_flow_task(
+                        task_no, source_record_type, source_record_id, source_record_no, trigger_source,
+                        action_type, task_status, priority, sku_code, sku_name, request_qty, confirmed_qty,
+                        source_status_id, source_status_name, target_status_id, target_status_name,
+                        source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                        planned_execute_date, reason_text, note, created_by, updated_by, sort_order
+                    ) VALUES (
+                        :task_no, :source_record_type, :source_record_id, :source_record_no, :trigger_source,
+                        :action_type, :task_status, :priority, :sku_code, :sku_name, :request_qty, :confirmed_qty,
+                        :source_status_id, :source_status_name, :target_status_id, :target_status_name,
+                        :source_warehouse_code, :source_warehouse_name, :target_warehouse_code, :target_warehouse_name,
+                        :planned_execute_date, :reason_text, :note, :created_by, :updated_by, 100
+                    )
+                    """
+                ),
+                record,
+            )
+            saved_id = int(insert_result.lastrowid or 0)
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, task_no, source_record_type, source_record_id, source_record_no, trigger_source,
+                    action_type, task_status, priority, sku_code, sku_name, request_qty, confirmed_qty,
+                    source_status_id, source_status_name, target_status_id, target_status_name,
+                    source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                    planned_execute_date, reason_text, note, created_by, updated_by, sort_order, created_at, updated_at
+                FROM bi_inventory_flow_task
+                WHERE id = :id
+                """
+            ),
+            {"id": saved_id},
+        ).mappings().first()
+    item = serialize_inventory_flow_task_row(saved_row)
+    record_dashboard_audit(
+        module_key="inventory_flow",
+        module_name="鎼存挸鐡ㄥù浣芥祮",
+        action_key="task.upsert",
+        action_name="娣囨繂鐡ㄦ惔鎾崇摠濞翠浇娴嗘禒璇插",
+        target_type="inventory_flow_task",
+        target_id=item["task_no"],
+        target_name=item["sku_name"],
+        detail_summary=f"{item['task_status']} / {item['action_type']} / {item['request_qty']}",
+        detail=item,
+        triggered_by=username,
+        source_path=INVENTORY_FLOW_TASK_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"saved": True, "created": created, "item": item})
 
 
 @router.get("/bi-dashboard/api/return-unpack-attendance")
@@ -3735,12 +7874,12 @@ async def list_return_unpack_attendance(
 @router.post("/bi-dashboard/api/return-unpack-attendance")
 async def upsert_return_unpack_attendance(
     payload: Dict[str, Any] = Body(default={}),
-    _auth: str = Depends(require_auth),
+    username: str = Depends(require_auth),
 ) -> JSONResponse:
     ensure_schema()
     biz_date = parse_date_or_none(str(payload.get("biz_date") or ""))
     if biz_date is None:
-        raise HTTPException(status_code=400, detail="日期不能为空")
+        raise HTTPException(status_code=400, detail="鏃ユ湡涓嶈兘涓虹┖")
     attendance_count = parse_decimal_or_raise(payload.get("attendance_count"), "退货拆包出勤人数")
     current_engine = get_engine()
     try:
@@ -3757,6 +7896,25 @@ async def upsert_return_unpack_attendance(
         "total_sales_qty": 0.0,
         "return_unpack_efficiency": 0.0,
     }
+    record_dashboard_audit(
+        module_key="attendance",
+        module_name="出勤记录",
+        action_key="return_unpack.upsert",
+        action_name="保存退货拆包出勤",
+        target_type="return_unpack_attendance",
+        target_id=biz_date.isoformat(),
+        target_name=f"退货拆包出勤 {biz_date.isoformat()}",
+        detail_summary=f"保存退货拆包出勤 {float(saved_count):.2f} 人",
+        detail={
+            "biz_date": biz_date,
+            "attendance_count": float(saved_count),
+            "summary": summary,
+        },
+        triggered_by=username,
+        source_path="/financial/bi-dashboard/api/return-unpack-attendance",
+        source_method="POST",
+        affected_count=1,
+    )
     return JSONResponse(
         {
             "saved": True,
@@ -3807,10 +7965,10 @@ async def bi_filter_options(
 ) -> JSONResponse:
     ensure_schema()
     if dataset not in DATASETS:
-        raise HTTPException(status_code=400, detail=f"不支持的数据集：{dataset}")
+        raise HTTPException(status_code=400, detail=f"涓嶆敮鎸佺殑鏁版嵁闆嗭細{dataset}")
     fields = DATASETS[dataset]["fields"]
     if field not in fields or not fields[field].get("filterable", False):
-        raise HTTPException(status_code=400, detail=f"字段不可筛选：{field}")
+        raise HTTPException(status_code=400, detail=f"瀛楁涓嶅彲绛涢€夛細{field}")
     selected_date = parse_date_or_none(biz_date)
     range_start = parse_date_or_none(start_date)
     range_end = parse_date_or_none(end_date)
@@ -3883,7 +8041,7 @@ async def create_view(payload: Dict[str, Any] = Body(default={}), _auth: str = D
     description = str(payload.get("description") or "").strip()
     global_filters = normalize_global_filters(payload.get("global_filters"))
     if not name:
-        raise HTTPException(status_code=400, detail="看板名称不能为空")
+        raise HTTPException(status_code=400, detail="鐪嬫澘鍚嶇О涓嶈兘涓虹┖")
     current_engine = get_engine()
     with current_engine.begin() as conn:
         result = conn.execute(
@@ -3917,7 +8075,7 @@ async def update_view(view_id: int, payload: Dict[str, Any] = Body(default={}), 
     description = str(payload.get("description") or "").strip()
     global_filters = normalize_global_filters(payload.get("global_filters"))
     if not name:
-        raise HTTPException(status_code=400, detail="看板名称不能为空")
+        raise HTTPException(status_code=400, detail="鐪嬫澘鍚嶇О涓嶈兘涓虹┖")
     current_engine = get_engine()
     with current_engine.begin() as conn:
         load_view(conn, view_id)
@@ -4011,9 +8169,9 @@ async def create_layout_template(
     description = str(payload.get("description") or "").strip()
     view_id = int(payload.get("view_id") or 0)
     if not name:
-        raise HTTPException(status_code=400, detail="模板名称不能为空")
+        raise HTTPException(status_code=400, detail="妯℃澘鍚嶇О涓嶈兘涓虹┖")
     if view_id <= 0:
-        raise HTTPException(status_code=400, detail="缺少有效的看板 ID")
+        raise HTTPException(status_code=400, detail="缂哄皯鏈夋晥鐨勭湅鏉?ID")
     current_engine = get_engine()
     with current_engine.begin() as conn:
         detail = view_detail(conn, view_id)
@@ -4043,14 +8201,14 @@ async def apply_layout_template(
     ensure_schema()
     view_id = int(payload.get("view_id") or 0)
     if view_id <= 0:
-        raise HTTPException(status_code=400, detail="缺少有效的看板 ID")
+        raise HTTPException(status_code=400, detail="缂哄皯鏈夋晥鐨勭湅鏉?ID")
     current_engine = get_engine()
     with current_engine.begin() as conn:
         template = load_layout_template(conn, template_id)
         load_view(conn, view_id)
         template_widgets = template["layout_payload"]["widgets"]
         if not template_widgets:
-            raise HTTPException(status_code=400, detail="该布局模板没有可套用的卡片布局")
+            raise HTTPException(status_code=400, detail="璇ュ竷灞€妯℃澘娌℃湁鍙鐢ㄧ殑鍗＄墖甯冨眬")
         widget_rows = conn.execute(
             text(
                 """
@@ -4112,13 +8270,13 @@ async def create_widget(
     _auth: str = Depends(require_auth),
 ) -> JSONResponse:
     ensure_schema()
-    title = str(payload.get("title") or "新建组件").strip()
+    title = str(payload.get("title") or "鏂板缓缁勪欢").strip()
     widget_type = str(payload.get("widget_type") or "bar")
     dataset = str(payload.get("dataset") or "sales_cleaning")
     if widget_type not in WIDGET_TYPES:
         raise HTTPException(status_code=400, detail=f"不支持的图表类型：{widget_type}")
     if dataset not in DATASETS:
-        raise HTTPException(status_code=400, detail=f"不支持的数据集：{dataset}")
+        raise HTTPException(status_code=400, detail=f"涓嶆敮鎸佺殑鏁版嵁闆嗭細{dataset}")
     config = normalize_widget_config(widget_type, default_widget_config(widget_type, dataset))
     current_engine = get_engine()
     with current_engine.begin() as conn:
@@ -4186,7 +8344,7 @@ async def duplicate_widget(widget_id: int, _auth: str = Depends(require_auth)) -
             ),
             {
                 "view_id": widget["view_id"],
-                "title": f"{widget['title']} 副本",
+                "title": f"{widget['title']} 鍓湰",
                 "widget_type": widget["widget_type"],
                 "dataset": widget["dataset"],
                 "config_json": json_dumps(widget["config"]),
@@ -4256,7 +8414,7 @@ async def update_widget(
         if widget_type not in WIDGET_TYPES:
             raise HTTPException(status_code=400, detail=f"不支持的图表类型：{widget_type}")
         if dataset not in DATASETS:
-            raise HTTPException(status_code=400, detail=f"不支持的数据集：{dataset}")
+            raise HTTPException(status_code=400, detail=f"涓嶆敮鎸佺殑鏁版嵁闆嗭細{dataset}")
         config_raw = payload.get("config", widget["config"])
         if isinstance(config_raw, dict):
             config_raw = dict(config_raw)
@@ -4389,7 +8547,7 @@ async def widget_ai_analysis(
         widget = load_widget(conn, widget_id)
         view = load_view(conn, widget["view_id"])
         payload = query_widget_data(conn, widget, selected_date, view["global_filters"])
-        analysis_text = build_ai_text(widget, payload)
+        analysis_text = generate_widget_ai_text(widget, payload)
         conn.execute(
             text("UPDATE bi_dashboard_widget SET analysis_text = :analysis_text WHERE id = :id"),
             {"id": widget_id, "analysis_text": analysis_text},

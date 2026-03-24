@@ -89,20 +89,25 @@ if (-not (Test-PortListening -Port $mysqlPort)) {
 }
 Write-Host "MySQL ready: 127.0.0.1:$mysqlPort"
 
-Write-Host "[2/3] Starting local dashboard..."
+Write-Host "[2/4] Starting data analysis agent..."
+& (Join-Path $scriptDir "start_data_agent.ps1")
+
+Write-Host "[3/4] Starting local dashboard..."
 & (Join-Path $scriptDir "start_local_dashboard.ps1") -NoOpenBrowser:$NoOpenBrowser
 
 if (-not (Wait-HttpHealthy -Url $dashboardHealthUrl -Attempts 15 -DelayMs 500)) {
   throw "Dashboard health check failed: $dashboardHealthUrl"
 }
 
-Write-Host "[3/3] Starting remote access..."
+Write-Host "[4/4] Starting remote access..."
 & (Join-Path $scriptDir "start_remote_access.ps1")
 
 $publicUrl = Get-CurrentTunnelUrl -LogFile $remoteLog
 Write-Host ""
 Write-Host "Startup complete:"
 Write-Host "Local URL: http://127.0.0.1:$dashboardPort/financial/bi-dashboard"
+Write-Host "Data Agent API: http://127.0.0.1:18080"
+Write-Host "Data Agent UI: http://127.0.0.1:18501"
 if ($publicUrl) {
   Write-Host "Public URL: $publicUrl/financial/bi-dashboard"
 }

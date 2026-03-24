@@ -3,19 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>北极星 · 数据智能体</title>
+  <title>北极星 · 数据分析Agent</title>
+  __BI_SHELL_HEAD__
   <style>
     :root {
-      --bg: #f4f6fb;
-      --panel: rgba(255, 255, 255, 0.94);
-      --panel-strong: rgba(255, 255, 255, 0.98);
+      --bg: #f5f7fb;
+      --panel: rgba(255, 255, 255, 0.96);
       --line: rgba(15, 23, 42, 0.08);
+      --line-strong: rgba(15, 23, 42, 0.12);
       --text: #111827;
       --sub: #667085;
       --blue: #1677ff;
       --green: #12b76a;
       --orange: #f79009;
-      --shadow: 0 22px 40px rgba(15, 23, 42, 0.08);
+      --red: #d92d20;
+      --shadow: 0 20px 42px rgba(15, 23, 42, 0.08);
       --radius-xl: 28px;
       --radius-lg: 22px;
       --radius-md: 18px;
@@ -29,7 +31,7 @@
       color: var(--text);
       background:
         radial-gradient(circle at 0% 0%, rgba(22, 119, 255, 0.1), transparent 28%),
-        radial-gradient(circle at 100% 10%, rgba(18, 183, 106, 0.08), transparent 24%),
+        radial-gradient(circle at 100% 12%, rgba(18, 183, 106, 0.08), transparent 22%),
         linear-gradient(180deg, #f9fbff 0%, var(--bg) 100%);
     }
     button, input, select, textarea { font: inherit; }
@@ -39,6 +41,16 @@
       transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
     }
     button:hover { transform: translateY(-1px); }
+    textarea, input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: rgba(248, 250, 252, 0.96);
+      color: var(--text);
+      outline: none;
+      resize: vertical;
+    }
     .shell {
       min-height: 100vh;
       padding: 22px;
@@ -50,7 +62,7 @@
       background: var(--panel);
       backdrop-filter: blur(18px) saturate(160%);
       -webkit-backdrop-filter: blur(18px) saturate(160%);
-      border: 1px solid rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.76);
       box-shadow: var(--shadow);
     }
     .topbar {
@@ -67,16 +79,7 @@
       gap: 14px;
       min-width: 0;
     }
-    .brand-mark {
-      width: 52px;
-      height: 52px;
-      display: grid;
-      place-items: center;
-      flex: 0 0 auto;
-    }
-    .brand-copy {
-      min-width: 0;
-    }
+    .brand-mark { width: 52px; height: 52px; display: grid; place-items: center; flex: 0 0 auto; }
     .brand-copy h1 {
       margin: 0 0 6px;
       font-size: 26px;
@@ -86,7 +89,7 @@
       margin: 0;
       color: var(--sub);
       font-size: 13px;
-      line-height: 1.75;
+      line-height: 1.8;
     }
     .top-actions {
       display: flex;
@@ -102,14 +105,14 @@
       font-weight: 600;
     }
     .pill, .ghost {
-      color: var(--text);
-      background: rgba(255, 255, 255, 0.88);
+      background: rgba(255,255,255,.9);
       border: 1px solid var(--line);
+      color: var(--text);
     }
     .primary {
       color: #fff;
       background: linear-gradient(180deg, #2c77ff, #1558d8);
-      box-shadow: 0 12px 26px rgba(22, 119, 255, 0.22);
+      box-shadow: 0 12px 26px rgba(22, 119, 255, 0.2);
     }
     .user-chip {
       display: inline-flex;
@@ -120,20 +123,15 @@
       background: rgba(22, 119, 255, 0.08);
       color: #1757cc;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
     }
     .hero {
       border-radius: var(--radius-xl);
       padding: 24px;
       display: grid;
-      grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr);
+      grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
       gap: 18px;
       align-items: stretch;
-    }
-    .hero-copy {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
     }
     .kicker {
       display: inline-flex;
@@ -142,46 +140,28 @@
       color: var(--blue);
       font-size: 12px;
       font-weight: 700;
-      letter-spacing: 0.08em;
+      letter-spacing: .08em;
       text-transform: uppercase;
+      margin-bottom: 10px;
     }
     .hero-copy h2 {
       margin: 0;
       font-size: 34px;
-      line-height: 1.15;
+      line-height: 1.12;
       letter-spacing: -0.05em;
     }
     .hero-copy p {
-      margin: 0;
+      margin: 12px 0 0;
       color: var(--sub);
       font-size: 14px;
       line-height: 1.85;
       max-width: 760px;
     }
-    .status-card {
-      padding: 18px;
-      border-radius: 22px;
-      border: 1px solid rgba(15, 23, 42, 0.06);
-      background: linear-gradient(160deg, rgba(255,255,255,.98), rgba(247,250,255,.8));
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      justify-content: space-between;
-    }
-    .status-card strong {
-      font-size: 16px;
-      letter-spacing: -0.02em;
-    }
-    .status-card p {
-      margin: 0;
-      color: var(--sub);
-      font-size: 13px;
-      line-height: 1.8;
-    }
     .status-row {
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
+      margin-top: 16px;
     }
     .status-pill {
       display: inline-flex;
@@ -200,19 +180,30 @@
       height: 8px;
       border-radius: 999px;
       background: currentColor;
-      opacity: .9;
     }
-    .status-pill.online {
-      background: rgba(18, 183, 106, 0.12);
-      color: #067647;
+    .status-pill.online { background: rgba(18, 183, 106, 0.12); color: #067647; }
+    .status-pill.offline { background: rgba(247, 144, 9, 0.14); color: #b54708; }
+    .status-pill.missing { background: rgba(217, 45, 32, 0.12); color: #b42318; }
+    .status-card {
+      padding: 18px;
+      border-radius: 22px;
+      background: linear-gradient(160deg, rgba(255,255,255,.98), rgba(247,250,255,.82));
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      justify-content: space-between;
     }
-    .status-pill.offline {
-      background: rgba(247, 144, 9, 0.14);
-      color: #b54708;
+    .status-card strong {
+      display: block;
+      font-size: 16px;
+      letter-spacing: -0.03em;
     }
-    .status-pill.missing {
-      background: rgba(248, 113, 113, 0.14);
-      color: #b42318;
+    .status-card p {
+      margin: 0;
+      color: var(--sub);
+      font-size: 13px;
+      line-height: 1.8;
     }
     .metric-grid {
       display: grid;
@@ -222,9 +213,9 @@
     .metric-card {
       padding: 18px;
       border-radius: 18px;
-      background: var(--panel-strong);
+      background: rgba(255,255,255,.98);
       border: 1px solid rgba(15, 23, 42, 0.06);
-      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.04);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.04);
     }
     .metric-card span {
       display: block;
@@ -241,11 +232,11 @@
       margin: 8px 0 0;
       color: var(--sub);
       font-size: 12px;
-      line-height: 1.75;
+      line-height: 1.7;
     }
     .workspace {
       display: grid;
-      grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr);
+      grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
       gap: 16px;
       align-items: start;
     }
@@ -264,73 +255,172 @@
       font-size: 13px;
       line-height: 1.8;
     }
-    .capability-list, .meta-list {
+    .chat-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .chat-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .session-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.04);
+      font-size: 12px;
+      color: var(--sub);
+      font-family: "SFMono-Regular", Consolas, monospace;
+    }
+    .chat-board {
+      min-height: 460px;
+      max-height: 680px;
+      overflow: auto;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(15, 23, 42, 0.03);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .message {
+      max-width: 88%;
+      padding: 14px 16px;
+      border-radius: 18px;
+      line-height: 1.8;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+    .message.user {
+      align-self: flex-end;
+      background: linear-gradient(180deg, #2f7cff, #1558d8);
+      color: #fff;
+      box-shadow: 0 14px 24px rgba(22, 119, 255, 0.18);
+    }
+    .message.agent {
+      align-self: flex-start;
+      background: rgba(255,255,255,.98);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      color: var(--text);
+    }
+    .message.system {
+      align-self: stretch;
+      background: rgba(247, 144, 9, 0.1);
+      border: 1px solid rgba(247, 144, 9, 0.16);
+      color: #9a3412;
+    }
+    .chat-input {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .chat-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .hint {
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+    .report-tools {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .report-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 760px;
+      overflow: auto;
+    }
+    .report-card {
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.98);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.04);
+    }
+    .report-card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+    .report-card strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .report-card .meta {
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .report-card pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.8;
+      color: #344054;
+      max-height: 220px;
+      overflow: auto;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(22, 119, 255, 0.08);
+      color: #1757cc;
+      white-space: nowrap;
+    }
+    .tag.fallback {
+      background: rgba(247, 144, 9, 0.12);
+      color: #b54708;
+    }
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+    .list-stack {
       display: grid;
       gap: 10px;
     }
-    .capability-item, .meta-item {
+    .list-item {
       padding: 14px 16px;
       border-radius: 16px;
+      background: rgba(255,255,255,.84);
       border: 1px solid rgba(15, 23, 42, 0.06);
-      background: rgba(255,255,255,.82);
     }
-    .capability-item strong, .meta-item strong {
+    .list-item strong {
       display: block;
       margin-bottom: 6px;
       font-size: 14px;
     }
-    .capability-item span, .meta-item span {
-      display: block;
+    .list-item span, .list-item code {
       color: var(--sub);
       font-size: 12px;
       line-height: 1.75;
       word-break: break-all;
-    }
-    .meta-item code, .step-card code {
-      font-family: "SFMono-Regular", Consolas, monospace;
-      font-size: 12px;
-    }
-    .step-stack {
-      display: grid;
-      gap: 10px;
-    }
-    .step-card {
-      padding: 14px 16px;
-      border-radius: 16px;
-      background: rgba(15, 23, 42, 0.03);
-      border: 1px solid rgba(15, 23, 42, 0.06);
-    }
-    .step-card strong {
-      display: block;
-      margin-bottom: 8px;
-      font-size: 13px;
-    }
-    .step-card pre {
-      margin: 0;
-      white-space: pre-wrap;
-      color: #334155;
-      line-height: 1.8;
-    }
-    .actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 16px;
-    }
-    .notice {
-      padding: 14px 16px;
-      border-radius: 16px;
-      background: rgba(22, 119, 255, 0.08);
-      border: 1px solid rgba(22, 119, 255, 0.12);
-      color: #1d4ed8;
-      font-size: 13px;
-      line-height: 1.8;
-    }
-    .helper {
-      margin-top: 12px;
-      color: var(--sub);
-      font-size: 12px;
-      line-height: 1.8;
     }
     .toast {
       position: fixed;
@@ -347,28 +437,64 @@
       z-index: 20;
     }
     .toast.show { opacity: 1; transform: translateY(0); }
-    @media (max-width: 1240px) {
-      .hero,
-      .workspace { grid-template-columns: 1fr; }
+    @media (max-width: 1280px) {
+      .hero, .workspace, .bottom-grid { grid-template-columns: 1fr; }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
-    @media (max-width: 720px) {
+    @media (max-width: 760px) {
       .shell { padding: 12px; }
       .topbar { grid-template-columns: 1fr; }
       .top-actions { justify-content: flex-start; }
       .metric-grid { grid-template-columns: 1fr; }
       .hero-copy h2 { font-size: 28px; }
+      .message { max-width: 100%; }
     }
+  
+    /* Polaris SaaS Baseline Override */
+    :root{--bg:#f5f5f5;--panel:rgba(255,255,255,.96);--panel-strong:#fff;--panel-soft:rgba(250,250,250,.96);--line:rgba(15,23,42,.08);--line-strong:rgba(15,23,42,.12);--text:#111827;--ink:#111827;--sub:#6b7280;--muted:#9ca3af;--accent:#111827;--accent-soft:rgba(15,23,42,.05);--navy:#111827;--navy-soft:rgba(15,23,42,.05);--success:#16a34a;--success-soft:rgba(22,163,74,.10);--warning:#b45309;--warning-soft:rgba(180,83,9,.10);--danger:#dc2626;--danger-soft:rgba(220,38,38,.10);--cta:#dbeafe;--cta-border:rgba(147,197,253,.58);--cta-text:#1d4ed8;--shadow-lg:0 18px 40px rgba(15,23,42,.06);--shadow-md:0 10px 26px rgba(15,23,42,.05)}
+    body{background:linear-gradient(180deg,#fcfcfc 0%,var(--bg) 100%);color:var(--text);font-family:"Avenir Next","HarmonyOS Sans SC","PingFang SC","Microsoft YaHei",sans-serif}
+    body::before{background-image:linear-gradient(rgba(15,23,42,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(15,23,42,.02) 1px,transparent 1px);opacity:.24}
+    button,input,select,textarea{font:inherit}
+    input,select,textarea{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:16px;color:var(--text)}
+    input:focus,select:focus,textarea:focus{border-color:var(--line-strong);box-shadow:0 0 0 4px rgba(15,23,42,.05)}
+    .shell{padding:24px;gap:20px}.glass{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-md)}.topbar{padding:20px 22px;gap:16px}
+    .brand-mark,.hero-mark{background:rgba(15,23,42,.04);border:1px solid var(--line);color:var(--text);box-shadow:none}
+    .brand h1,.brand-copy h1,.hero h1,.hero-copy h2,.panel h2,.panel h3,.section-head h2,.section-head h3,.panel-head h2,.panel-head h3,.card-head h4,.panel-title h2{color:var(--text)}
+    .brand p,.brand-copy p,.hero p,.hero-copy p,.panel p,.helper,.hint,.row-meta,.notice,.field label,.panel-title p,.section-head p,.card span,.summary-card span,.metric-card span,.fact span,.status-card p,.hero-meta,.kicker,.meta{color:var(--sub)}
+    .top-actions,.toolbar-actions,.status-row,.module-strip,.links{gap:12px}
+    .pill,.ghost,.primary{padding:10px 16px;border-radius:999px;font-size:13px;font-weight:700;border:1px solid var(--line)}
+    .pill,.ghost{background:rgba(255,255,255,.92);color:var(--text)}
+    .primary{background:linear-gradient(180deg,#eff6ff,var(--cta));color:var(--cta-text);border-color:var(--cta-border);box-shadow:0 10px 24px rgba(147,197,253,.18)}
+    .user-chip,.session-chip,.module-chip,.tag{background:rgba(15,23,42,.05);border:1px solid rgba(15,23,42,.06);color:var(--text)}
+    .summary,.summary-grid,.metric-grid,.workspace,.layout,.stack,.toolbar-grid,.fact-grid{gap:16px}
+    .card,.summary-card,.metric-card,.panel,.status-card,.toolbar,.ledger,.detail,.info-card,.report-card,.fact,.hero-main,.hero-side{background:rgba(255,255,255,.98);border:1px solid var(--line);box-shadow:var(--shadow-md);border-radius:22px}
+    .card::after,.card::before,.summary-card::after,.summary-card::before,.metric-card::after,.metric-card::before{display:none}
+    .table-wrap,.chat-board,.empty,.body,.detail pre,.report-card pre{background:rgba(250,250,250,.96);border:1px solid rgba(15,23,42,.06)}
+    th,table thead th{background:rgba(250,250,250,.98);color:#4b5563}
+    td,th,table td,table th{border-bottom:1px solid rgba(15,23,42,.06)}
+    .audit-row:hover,.audit-row.is-active,table tbody tr:hover{background:rgba(15,23,42,.03)}
+    .message.user{background:rgba(15,23,42,.06);border:1px solid rgba(15,23,42,.08);color:var(--text);box-shadow:none}
+    .message.agent{background:rgba(255,255,255,.98);border:1px solid rgba(15,23,42,.08)}
+    .message.system{background:rgba(249,250,251,.98);border:1px solid rgba(15,23,42,.08);color:var(--sub)}
+    .status-pill{background:rgba(15,23,42,.05);color:var(--text)}
+    .status-pill.online{background:rgba(22,163,74,.08);color:#166534}.status-pill.offline{background:rgba(180,83,9,.10);color:#92400e}.status-pill.missing{background:rgba(220,38,38,.10);color:#991b1b}
+    .module-chip strong,.target-name,.action-name{color:var(--text)}.hero,.toolbar{padding:22px}.detail{top:20px}
+    .links a,.row-remove,.cell-remove{border-width:1px}
+
   </style>
 </head>
 <body>
+  __BI_TRANSITION_OVERLAY__
+  <div class="polaris-app-shell">
+    __BI_SIDE_NAV__
+    <main class="polaris-app-main">
   <div class="shell">
     <header class="topbar glass">
       <div class="brand">
         <div class="brand-mark">__BI_LOGO_BADGE_SMALL__</div>
         <div class="brand-copy">
-          <h1>北极星 · 数据智能体</h1>
-          <p>先以独立模块形式引入 DataAgent，统一入口、查看运行状态和启动指引，后续再决定是否做统一代理和嵌入式联动。</p>
+          <h1>北极星 · 数据分析Agent</h1>
+          <p>将 DataAgent 作为北极星内部长期运行的数据分析智能体，统一承接 AI 洞察、手工问答、周报/月报自动生成三类分析任务。</p>
         </div>
       </div>
       <div class="top-actions">
@@ -382,45 +508,71 @@
 
     <section class="hero glass">
       <div class="hero-copy">
-        <span class="kicker">Data Agent</span>
-        <h2>为北极星预留会话式数据分析智能体入口</h2>
-        <p id="integrationNote">正在读取当前集成状态...</p>
+        <span class="kicker">Data Analysis Agent</span>
+        <h2>统一承接北极星里的 AI 洞察、问答分析和经营报告</h2>
+        <p id="integrationNote">正在读取当前运行状态...</p>
         <div class="status-row" id="heroStatusRow"></div>
       </div>
       <aside class="status-card">
         <div>
-          <strong>当前阶段定位</strong>
-          <p>先把开源数据分析智能体代码纳入项目，并在前端提供独立入口。这样我们不需要马上改动主看板逻辑，也不会把未配置完成的智能体服务直接暴露给业务页面。</p>
+          <strong>当前接入方式</strong>
+          <p>本页已不再只是状态说明，而是北极星内部的数据分析Agent工作台。AI 洞察建议优先走 Agent 生成；周报/月报任务也会通过同一套能力自动落库。</p>
         </div>
-        <div class="actions">
-          <button class="ghost" id="openRepoBtn" type="button">查看开源仓库</button>
-          <button class="ghost" id="openLocalUiBtn" type="button">本机打开 Streamlit</button>
-          <button class="ghost" id="openLocalApiBtn" type="button">本机打开 API</button>
-        </div>
+        <div class="hint" id="envHint">正在检查模型与数据库环境...</div>
       </aside>
     </section>
 
     <section class="metric-grid" id="metricGrid"></section>
 
     <section class="workspace">
-      <div class="panel glass">
-        <h3>能力概览</h3>
-        <p>这一页先聚焦于“可达入口 + 可见状态 + 启动指引”。真正把 DataAgent 和北极星主数据源做深度打通，我们后面再按你确认的方式推进。</p>
-        <div class="capability-list" id="capabilityList"></div>
-        <div class="helper">当前默认按独立应用处理：FastAPI 后端负责会话式分析接口，Streamlit 负责交互式前端。</div>
-      </div>
-      <div class="panel glass">
-        <h3>接入状态</h3>
-        <p>这里展示仓库代码是否已纳入、核心文件是否存在，以及本机端口层面的服务探测结果。</p>
-        <div class="meta-list" id="metaList"></div>
-      </div>
+      <section class="panel glass">
+        <h3>问答工作台</h3>
+        <p>这里是嵌在北极星里的真正问答界面。你后续可以直接在这里问库存、销售、退货、翻新或经营趋势问题。</p>
+        <div class="chat-shell">
+          <div class="chat-meta">
+            <span class="session-chip" id="sessionChip"></span>
+            <div class="report-tools">
+              <button class="ghost" id="clearChatBtn" type="button">清空对话</button>
+              <button class="ghost" id="openLocalUiBtn" type="button">打开原生 Streamlit</button>
+            </div>
+          </div>
+          <div class="chat-board" id="chatBoard"></div>
+          <div class="chat-input">
+            <textarea id="chatInput" rows="4" placeholder="例如：请结合最近 7 天销售、退货和现存量，判断 C132Q0 辅学机是否存在缺货风险。"></textarea>
+            <div class="chat-actions">
+              <span class="hint">当前版本通过北极星后端代理 DataAgent，便于后续统一鉴权和记录分析上下文。</span>
+              <div class="report-tools">
+                <button class="ghost" id="sampleQuestionBtn" type="button">填入示例问题</button>
+                <button class="primary" id="sendChatBtn" type="button">发送问题</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel glass">
+        <h3>经营分析报告</h3>
+        <p>支持自动周报、自动月报，以及手工点击生成。报告会沉淀到数据库，后续也可以继续分享、归档或做钉钉推送。</p>
+        <div class="report-tools">
+          <button class="ghost" id="generateWeeklyBtn" type="button">生成周报</button>
+          <button class="ghost" id="generateMonthlyBtn" type="button">生成月报</button>
+          <button class="ghost" id="refreshReportsBtn" type="button">刷新列表</button>
+        </div>
+        <div class="report-list" id="reportList"></div>
+      </section>
     </section>
 
-    <section class="panel glass">
-      <h3>启动与联调</h3>
-      <p>DataAgent 目前还保持独立运行，不强行并进北极星主进程。这样接入风险更小，也更方便我们后续决定是代理转发，还是继续作为独立服务。</p>
-      <div class="step-stack" id="stepStack"></div>
-      <div class="notice" id="noticeCard">Streamlit 与 API 默认都走本机端口。如果你希望外网同事也能直接访问，下一步需要给 DataAgent 也做统一代理或反向转发。</div>
+    <section class="bottom-grid">
+      <section class="panel glass">
+        <h3>能力与运行状态</h3>
+        <p>这里显示当前代码、配置、Agent 服务和前端服务的接入情况，便于后续我们继续把它做成长期运行模块。</p>
+        <div class="list-stack" id="metaList"></div>
+      </section>
+      <section class="panel glass">
+        <h3>启动与接入说明</h3>
+        <p>目前建议跟随北极星整套服务一起启动。等这一块稳定后，我们再决定是否要把 DataAgent 做成独立 Windows 服务。</p>
+        <div class="list-stack" id="stepList"></div>
+      </section>
     </section>
   </div>
 
@@ -430,22 +582,40 @@
     const CURRENT_USER = __BI_CURRENT_USER_JSON__;
     const DASHBOARD_PATH = __BI_DASHBOARD_PATH_JSON__;
     const EDITOR_PATH = __BI_EDITOR_PATH_JSON__;
+    const navigate = (url) => window.polarisNavigate ? window.polarisNavigate(url) : (window.location.href = url);
     const LOGOUT_PATH = __BI_LOGOUT_PATH_JSON__;
     const STATUS_API_PATH = __BI_DATA_AGENT_STATUS_API_PATH_JSON__;
+    const CHAT_API_PATH = __BI_DATA_AGENT_CHAT_API_PATH_JSON__;
+    const REPORTS_API_PATH = __BI_DATA_AGENT_REPORTS_API_PATH_JSON__;
+    const REPORT_GENERATE_API_PATH = __BI_DATA_AGENT_REPORT_GENERATE_API_PATH_JSON__;
 
     let latestStatus = null;
+    let reportItems = [];
+    let sessionId = `polaris-agent-${Date.now()}`;
     let toastTimer = null;
 
     const el = {
       currentUserChip: document.getElementById("currentUserChip"),
-      heroStatusRow: document.getElementById("heroStatusRow"),
       integrationNote: document.getElementById("integrationNote"),
+      heroStatusRow: document.getElementById("heroStatusRow"),
+      envHint: document.getElementById("envHint"),
       metricGrid: document.getElementById("metricGrid"),
-      capabilityList: document.getElementById("capabilityList"),
+      sessionChip: document.getElementById("sessionChip"),
+      chatBoard: document.getElementById("chatBoard"),
+      chatInput: document.getElementById("chatInput"),
+      reportList: document.getElementById("reportList"),
       metaList: document.getElementById("metaList"),
-      stepStack: document.getElementById("stepStack"),
-      noticeCard: document.getElementById("noticeCard"),
+      stepList: document.getElementById("stepList"),
       toast: document.getElementById("toast"),
+    };
+
+    const state = {
+      chatMessages: [
+        {
+          role: "system",
+          content: "欢迎使用北极星的数据分析Agent。当前问答通过北极星后端代理到 DataAgent；如果模型环境未配置，页面会明确提示。"
+        }
+      ]
     };
 
     function showToast(message) {
@@ -453,7 +623,7 @@
       el.toast.textContent = message;
       el.toast.classList.add("show");
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2200);
+      toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2400);
     }
 
     async function api(path, options = {}) {
@@ -464,7 +634,7 @@
       });
       if (response.status === 401) {
         const next = encodeURIComponent(`${location.pathname}${location.search}`);
-        location.href = `/financial/bi-dashboard/login?next=${next}`;
+        navigate(`/financial/bi-dashboard/login?next=${next}`);
         throw new Error("登录已失效");
       }
       if (!response.ok) {
@@ -478,36 +648,28 @@
       return `<span class="status-pill ${kind}">${label}</span>`;
     }
 
-    function renderStatus(status) {
-      latestStatus = status;
-      el.integrationNote.textContent = status.integration_note || "";
-      el.heroStatusRow.innerHTML = [
-        status.repo_present ? statusPill("代码快照已纳入", "online") : statusPill("代码快照未纳入", "missing"),
-        status.config_ready ? statusPill("conf.yaml 已准备", "online") : statusPill("conf.yaml 待配置", "offline"),
-        status.api_online ? statusPill("API 服务在线", "online") : statusPill("API 服务未启动", "offline"),
-        status.ui_online ? statusPill("Streamlit 在线", "online") : statusPill("Streamlit 未启动", "offline"),
-      ].join("");
-
+    function renderMetrics(status) {
+      const envReady = status.env_ready || {};
       const metrics = [
         {
-          label: "代码纳入",
-          value: status.repo_present ? "已接入" : "未接入",
-          desc: status.repo_path,
-        },
-        {
-          label: "配置文件",
-          value: status.config_ready ? "已准备" : "待复制",
-          desc: "建议先从 conf.example.yaml 复制 conf.yaml 后再开始联调。",
-        },
-        {
-          label: "API 状态",
-          value: status.api_online ? "运行中" : "未启动",
+          label: "Agent API",
+          value: status.api_online ? "在线" : "未启动",
           desc: status.api_url,
         },
         {
-          label: "前端状态",
-          value: status.ui_online ? "运行中" : "未启动",
+          label: "Agent 前端",
+          value: status.ui_online ? "在线" : "未启动",
           desc: status.ui_url,
+        },
+        {
+          label: "模型环境",
+          value: envReady.openai_api_key ? "已准备" : "待配置",
+          desc: envReady.openai_api_key ? "OPENAI_API_KEY 已注入" : "当前还没有 OPENAI_API_KEY",
+        },
+        {
+          label: "报告调度",
+          value: "已接入",
+          desc: "每周一 09:05 周报，每月 1 日 09:10 月报",
         },
       ];
       el.metricGrid.innerHTML = metrics.map((item) => `
@@ -517,78 +679,181 @@
           <p>${item.desc}</p>
         </article>
       `).join("");
+    }
 
-      el.capabilityList.innerHTML = (status.capabilities || []).map((item, index) => `
-        <article class="capability-item">
-          <strong>能力 ${index + 1}</strong>
-          <span>${item}</span>
-        </article>
-      `).join("");
+    function renderStatus(status) {
+      latestStatus = status;
+      const envReady = status.env_ready || {};
+      el.integrationNote.textContent = status.integration_note || "";
+      el.heroStatusRow.innerHTML = [
+        status.repo_present ? statusPill("代码已纳入", "online") : statusPill("代码未纳入", "missing"),
+        status.config_ready ? statusPill("本地配置已生成", "online") : statusPill("本地配置缺失", "offline"),
+        status.api_online ? statusPill("Agent API 在线", "online") : statusPill("Agent API 未启动", "offline"),
+        status.ui_online ? statusPill("Streamlit 在线", "online") : statusPill("Streamlit 未启动", "offline"),
+      ].join("");
+      el.envHint.textContent = envReady.openai_api_key
+        ? "检测到模型环境变量，问答和报告会优先走数据分析Agent。"
+        : "当前未检测到 OPENAI_API_KEY，问答会提示不可用，AI 洞察与报告会回退到本地摘要逻辑。";
+      renderMetrics(status);
 
-      const filePairs = Object.entries(status.files || {}).map(([key, exists]) => ({
-        label: key,
-        value: exists ? "已找到" : "缺失",
-      }));
       const metaItems = [
-        { label: "仓库地址", value: status.github_url },
+        { label: "模块名称", value: status.module_name },
+        { label: "开源仓库", value: status.github_url },
         { label: "本地目录", value: status.repo_path },
-        ...filePairs.map((item) => ({ label: `文件检查 · ${item.label}`, value: item.value })),
+        { label: "配置文件", value: status.files?.config ? "已生成 conf.yaml" : "未生成 conf.yaml" },
+        { label: "数据库密码环境", value: envReady.db_password ? "已配置" : "未配置（当前仅影响直接连库场景）" },
       ];
       el.metaList.innerHTML = metaItems.map((item) => `
-        <article class="meta-item">
+        <article class="list-item">
           <strong>${item.label}</strong>
           <span><code>${item.value}</code></span>
         </article>
       `).join("");
 
-      el.stepStack.innerHTML = (status.startup_steps || []).map((item, index) => `
-        <article class="step-card">
+      el.stepList.innerHTML = (status.startup_steps || []).map((item, index) => `
+        <article class="list-item">
           <strong>步骤 ${index + 1}</strong>
-          <pre><code>${item}</code></pre>
+          <span><code>${item}</code></span>
         </article>
       `).join("");
     }
 
+    function renderChat() {
+      el.sessionChip.textContent = `session: ${sessionId}`;
+      el.chatBoard.innerHTML = state.chatMessages.map((item) => `
+        <div class="message ${item.role}">${escapeHtml(item.content)}</div>
+      `).join("");
+      el.chatBoard.scrollTop = el.chatBoard.scrollHeight;
+    }
+
+    function renderReports() {
+      if (!reportItems.length) {
+        el.reportList.innerHTML = `<article class="report-card"><strong>暂无报告</strong><div class="meta">还没有生成过周报或月报，先点上面的按钮生成一份。</div></article>`;
+        return;
+      }
+      el.reportList.innerHTML = reportItems.map((item) => `
+        <article class="report-card">
+          <div class="report-card-head">
+            <div>
+              <strong>${escapeHtml(item.title || "--")}</strong>
+              <div class="meta">${escapeHtml(item.period_label || "--")} · ${escapeHtml(item.trigger_mode || "--")} · 生成时间 ${escapeHtml(String(item.updated_at || item.created_at || "--"))}</div>
+            </div>
+            <span class="tag ${item.generated_by === "fallback" ? "fallback" : ""}">${item.generated_by === "data-agent" ? "Agent 输出" : "本地回退"}</span>
+          </div>
+          <pre>${escapeHtml(item.report_content || "")}</pre>
+        </article>
+      `).join("");
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
     async function refreshStatus() {
+      const status = await api(STATUS_API_PATH);
+      renderStatus(status);
+      return status;
+    }
+
+    async function loadReports() {
+      const payload = await api(`${REPORTS_API_PATH}?limit=12`);
+      reportItems = payload.items || [];
+      renderReports();
+    }
+
+    async function sendChat() {
+      const message = (el.chatInput.value || "").trim();
+      if (!message) {
+        showToast("先输入一个问题");
+        return;
+      }
+      state.chatMessages.push({ role: "user", content: message });
+      renderChat();
+      el.chatInput.value = "";
       try {
-        const status = await api(STATUS_API_PATH);
-        renderStatus(status);
-        showToast("DataAgent 状态已刷新");
+        const payload = await api(CHAT_API_PATH, {
+          method: "POST",
+          body: JSON.stringify({ message, session_id: sessionId }),
+        });
+        sessionId = payload.session_id || sessionId;
+        state.chatMessages.push({ role: "agent", content: payload.answer || "" });
+        renderChat();
       } catch (error) {
-        showToast(error.message || "状态刷新失败");
+        state.chatMessages.push({ role: "system", content: error.message || "问答失败" });
+        renderChat();
+        showToast(error.message || "问答失败");
+      }
+    }
+
+    async function generateReport(reportType) {
+      try {
+        const payload = await api(REPORT_GENERATE_API_PATH, {
+          method: "POST",
+          body: JSON.stringify({ report_type: reportType }),
+        });
+        const item = payload.item;
+        reportItems = [item, ...reportItems.filter((row) => row.id !== item.id)];
+        renderReports();
+        showToast(`${reportType === "weekly" ? "周报" : "月报"}已生成`);
+      } catch (error) {
+        showToast(error.message || "报告生成失败");
       }
     }
 
     function bind() {
-      document.getElementById("backDashboardBtn").addEventListener("click", () => {
-        location.href = DASHBOARD_PATH;
+      document.getElementById("backDashboardBtn").addEventListener("click", () => { navigate(DASHBOARD_PATH); });
+      document.getElementById("openEditorBtn").addEventListener("click", () => { navigate(EDITOR_PATH); });
+      document.getElementById("refreshBtn").addEventListener("click", async () => {
+        await refreshStatus();
+        await loadReports();
+        showToast("状态已刷新");
       });
-      document.getElementById("openEditorBtn").addEventListener("click", () => {
-        location.href = EDITOR_PATH;
-      });
-      document.getElementById("refreshBtn").addEventListener("click", refreshStatus);
       document.getElementById("logoutBtn").addEventListener("click", async () => {
         await api(LOGOUT_PATH, { method: "POST" }).catch(() => null);
-        location.href = `/financial/bi-dashboard/login`;
+        navigate(`/financial/bi-dashboard/login`);
       });
-      document.getElementById("openRepoBtn").addEventListener("click", () => {
-        if (latestStatus?.github_url) window.open(latestStatus.github_url, "_blank", "noopener");
+      document.getElementById("sendChatBtn").addEventListener("click", sendChat);
+      document.getElementById("sampleQuestionBtn").addEventListener("click", () => {
+        el.chatInput.value = "请结合最近 7 天的销售、退货和库存结果，判断目前最值得关注的 3 个经营风险点，并给出对应建议。";
+        el.chatInput.focus();
+      });
+      document.getElementById("clearChatBtn").addEventListener("click", () => {
+        sessionId = `polaris-agent-${Date.now()}`;
+        state.chatMessages = [
+          { role: "system", content: "会话已重置。你可以继续发起新的分析问题。" }
+        ];
+        renderChat();
+      });
+      document.getElementById("generateWeeklyBtn").addEventListener("click", () => generateReport("weekly"));
+      document.getElementById("generateMonthlyBtn").addEventListener("click", () => generateReport("monthly"));
+      document.getElementById("refreshReportsBtn").addEventListener("click", async () => {
+        await loadReports();
+        showToast("报告列表已刷新");
       });
       document.getElementById("openLocalUiBtn").addEventListener("click", () => {
         if (!latestStatus?.ui_url) return;
         window.open(latestStatus.ui_url, "_blank", "noopener");
       });
-      document.getElementById("openLocalApiBtn").addEventListener("click", () => {
-        if (!latestStatus?.api_url) return;
-        window.open(latestStatus.api_url, "_blank", "noopener");
+      el.chatInput.addEventListener("keydown", (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          sendChat();
+        }
       });
     }
 
     (async () => {
       el.currentUserChip.textContent = CURRENT_USER || "当前用户";
       bind();
+      renderChat();
       await refreshStatus();
+      await loadReports();
     })();
   </script>
+    </main>
+  </div>
+  __BI_PAGE_TRANSITION_SCRIPT__
 </body>
 </html>
