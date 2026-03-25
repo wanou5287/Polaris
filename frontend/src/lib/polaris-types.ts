@@ -316,6 +316,61 @@ export type TaskCenterResponse = {
   category_options: Option[];
 };
 
+export type ReconciliationCase = {
+  id: number;
+  source_module: string;
+  source_module_label: string;
+  source_type: string;
+  source_id: string;
+  source_no: string;
+  case_type: string;
+  case_type_label: string;
+  case_title: string;
+  case_status: string;
+  case_status_label: string;
+  severity: string;
+  severity_label: string;
+  diff_summary: string;
+  owner_name: string;
+  owner_role: string;
+  due_date: string | null;
+  expected_snapshot: Record<string, unknown> | null;
+  actual_snapshot: Record<string, unknown> | null;
+  last_compensation_action: string;
+  last_compensation_action_label: string;
+  compensation_note: string;
+  compensated_at: string | null;
+  compensated_by: string | null;
+  sort_order: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  is_overdue: boolean;
+};
+
+export type ReconciliationResponse = {
+  items: ReconciliationCase[];
+  summary: {
+    total_count: number;
+    open_count: number;
+    compensating_count: number;
+    resolved_count: number;
+    ignored_count: number;
+    high_severity_count: number;
+    document_sync_count: number;
+    inventory_missing_count: number;
+    blocked_count: number;
+    overdue_count: number;
+    latest_updated_at: string | null;
+  };
+  case_status_options: Option[];
+  case_type_options: Option[];
+  severity_options: Option[];
+  source_module_options: Option[];
+  compensation_action_options: Option[];
+};
+
 export type DataAgentStatus = {
   module_name: string;
   display_name: string;
@@ -365,6 +420,9 @@ export type OverviewResponse = {
   masterSummary: MasterDataResponse["summary"];
   taskCenterSummary: TaskCenterResponse["summary"] & {
     latestItems: TaskCenterItem[];
+  };
+  reconciliationSummary: ReconciliationResponse["summary"] & {
+    latestItems: ReconciliationCase[];
   };
   auditSummary: {
     total: number;

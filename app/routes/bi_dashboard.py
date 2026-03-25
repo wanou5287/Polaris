@@ -80,6 +80,8 @@ INVENTORY_FLOW_RULE_API_PATH = "/financial/bi-dashboard/api/inventory-flows/rule
 INVENTORY_FLOW_TASK_API_PATH = "/financial/bi-dashboard/api/inventory-flows/tasks"
 TASK_CENTER_API_PATH = "/financial/bi-dashboard/api/task-center"
 TASK_CENTER_ITEM_API_PATH = "/financial/bi-dashboard/api/task-center/items"
+RECONCILIATION_CENTER_API_PATH = "/financial/bi-dashboard/api/reconciliation-center"
+RECONCILIATION_CASE_API_PATH = "/financial/bi-dashboard/api/reconciliation-center/cases"
 DATA_AGENT_ENTRY_PATH = "/financial/bi-dashboard/data-agent"
 DATA_AGENT_STATUS_API_PATH = "/financial/bi-dashboard/api/data-agent/status"
 DATA_AGENT_CHAT_API_PATH = "/financial/bi-dashboard/api/data-agent/chat"
@@ -3406,6 +3408,554 @@ def sync_task_center_snapshot(conn, updated_by: str = "system") -> Dict[str, int
     return stats
 
 
+def reconciliation_case_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "open", "label": "待处理"},
+        {"value": "compensating", "label": "补偿中"},
+        {"value": "resolved", "label": "已解决"},
+        {"value": "ignored", "label": "已忽略"},
+    ]
+
+
+def reconciliation_case_type_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "document_sync", "label": "单据回写异常"},
+        {"value": "inventory_task_missing", "label": "自动任务缺失"},
+        {"value": "inventory_task_lag", "label": "任务闭环滞后"},
+        {"value": "inventory_task_blocked", "label": "流转任务阻塞"},
+        {"value": "inventory_task_overdue", "label": "流转任务逾期"},
+    ]
+
+
+def reconciliation_compensation_action_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "none", "label": "仅保存编排"},
+        {"value": "retry_document_sync", "label": "重试单据编排"},
+        {"value": "resync_inventory_tasks", "label": "重建库存任务"},
+        {"value": "reopen_inventory_task", "label": "解除任务阻塞"},
+        {"value": "mark_resolved", "label": "直接标记解决"},
+        {"value": "ignore_case", "label": "忽略当前案例"},
+    ]
+
+
+def reconciliation_case_status_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in reconciliation_case_status_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def reconciliation_case_type_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in reconciliation_case_type_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def reconciliation_compensation_action_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in reconciliation_compensation_action_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def reconciliation_case_status_sort(value: str) -> int:
+    ranks = {"open": 0, "compensating": 1, "resolved": 2, "ignored": 3}
+    return ranks.get(str(value or "").strip(), 9)
+
+
+def merge_reconciliation_case_status(existing_status: Any, derived_status: str) -> str:
+    current = str(existing_status or "").strip().lower()
+    if derived_status == "resolved":
+        return "ignored" if current == "ignored" else "resolved"
+    if current == "ignored":
+        return "ignored"
+    if current == "compensating":
+        return "compensating"
+    return derived_status
+
+
+def normalize_reconciliation_case_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    case_id = parse_int_or_default(item.get("id"), 0)
+    if case_id <= 0:
+        raise HTTPException(status_code=400, detail="对账案例缺少有效 ID")
+    case_status = str(item.get("case_status") or "open").strip().lower() or "open"
+    valid_statuses = {entry["value"] for entry in reconciliation_case_status_options()}
+    if case_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="对账案例状态不合法")
+    compensation_action = str(item.get("compensation_action") or "").strip().lower()
+    valid_actions = {entry["value"] for entry in reconciliation_compensation_action_options()}
+    if compensation_action and compensation_action not in valid_actions:
+        raise HTTPException(status_code=400, detail="补偿动作不合法")
+    return {
+        "id": case_id,
+        "case_status": case_status,
+        "owner_name": str(item.get("owner_name") or "").strip(),
+        "owner_role": str(item.get("owner_role") or "").strip(),
+        "due_date": parse_date_or_none(str(item.get("due_date") or "").strip()),
+        "compensation_action": "" if compensation_action in {"", "none"} else compensation_action,
+        "compensation_note": str(item.get("compensation_note") or "").strip(),
+    }
+
+
+def serialize_reconciliation_case_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["id"] = int(item.get("id") or 0)
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    due_date = parse_date_or_none(str(item.get("due_date") or "").strip())
+    item["is_overdue"] = bool(
+        due_date is not None and due_date < date.today() and str(item.get("case_status") or "") not in {"resolved", "ignored"}
+    )
+    item["source_module_label"] = task_center_source_label(str(item.get("source_module") or ""))
+    item["case_type_label"] = reconciliation_case_type_label(str(item.get("case_type") or ""))
+    item["case_status_label"] = reconciliation_case_status_label(str(item.get("case_status") or ""))
+    item["severity_label"] = inventory_flow_priority_label(str(item.get("severity") or ""))
+    item["last_compensation_action_label"] = reconciliation_compensation_action_label(str(item.get("last_compensation_action") or ""))
+    expected_snapshot = json_loads(item.get("expected_snapshot_json"), {})
+    actual_snapshot = json_loads(item.get("actual_snapshot_json"), {})
+    item["expected_snapshot"] = expected_snapshot if isinstance(expected_snapshot, dict) else {}
+    item["actual_snapshot"] = actual_snapshot if isinstance(actual_snapshot, dict) else {}
+    item.pop("expected_snapshot_json", None)
+    item.pop("actual_snapshot_json", None)
+    return item
+
+
+def fetch_procurement_item_by_id(conn, row_id: str | int) -> Dict[str, Any] | None:
+    row = conn.execute(
+        text(
+            """
+            SELECT
+                id, arrival_no, purchase_order_no, supplier_name, warehouse_code, warehouse_name,
+                channel_code, channel_name, sku_code, sku_name, expected_qty, arrived_qty,
+                qualified_qty, exception_qty, unit, arrival_date, status, document_status,
+                exception_reason, remark, source_system, created_by, updated_by,
+                sort_order, created_at, updated_at
+            FROM bi_procurement_arrival
+            WHERE id = :id
+            LIMIT 1
+            """
+        ),
+        {"id": parse_int_or_default(row_id, 0)},
+    ).mappings().first()
+    return serialize_procurement_arrival_row(row) if row else None
+
+
+def fetch_inventory_flow_task_by_id(conn, row_id: str | int) -> Dict[str, Any] | None:
+    row = conn.execute(
+        text(
+            """
+            SELECT
+                id, task_no, source_record_type, source_record_id, source_record_no, trigger_source,
+                action_type, task_status, priority, sku_code, sku_name, request_qty, confirmed_qty,
+                source_status_id, source_status_name, target_status_id, target_status_name,
+                source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                planned_execute_date, reason_text, note, created_by, updated_by, sort_order, created_at, updated_at
+            FROM bi_inventory_flow_task
+            WHERE id = :id
+            LIMIT 1
+            """
+        ),
+        {"id": parse_int_or_default(row_id, 0)},
+    ).mappings().first()
+    return serialize_inventory_flow_task_row(row) if row else None
+
+
+def build_reconciliation_cases_from_procurement(
+    procurement_item: Dict[str, Any],
+    related_tasks: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    source_status = str(procurement_item.get("status") or "draft").strip()
+    detail_status = str(procurement_item.get("document_status") or "pending").strip()
+    if source_status == "draft":
+        return []
+
+    arrival_no = str(procurement_item.get("arrival_no") or "")
+    expected_task_nos: List[str] = []
+    if float(procurement_item.get("qualified_qty") or 0.0) > 0:
+        expected_task_nos.append(f"{arrival_no}-Q")
+    if float(procurement_item.get("exception_qty") or 0.0) > 0:
+        expected_task_nos.append(f"{arrival_no}-E")
+
+    existing_task_map = {
+        str(task.get("task_no") or ""): task
+        for task in related_tasks
+        if str(task.get("task_no") or "").strip()
+    }
+    related_task_summaries = [
+        {
+            "task_no": task.get("task_no"),
+            "task_status": task.get("task_status"),
+            "planned_execute_date": task.get("planned_execute_date"),
+            "request_qty": task.get("request_qty"),
+        }
+        for task in related_tasks[:6]
+    ]
+
+    cases: List[Dict[str, Any]] = []
+    if detail_status in {"pending", "failed"}:
+        cases.append(
+            {
+                "source_module": "procurement",
+                "source_type": "procurement_arrival",
+                "source_id": str(procurement_item.get("id") or ""),
+                "source_no": arrival_no,
+                "case_type": "document_sync",
+                "case_title": f"单据回写对账 · {arrival_no or procurement_item.get('purchase_order_no') or '未命名单据'}",
+                "case_status": "open",
+                "severity": "high" if detail_status == "failed" else "normal",
+                "diff_summary": f"到货单仍处于 {detail_status}，需要补偿编排或回写。",
+                "owner_name": "",
+                "owner_role": "供应链运营",
+                "due_date": parse_date_or_none(str(procurement_item.get("arrival_date") or "").strip()),
+                "expected_snapshot": {
+                    "expected_document_status": "generated / synced",
+                    "arrival_no": arrival_no,
+                    "purchase_order_no": procurement_item.get("purchase_order_no"),
+                    "qualified_qty": procurement_item.get("qualified_qty"),
+                    "exception_qty": procurement_item.get("exception_qty"),
+                },
+                "actual_snapshot": {
+                    "status": source_status,
+                    "document_status": detail_status,
+                    "exception_reason": procurement_item.get("exception_reason"),
+                    "remark": procurement_item.get("remark"),
+                    "related_tasks": related_task_summaries,
+                },
+                "last_compensation_action": "",
+                "compensation_note": "",
+                "sort_order": 10 + reconciliation_case_status_sort("open") * 10,
+            }
+        )
+
+    missing_task_nos = [task_no for task_no in expected_task_nos if task_no not in existing_task_map]
+    if missing_task_nos:
+        cases.append(
+            {
+                "source_module": "procurement",
+                "source_type": "procurement_arrival",
+                "source_id": str(procurement_item.get("id") or ""),
+                "source_no": arrival_no,
+                "case_type": "inventory_task_missing",
+                "case_title": f"自动任务缺失 · {arrival_no or procurement_item.get('purchase_order_no') or '未命名单据'}",
+                "case_status": "open",
+                "severity": "high",
+                "diff_summary": f"预期任务 {len(expected_task_nos)} 条，当前缺失 {len(missing_task_nos)} 条。",
+                "owner_name": "",
+                "owner_role": "供应链运营",
+                "due_date": parse_date_or_none(str(procurement_item.get("arrival_date") or "").strip()),
+                "expected_snapshot": {
+                    "expected_task_nos": expected_task_nos,
+                    "qualified_qty": procurement_item.get("qualified_qty"),
+                    "exception_qty": procurement_item.get("exception_qty"),
+                },
+                "actual_snapshot": {
+                    "missing_task_nos": missing_task_nos,
+                    "existing_task_nos": sorted(existing_task_map.keys()),
+                    "related_tasks": related_task_summaries,
+                },
+                "last_compensation_action": "",
+                "compensation_note": "",
+                "sort_order": 20 + reconciliation_case_status_sort("open") * 10,
+            }
+        )
+
+    lagging_tasks = [
+        task
+        for task in related_tasks
+        if str(task.get("task_status") or "").strip() not in {"completed", "cancelled"}
+    ]
+    if source_status == "completed" and lagging_tasks:
+        cases.append(
+            {
+                "source_module": "procurement",
+                "source_type": "procurement_arrival",
+                "source_id": str(procurement_item.get("id") or ""),
+                "source_no": arrival_no,
+                "case_type": "inventory_task_lag",
+                "case_title": f"任务闭环滞后 · {arrival_no or procurement_item.get('purchase_order_no') or '未命名单据'}",
+                "case_status": "open",
+                "severity": "high" if any(str(task.get("task_status") or "") == "blocked" for task in lagging_tasks) else "normal",
+                "diff_summary": f"到货已完成，但仍有 {len(lagging_tasks)} 条库存任务未闭环。",
+                "owner_name": "",
+                "owner_role": "仓配执行",
+                "due_date": parse_date_or_none(str(procurement_item.get("arrival_date") or "").strip()),
+                "expected_snapshot": {
+                    "expected_task_status": "completed",
+                    "expected_task_nos": expected_task_nos,
+                },
+                "actual_snapshot": {
+                    "lagging_tasks": [
+                        {
+                            "task_no": task.get("task_no"),
+                            "task_status": task.get("task_status"),
+                            "planned_execute_date": task.get("planned_execute_date"),
+                        }
+                        for task in lagging_tasks[:8]
+                    ],
+                    "document_status": detail_status,
+                },
+                "last_compensation_action": "",
+                "compensation_note": "",
+                "sort_order": 30 + reconciliation_case_status_sort("open") * 10,
+            }
+        )
+    return cases
+
+
+def build_reconciliation_cases_from_inventory_task(task_item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    task_status = str(task_item.get("task_status") or "draft").strip()
+    planned_execute_date = parse_date_or_none(str(task_item.get("planned_execute_date") or "").strip())
+    task_no = str(task_item.get("task_no") or "")
+    cases: List[Dict[str, Any]] = []
+
+    if task_status == "blocked":
+        cases.append(
+            {
+                "source_module": "inventory_flow",
+                "source_type": "inventory_flow_task",
+                "source_id": str(task_item.get("id") or ""),
+                "source_no": task_no,
+                "case_type": "inventory_task_blocked",
+                "case_title": f"流转任务阻塞 · {task_no or task_item.get('source_record_no') or '未命名任务'}",
+                "case_status": "open",
+                "severity": "high" if str(task_item.get("priority") or "") == "high" else "normal",
+                "diff_summary": str(task_item.get("reason_text") or "").strip() or "库存流转任务已阻塞，需要解除或改派。",
+                "owner_name": "",
+                "owner_role": "仓配执行",
+                "due_date": planned_execute_date,
+                "expected_snapshot": {
+                    "expected_task_status": "pending / completed",
+                    "action_type": task_item.get("action_type"),
+                    "planned_execute_date": task_item.get("planned_execute_date"),
+                },
+                "actual_snapshot": {
+                    "task_status": task_status,
+                    "source_record_no": task_item.get("source_record_no"),
+                    "sku_name": task_item.get("sku_name"),
+                    "reason_text": task_item.get("reason_text"),
+                    "note": task_item.get("note"),
+                },
+                "last_compensation_action": "",
+                "compensation_note": "",
+                "sort_order": 40 + reconciliation_case_status_sort("open") * 10,
+            }
+        )
+
+    if task_status in {"draft", "pending"} and planned_execute_date is not None and planned_execute_date < date.today():
+        cases.append(
+            {
+                "source_module": "inventory_flow",
+                "source_type": "inventory_flow_task",
+                "source_id": str(task_item.get("id") or ""),
+                "source_no": task_no,
+                "case_type": "inventory_task_overdue",
+                "case_title": f"流转任务逾期 · {task_no or task_item.get('source_record_no') or '未命名任务'}",
+                "case_status": "open",
+                "severity": "high" if str(task_item.get("priority") or "") == "high" else "normal",
+                "diff_summary": f"计划日期 {task_item.get('planned_execute_date') or '--'} 已超期，但任务仍未完成。",
+                "owner_name": "",
+                "owner_role": "仓配执行",
+                "due_date": planned_execute_date,
+                "expected_snapshot": {
+                    "expected_task_status": "completed",
+                    "planned_execute_date": task_item.get("planned_execute_date"),
+                },
+                "actual_snapshot": {
+                    "task_status": task_status,
+                    "priority": task_item.get("priority"),
+                    "source_record_no": task_item.get("source_record_no"),
+                    "sku_name": task_item.get("sku_name"),
+                    "request_qty": task_item.get("request_qty"),
+                    "confirmed_qty": task_item.get("confirmed_qty"),
+                },
+                "last_compensation_action": "",
+                "compensation_note": "",
+                "sort_order": 50 + reconciliation_case_status_sort("open") * 10,
+            }
+        )
+
+    return cases
+
+
+def upsert_reconciliation_case(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+    existing = conn.execute(
+        text(
+            """
+            SELECT
+                id, case_status, owner_name, owner_role, due_date,
+                last_compensation_action, compensation_note, compensated_at, compensated_by
+            FROM bi_reconciliation_case
+            WHERE source_module = :source_module AND source_type = :source_type
+              AND source_id = :source_id AND case_type = :case_type
+            LIMIT 1
+            """
+        ),
+        {
+            "source_module": payload["source_module"],
+            "source_type": payload["source_type"],
+            "source_id": payload["source_id"],
+            "case_type": payload["case_type"],
+        },
+    ).mappings().first()
+
+    if existing:
+        record = {
+            **payload,
+            "id": int(existing["id"]),
+            "case_status": merge_reconciliation_case_status(existing.get("case_status"), str(payload.get("case_status") or "open")),
+            "owner_name": str(existing.get("owner_name") or payload.get("owner_name") or "").strip(),
+            "owner_role": str(existing.get("owner_role") or payload.get("owner_role") or "").strip(),
+            "due_date": existing.get("due_date") or payload.get("due_date"),
+            "last_compensation_action": str(existing.get("last_compensation_action") or payload.get("last_compensation_action") or "").strip(),
+            "compensation_note": str(existing.get("compensation_note") or payload.get("compensation_note") or "").strip(),
+            "compensated_at": existing.get("compensated_at"),
+            "compensated_by": existing.get("compensated_by"),
+            "expected_snapshot_json": json_dumps(payload.get("expected_snapshot") or {}),
+            "actual_snapshot_json": json_dumps(payload.get("actual_snapshot") or {}),
+            "updated_by": updated_by,
+        }
+        conn.execute(
+            text(
+                """
+                UPDATE bi_reconciliation_case
+                SET
+                    source_no = :source_no,
+                    case_title = :case_title,
+                    case_status = :case_status,
+                    severity = :severity,
+                    diff_summary = :diff_summary,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    due_date = :due_date,
+                    expected_snapshot_json = :expected_snapshot_json,
+                    actual_snapshot_json = :actual_snapshot_json,
+                    last_compensation_action = :last_compensation_action,
+                    compensation_note = :compensation_note,
+                    compensated_at = :compensated_at,
+                    compensated_by = :compensated_by,
+                    sort_order = :sort_order,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            record,
+        )
+        return {"id": int(existing["id"]), "created": False}
+
+    record = {
+        **payload,
+        "owner_name": str(payload.get("owner_name") or "").strip(),
+        "owner_role": str(payload.get("owner_role") or "").strip(),
+        "last_compensation_action": str(payload.get("last_compensation_action") or "").strip(),
+        "compensation_note": str(payload.get("compensation_note") or "").strip(),
+        "compensated_at": payload.get("compensated_at"),
+        "compensated_by": str(payload.get("compensated_by") or "").strip() or None,
+        "expected_snapshot_json": json_dumps(payload.get("expected_snapshot") or {}),
+        "actual_snapshot_json": json_dumps(payload.get("actual_snapshot") or {}),
+        "created_by": updated_by,
+        "updated_by": updated_by,
+    }
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_reconciliation_case(
+                source_module, source_type, source_id, source_no, case_type, case_title,
+                case_status, severity, diff_summary, owner_name, owner_role, due_date,
+                expected_snapshot_json, actual_snapshot_json, last_compensation_action,
+                compensation_note, compensated_at, compensated_by,
+                sort_order, created_by, updated_by
+            ) VALUES (
+                :source_module, :source_type, :source_id, :source_no, :case_type, :case_title,
+                :case_status, :severity, :diff_summary, :owner_name, :owner_role, :due_date,
+                :expected_snapshot_json, :actual_snapshot_json, :last_compensation_action,
+                :compensation_note, :compensated_at, :compensated_by,
+                :sort_order, :created_by, :updated_by
+            )
+            """
+        ),
+        record,
+    )
+    return {"id": int(result.lastrowid or 0), "created": True}
+
+
+def sync_reconciliation_snapshot(conn, updated_by: str = "system") -> Dict[str, int]:
+    procurement_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, arrival_no, purchase_order_no, supplier_name, warehouse_code, warehouse_name,
+                channel_code, channel_name, sku_code, sku_name, expected_qty, arrived_qty,
+                qualified_qty, exception_qty, unit, arrival_date, status, document_status,
+                exception_reason, remark, source_system, created_by, updated_by,
+                sort_order, created_at, updated_at
+            FROM bi_procurement_arrival
+            ORDER BY arrival_date DESC, sort_order, id DESC
+            """
+        )
+    ).mappings().all()
+    inventory_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, task_no, source_record_type, source_record_id, source_record_no, trigger_source,
+                action_type, task_status, priority, sku_code, sku_name, request_qty, confirmed_qty,
+                source_status_id, source_status_name, target_status_id, target_status_name,
+                source_warehouse_code, source_warehouse_name, target_warehouse_code, target_warehouse_name,
+                planned_execute_date, reason_text, note, created_by, updated_by, sort_order, created_at, updated_at
+            FROM bi_inventory_flow_task
+            ORDER BY updated_at DESC, id DESC
+            """
+        )
+    ).mappings().all()
+
+    inventory_tasks = [serialize_inventory_flow_task_row(row) for row in inventory_rows]
+    tasks_by_procurement: Dict[str, List[Dict[str, Any]]] = {}
+    for task in inventory_tasks:
+        if str(task.get("source_record_type") or "") != "procurement_arrival":
+            continue
+        source_id = str(task.get("source_record_id") or "").strip()
+        tasks_by_procurement.setdefault(source_id, []).append(task)
+
+    active_keys: set[Tuple[str, str, str, str]] = set()
+    stats = {"case_count": 0, "resolved_count": 0}
+    for row in procurement_rows:
+        procurement_item = serialize_procurement_arrival_row(row)
+        for case in build_reconciliation_cases_from_procurement(procurement_item, tasks_by_procurement.get(str(procurement_item["id"]), [])):
+            upsert_reconciliation_case(conn, case, updated_by)
+            active_keys.add((case["source_module"], case["source_type"], case["source_id"], case["case_type"]))
+            stats["case_count"] += 1
+    for task in inventory_tasks:
+        for case in build_reconciliation_cases_from_inventory_task(task):
+            upsert_reconciliation_case(conn, case, updated_by)
+            active_keys.add((case["source_module"], case["source_type"], case["source_id"], case["case_type"]))
+            stats["case_count"] += 1
+
+    existing_rows = conn.execute(
+        text(
+            """
+            SELECT id, source_module, source_type, source_id, case_type, case_status
+            FROM bi_reconciliation_case
+            """
+        )
+    ).mappings().all()
+    for row in existing_rows:
+        key = (
+            str(row["source_module"] or ""),
+            str(row["source_type"] or ""),
+            str(row["source_id"] or ""),
+            str(row["case_type"] or ""),
+        )
+        if key in active_keys or str(row["case_status"] or "") in {"resolved", "ignored"}:
+            continue
+        conn.execute(
+            text(
+                """
+                UPDATE bi_reconciliation_case
+                SET case_status = 'resolved', updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {"id": int(row["id"]), "updated_by": updated_by},
+        )
+        stats["resolved_count"] += 1
+    return stats
+
+
 def ensure_master_data_seed(conn) -> None:
     ensure_table_columns(
         conn,
@@ -4631,6 +5181,42 @@ def ensure_schema() -> None:
                     INDEX idx_bi_task_center_status (task_status, due_date, priority),
                     INDEX idx_bi_task_center_source (source_module, task_category),
                     INDEX idx_bi_task_center_sort (sort_order, updated_at, id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_reconciliation_case (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    source_module VARCHAR(32) NOT NULL,
+                    source_type VARCHAR(32) NOT NULL,
+                    source_id VARCHAR(64) NOT NULL,
+                    source_no VARCHAR(64) NOT NULL DEFAULT '',
+                    case_type VARCHAR(32) NOT NULL,
+                    case_title VARCHAR(255) NOT NULL,
+                    case_status VARCHAR(32) NOT NULL DEFAULT 'open',
+                    severity VARCHAR(16) NOT NULL DEFAULT 'normal',
+                    diff_summary VARCHAR(255) NOT NULL DEFAULT '',
+                    owner_name VARCHAR(64) NOT NULL DEFAULT '',
+                    owner_role VARCHAR(64) NOT NULL DEFAULT '',
+                    due_date DATE NULL,
+                    expected_snapshot_json LONGTEXT NULL,
+                    actual_snapshot_json LONGTEXT NULL,
+                    last_compensation_action VARCHAR(32) NOT NULL DEFAULT '',
+                    compensation_note LONGTEXT NULL,
+                    compensated_at DATETIME NULL,
+                    compensated_by VARCHAR(64) NULL,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_reconciliation_source (source_module, source_type, source_id, case_type),
+                    INDEX idx_bi_reconciliation_status (case_status, severity, due_date),
+                    INDEX idx_bi_reconciliation_source (source_module, case_type),
+                    INDEX idx_bi_reconciliation_sort (sort_order, updated_at, id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
@@ -7825,6 +8411,7 @@ async def save_procurement_arrival(
         item = serialize_procurement_arrival_row(saved_row)
         flow_sync = sync_procurement_inventory_flow_tasks(conn, item, username)
         task_center_sync = sync_task_center_snapshot(conn, username)
+        reconciliation_sync = sync_reconciliation_snapshot(conn, username)
 
     record_dashboard_audit(
         module_key="procurement",
@@ -7887,6 +8474,7 @@ async def save_procurement_arrival(
             "item": item,
             "inventory_flow_sync": flow_sync,
             "task_center_sync": task_center_sync,
+            "reconciliation_sync": reconciliation_sync,
         }
     )
 
@@ -8220,6 +8808,7 @@ async def save_inventory_flow_task(
             {"id": saved_id},
         ).mappings().first()
         task_center_sync = sync_task_center_snapshot(conn, username)
+        reconciliation_sync = sync_reconciliation_snapshot(conn, username)
     item = serialize_inventory_flow_task_row(saved_row)
     record_dashboard_audit(
         module_key="inventory_flow",
@@ -8236,7 +8825,15 @@ async def save_inventory_flow_task(
         source_method="POST",
         affected_count=1,
     )
-    return JSONResponse({"saved": True, "created": created, "item": item, "task_center_sync": task_center_sync})
+    return JSONResponse(
+        {
+            "saved": True,
+            "created": created,
+            "item": item,
+            "task_center_sync": task_center_sync,
+            "reconciliation_sync": reconciliation_sync,
+        }
+    )
 
 
 @router.get("/bi-dashboard/api/task-center")
@@ -8425,6 +9022,248 @@ async def save_task_center_item(
         affected_count=1,
     )
     return JSONResponse({"saved": True, "item": item})
+
+
+@router.get("/bi-dashboard/api/reconciliation-center")
+async def list_reconciliation_cases(
+    case_status: str | None = Query(None),
+    case_type: str | None = Query(None),
+    severity: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(160, ge=1, le=400),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    conditions = ["1 = 1"]
+    params: Dict[str, Any] = {}
+    if case_status:
+        conditions.append("case_status = :case_status")
+        params["case_status"] = str(case_status).strip()
+    if case_type:
+        conditions.append("case_type = :case_type")
+        params["case_type"] = str(case_type).strip()
+    if severity:
+        conditions.append("severity = :severity")
+        params["severity"] = str(severity).strip()
+    if keyword:
+        conditions.append(
+            "(case_title LIKE :keyword OR source_no LIKE :keyword OR diff_summary LIKE :keyword OR compensation_note LIKE :keyword)"
+        )
+        params["keyword"] = f"%{str(keyword).strip()}%"
+    where_sql = " AND ".join(conditions)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        sync_reconciliation_snapshot(conn, "system")
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT
+                    id, source_module, source_type, source_id, source_no, case_type, case_title,
+                    case_status, severity, diff_summary, owner_name, owner_role, due_date,
+                    expected_snapshot_json, actual_snapshot_json, last_compensation_action,
+                    compensation_note, compensated_at, compensated_by,
+                    sort_order, created_by, updated_by, created_at, updated_at
+                FROM bi_reconciliation_case
+                WHERE {where_sql}
+                ORDER BY FIELD(case_status, 'open', 'compensating', 'resolved', 'ignored'),
+                         FIELD(severity, 'high', 'normal', 'low'),
+                         CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
+                         due_date ASC,
+                         sort_order ASC,
+                         updated_at DESC,
+                         id DESC
+                LIMIT :limit
+                """
+            ),
+            {**params, "limit": int(limit)},
+        ).mappings().all()
+    items = [serialize_reconciliation_case_row(row) for row in rows]
+    summary = {
+        "total_count": len(items),
+        "open_count": sum(1 for item in items if item["case_status"] == "open"),
+        "compensating_count": sum(1 for item in items if item["case_status"] == "compensating"),
+        "resolved_count": sum(1 for item in items if item["case_status"] == "resolved"),
+        "ignored_count": sum(1 for item in items if item["case_status"] == "ignored"),
+        "high_severity_count": sum(1 for item in items if item["severity"] == "high"),
+        "document_sync_count": sum(1 for item in items if item["case_type"] == "document_sync"),
+        "inventory_missing_count": sum(1 for item in items if item["case_type"] == "inventory_task_missing"),
+        "blocked_count": sum(1 for item in items if item["case_type"] == "inventory_task_blocked"),
+        "overdue_count": sum(1 for item in items if item["is_overdue"]),
+        "latest_updated_at": max((item["updated_at"] for item in items if item["updated_at"]), default=None),
+    }
+    return JSONResponse(
+        {
+            "items": items,
+            "summary": summary,
+            "case_status_options": reconciliation_case_status_options(),
+            "case_type_options": reconciliation_case_type_options(),
+            "severity_options": inventory_flow_priority_options(),
+            "source_module_options": task_center_source_module_options(),
+            "compensation_action_options": reconciliation_compensation_action_options(),
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/reconciliation-center/cases")
+async def save_reconciliation_case(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    record = normalize_reconciliation_case_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        existing = conn.execute(
+            text(
+                """
+                SELECT
+                    id, source_module, source_type, source_id, source_no, case_type, case_title,
+                    case_status, severity, diff_summary, owner_name, owner_role, due_date,
+                    expected_snapshot_json, actual_snapshot_json, last_compensation_action,
+                    compensation_note, compensated_at, compensated_by,
+                    sort_order, created_by, updated_by, created_at, updated_at
+                FROM bi_reconciliation_case
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": record["id"]},
+        ).mappings().first()
+        if not existing:
+            raise HTTPException(status_code=404, detail="对账案例不存在")
+
+        compensation_action = record["compensation_action"]
+        case_status = record["case_status"]
+        if compensation_action == "mark_resolved":
+            case_status = "resolved"
+        elif compensation_action == "ignore_case":
+            case_status = "ignored"
+        elif compensation_action:
+            case_status = "compensating"
+
+        conn.execute(
+            text(
+                """
+                UPDATE bi_reconciliation_case
+                SET
+                    case_status = :case_status,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    due_date = :due_date,
+                    compensation_note = :compensation_note,
+                    last_compensation_action = :last_compensation_action,
+                    compensated_at = :compensated_at,
+                    compensated_by = :compensated_by,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {
+                "id": record["id"],
+                "case_status": case_status,
+                "owner_name": record["owner_name"],
+                "owner_role": record["owner_role"],
+                "due_date": record["due_date"],
+                "compensation_note": record["compensation_note"],
+                "last_compensation_action": compensation_action or str(existing["last_compensation_action"] or ""),
+                "compensated_at": datetime.now() if compensation_action else existing["compensated_at"],
+                "compensated_by": username if compensation_action else existing["compensated_by"],
+                "updated_by": username,
+            },
+        )
+
+        compensation_result: Dict[str, Any] = {}
+        if compensation_action == "retry_document_sync" and str(existing["source_module"] or "") == "procurement":
+            procurement_item = fetch_procurement_item_by_id(conn, existing["source_id"])
+            if not procurement_item:
+                raise HTTPException(status_code=404, detail="来源采购到货单不存在")
+            next_remark = str(procurement_item.get("remark") or "").strip()
+            appended = "补偿动作：重试单据编排"
+            next_remark = appended if not next_remark else f"{next_remark}\n{appended}"
+            conn.execute(
+                text(
+                    """
+                    UPDATE bi_procurement_arrival
+                    SET document_status = 'generated', remark = :remark, updated_by = :updated_by
+                    WHERE id = :id
+                    """
+                ),
+                {"id": procurement_item["id"], "remark": next_remark, "updated_by": username},
+            )
+            compensation_result = {
+                "action": "retry_document_sync",
+                "document_status": "generated",
+                "arrival_no": procurement_item["arrival_no"],
+            }
+        elif compensation_action == "resync_inventory_tasks" and str(existing["source_module"] or "") == "procurement":
+            procurement_item = fetch_procurement_item_by_id(conn, existing["source_id"])
+            if not procurement_item:
+                raise HTTPException(status_code=404, detail="来源采购到货单不存在")
+            compensation_result = sync_procurement_inventory_flow_tasks(conn, procurement_item, username)
+            compensation_result["action"] = "resync_inventory_tasks"
+        elif compensation_action == "reopen_inventory_task" and str(existing["source_module"] or "") == "inventory_flow":
+            task_item = fetch_inventory_flow_task_by_id(conn, existing["source_id"])
+            if not task_item:
+                raise HTTPException(status_code=404, detail="来源库存流转任务不存在")
+            next_note = str(task_item.get("note") or "").strip()
+            appended = "补偿动作：解除阻塞并重新进入待执行"
+            next_note = appended if not next_note else f"{next_note}\n{appended}"
+            conn.execute(
+                text(
+                    """
+                    UPDATE bi_inventory_flow_task
+                    SET
+                        task_status = 'pending',
+                        planned_execute_date = :planned_execute_date,
+                        note = :note,
+                        updated_by = :updated_by
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": task_item["id"],
+                    "planned_execute_date": record["due_date"] or task_item.get("planned_execute_date"),
+                    "note": next_note,
+                    "updated_by": username,
+                },
+            )
+            compensation_result = {"action": "reopen_inventory_task", "task_no": task_item["task_no"], "task_status": "pending"}
+
+        sync_task_center_snapshot(conn, username)
+        sync_reconciliation_snapshot(conn, username)
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, source_module, source_type, source_id, source_no, case_type, case_title,
+                    case_status, severity, diff_summary, owner_name, owner_role, due_date,
+                    expected_snapshot_json, actual_snapshot_json, last_compensation_action,
+                    compensation_note, compensated_at, compensated_by,
+                    sort_order, created_by, updated_by, created_at, updated_at
+                FROM bi_reconciliation_case
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": record["id"]},
+        ).mappings().first()
+    item = serialize_reconciliation_case_row(saved_row)
+    record_dashboard_audit(
+        module_key="reconciliation",
+        module_name="对账补偿",
+        action_key="case.compensate" if record["compensation_action"] else "case.update",
+        action_name="执行对账补偿" if record["compensation_action"] else "更新对账案例",
+        target_type="reconciliation_case",
+        target_id=item["source_no"],
+        target_name=item["case_title"],
+        detail_summary=f"{item['case_status_label']} / {item['severity_label']} / {item['last_compensation_action_label'] or '仅保存编排'}",
+        detail={"item": item, "compensation_result": compensation_result},
+        triggered_by=username,
+        source_path=RECONCILIATION_CASE_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"saved": True, "item": item, "compensation_result": compensation_result})
 
 
 @router.get("/bi-dashboard/api/return-unpack-attendance")

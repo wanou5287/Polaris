@@ -175,7 +175,7 @@ export function OverviewPage() {
         />
       </div>
 
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-6">
         <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -220,6 +220,22 @@ export function OverviewPage() {
             <p className="text-sm text-muted-foreground">
               待处理 {formatNumber(data.taskCenterSummary.open_count)} / 阻塞{" "}
               {formatNumber(data.taskCenterSummary.blocked_count)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              对账补偿
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-3xl font-semibold tracking-tight text-foreground">
+              {formatNumber(data.reconciliationSummary.open_count + data.reconciliationSummary.compensating_count)}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              高严重性 {formatNumber(data.reconciliationSummary.high_severity_count)} / 未解决{" "}
+              {formatNumber(data.reconciliationSummary.overdue_count)}
             </p>
           </CardContent>
         </Card>
@@ -351,6 +367,41 @@ export function OverviewPage() {
                   ))
                 ) : (
                   <p className="text-sm text-muted-foreground">当前还没有可展示的统一待办。</p>
+                )}
+              </div>
+            </div>
+            <div className="rounded-[24px] border border-border/80 bg-muted/20 px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">对账补偿最新案例</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    最近同步于 {formatDateTime(data.reconciliationSummary.latest_updated_at)}
+                  </p>
+                </div>
+                <div className="rounded-full border border-border/70 bg-white px-3 py-1 text-xs text-muted-foreground">
+                  {formatNumber(data.reconciliationSummary.latestItems.length)} 条
+                </div>
+              </div>
+              <div className="mt-4 space-y-3">
+                {data.reconciliationSummary.latestItems.length ? (
+                  data.reconciliationSummary.latestItems.map((item) => (
+                    <div key={item.id} className="rounded-[20px] border border-border/70 bg-white px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-foreground">{item.case_title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {item.case_type_label} · {item.source_no}
+                          </p>
+                        </div>
+                        <div className="text-right text-xs text-muted-foreground">
+                          <p>{item.case_status_label}</p>
+                          <p className="mt-1">{formatDate(item.due_date)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">当前还没有可展示的对账案例。</p>
                 )}
               </div>
             </div>

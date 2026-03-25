@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   ListTodo,
   Package,
+  ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
 
@@ -66,6 +67,12 @@ export const navSections: NavSection[] = [
         href: "/operations/task-center",
         icon: ListTodo,
         description: "统一承接采购、库存执行和异常待办",
+      },
+      {
+        title: "对账补偿",
+        href: "/operations/reconciliation-center",
+        icon: ShieldAlert,
+        description: "定位单据差异、任务缺口和失败补偿动作",
       },
       {
         title: "采购到货",
@@ -127,6 +134,11 @@ export const overviewQuickLinks = [
     title: "进入任务中心",
     href: "/operations/task-center",
     icon: ListTodo,
+  },
+  {
+    title: "打开对账补偿",
+    href: "/operations/reconciliation-center",
+    icon: ShieldAlert,
   },
   {
     title: "录入采购到货",

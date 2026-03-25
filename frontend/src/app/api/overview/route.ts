@@ -8,6 +8,7 @@ import type {
   MasterDataResponse,
   MetricDictionaryResponse,
   OverviewResponse,
+  ReconciliationResponse,
   TaskCenterResponse,
 } from "@/lib/polaris-types";
 import {
@@ -36,6 +37,7 @@ export async function GET(request: NextRequest) {
       metricDictionary,
       masterData,
       taskCenter,
+      reconciliation,
       auditLogs,
       agentStatus,
       reports,
@@ -52,6 +54,11 @@ export async function GET(request: NextRequest) {
       ),
       fetchPolarisJson<TaskCenterResponse>(
         "/financial/bi-dashboard/api/task-center?limit=12",
+        undefined,
+        session,
+      ),
+      fetchPolarisJson<ReconciliationResponse>(
+        "/financial/bi-dashboard/api/reconciliation-center?limit=10",
         undefined,
         session,
       ),
@@ -81,6 +88,10 @@ export async function GET(request: NextRequest) {
       taskCenterSummary: {
         ...taskCenter.summary,
         latestItems: taskCenter.items.slice(0, 5),
+      },
+      reconciliationSummary: {
+        ...reconciliation.summary,
+        latestItems: reconciliation.items.slice(0, 4),
       },
       auditSummary: {
         total: auditItems.length,
