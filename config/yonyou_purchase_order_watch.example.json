@@ -1,0 +1,27 @@
+{
+  "purchase_order_code": "",
+  "purchase_order_id": "",
+  "watch": {
+    "poll_interval_seconds": 60,
+    "timeout_seconds": 14400,
+    "approved_statuses": [
+      "1"
+    ],
+    "approved_verifystates": [],
+    "auto_create_arrival": false,
+    "auto_create_inbound": false
+  },
+  "arrival": {
+    "make_rule_code": "st_purchaseorder2",
+    "warehouse_code": "",
+    "purchase_department_code": "",
+    "accept_qty_mode": "full",
+    "recalculate_qty": true
+  },
+  "inbound": {
+    "make_rule_code": "st_purchaseorder",
+    "warehouse_code": "",
+    "bustype": "",
+    "merge_source_data": true
+  }
+}
