@@ -82,6 +82,9 @@ TASK_CENTER_API_PATH = "/financial/bi-dashboard/api/task-center"
 TASK_CENTER_ITEM_API_PATH = "/financial/bi-dashboard/api/task-center/items"
 RECONCILIATION_CENTER_API_PATH = "/financial/bi-dashboard/api/reconciliation-center"
 RECONCILIATION_CASE_API_PATH = "/financial/bi-dashboard/api/reconciliation-center/cases"
+REFURB_COLLABORATION_API_PATH = "/financial/bi-dashboard/api/refurb-collaboration"
+REFURB_CAPACITY_API_PATH = "/financial/bi-dashboard/api/refurb-collaboration/capacity"
+REFURB_SCHEDULE_ITEM_API_PATH = "/financial/bi-dashboard/api/refurb-collaboration/schedule-items"
 DATA_AGENT_ENTRY_PATH = "/financial/bi-dashboard/data-agent"
 DATA_AGENT_STATUS_API_PATH = "/financial/bi-dashboard/api/data-agent/status"
 DATA_AGENT_CHAT_API_PATH = "/financial/bi-dashboard/api/data-agent/chat"
@@ -1864,6 +1867,587 @@ def refurb_production_summaries(conn, start_date: date | None = None, end_date: 
     return result
 
 
+def refurb_stage_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "dismantle", "label": "拆解"},
+        {"value": "repair", "label": "修复"},
+        {"value": "assembly", "label": "组装"},
+    ]
+
+
+def refurb_schedule_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "pending", "label": "待排产"},
+        {"value": "in_progress", "label": "进行中"},
+        {"value": "blocked", "label": "已阻塞"},
+        {"value": "completed", "label": "已完成"},
+    ]
+
+
+def refurb_stage_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in refurb_stage_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def refurb_schedule_status_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in refurb_schedule_status_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def build_refurb_schedule_no(schedule_date: date, refurb_category: str, stage_key: str, material_name: str) -> str:
+    digest = hashlib.sha1(f"{schedule_date.isoformat()}|{refurb_category}|{stage_key}|{material_name}".encode("utf-8")).hexdigest()[:6].upper()
+    return f"FX-{schedule_date.strftime('%Y%m%d')}-{digest}"
+
+
+def normalize_refurb_capacity_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    refurb_category = str(item.get("refurb_category") or "").strip()
+    if not refurb_category:
+        raise HTTPException(status_code=400, detail="翻新类别不能为空")
+    stage_key = str(item.get("stage_key") or "").strip().lower()
+    valid_stages = {entry["value"] for entry in refurb_stage_options()}
+    if stage_key not in valid_stages:
+        raise HTTPException(status_code=400, detail="工序类型不合法")
+    daily_capacity = parse_numeric_or_zero(item.get("daily_capacity"))
+    if daily_capacity < 0:
+        raise HTTPException(status_code=400, detail="日产能不能为负数")
+    return {
+        "id": parse_int_or_default(item.get("id"), 0),
+        "refurb_category": refurb_category,
+        "stage_key": stage_key,
+        "stage_name": refurb_stage_label(stage_key),
+        "daily_capacity": daily_capacity,
+        "owner_name": str(item.get("owner_name") or "").strip(),
+        "owner_role": str(item.get("owner_role") or "翻新运营").strip(),
+        "effective_date": parse_date_or_none(str(item.get("effective_date") or "").strip()),
+        "is_enabled": parse_bool_or_default(item.get("is_enabled"), True),
+        "sort_order": parse_int_or_default(item.get("sort_order"), 100),
+        "note": str(item.get("note") or "").strip(),
+    }
+
+
+def normalize_refurb_schedule_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    schedule_date = parse_refurb_date(item.get("schedule_date"), "排产日期")
+    refurb_category = str(item.get("refurb_category") or "").strip()
+    material_name = str(item.get("material_name") or "").strip()
+    if not refurb_category:
+        raise HTTPException(status_code=400, detail="翻新类别不能为空")
+    if not material_name:
+        raise HTTPException(status_code=400, detail="物料名称不能为空")
+    stage_key = str(item.get("stage_key") or "").strip().lower()
+    valid_stages = {entry["value"] for entry in refurb_stage_options()}
+    if stage_key not in valid_stages:
+        raise HTTPException(status_code=400, detail="工序类型不合法")
+    status_value = str(item.get("status") or "pending").strip().lower() or "pending"
+    valid_statuses = {entry["value"] for entry in refurb_schedule_status_options()}
+    if status_value not in valid_statuses:
+        raise HTTPException(status_code=400, detail="排产状态不合法")
+    risk_level = str(item.get("risk_level") or "normal").strip().lower() or "normal"
+    valid_risks = {entry["value"] for entry in inventory_flow_priority_options()}
+    if risk_level not in valid_risks:
+        raise HTTPException(status_code=400, detail="风险等级不合法")
+    planned_qty = parse_numeric_or_zero(item.get("planned_qty"))
+    actual_qty = parse_numeric_or_zero(item.get("actual_qty"))
+    backlog_qty = parse_numeric_or_zero(item.get("backlog_qty"))
+    material_ready_qty = parse_numeric_or_zero(item.get("material_ready_qty"))
+    for field_name, value in {
+        "planned_qty": planned_qty,
+        "actual_qty": actual_qty,
+        "backlog_qty": backlog_qty,
+        "material_ready_qty": material_ready_qty,
+    }.items():
+        if value < 0:
+            raise HTTPException(status_code=400, detail=f"{field_name} 不能为负数")
+    schedule_no = str(item.get("schedule_no") or "").strip() or build_refurb_schedule_no(schedule_date, refurb_category, stage_key, material_name)
+    return {
+        "id": parse_int_or_default(item.get("id"), 0),
+        "schedule_no": schedule_no,
+        "schedule_date": schedule_date,
+        "refurb_category": refurb_category,
+        "material_name": material_name,
+        "stage_key": stage_key,
+        "planned_qty": planned_qty,
+        "actual_qty": actual_qty,
+        "backlog_qty": backlog_qty,
+        "material_ready_qty": material_ready_qty,
+        "status": status_value,
+        "risk_level": risk_level,
+        "owner_name": str(item.get("owner_name") or "").strip(),
+        "owner_role": str(item.get("owner_role") or "翻新运营").strip(),
+        "blocker_reason": str(item.get("blocker_reason") or "").strip(),
+        "note": str(item.get("note") or "").strip(),
+        "sort_order": parse_int_or_default(item.get("sort_order"), 100),
+    }
+
+
+def serialize_refurb_capacity_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["id"] = int(item.get("id") or 0)
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    item["is_enabled"] = bool(parse_bool_or_default(item.get("is_enabled"), True))
+    item["daily_capacity"] = to_plain(item.get("daily_capacity"))
+    item["stage_label"] = refurb_stage_label(str(item.get("stage_key") or ""))
+    return item
+
+
+def serialize_refurb_schedule_row(row: Dict[str, Any], capacity_lookup: Dict[Tuple[str, str], float] | None = None) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["id"] = int(item.get("id") or 0)
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    for key in ("planned_qty", "actual_qty", "backlog_qty", "material_ready_qty"):
+        item[key] = to_plain(item.get(key))
+    item["stage_label"] = refurb_stage_label(str(item.get("stage_key") or ""))
+    item["status_label"] = refurb_schedule_status_label(str(item.get("status") or ""))
+    item["risk_level_label"] = inventory_flow_priority_label(str(item.get("risk_level") or ""))
+    material_gap_qty = max(float(item.get("planned_qty") or 0) - float(item.get("material_ready_qty") or 0), 0)
+    item["material_gap_qty"] = to_plain(material_gap_qty)
+    capacity_value = None
+    if capacity_lookup is not None:
+        capacity_value = capacity_lookup.get((str(item.get("refurb_category") or ""), str(item.get("stage_key") or "")))
+    item["stage_capacity"] = to_plain(capacity_value or 0)
+    capacity_gap_qty = 0.0
+    if capacity_value is not None and float(item.get("planned_qty") or 0) > float(capacity_value or 0):
+        capacity_gap_qty = float(item.get("planned_qty") or 0) - float(capacity_value or 0)
+    item["capacity_gap_qty"] = to_plain(capacity_gap_qty)
+    schedule_date = parse_date_or_none(str(item.get("schedule_date") or "").strip())
+    item["is_overdue"] = bool(schedule_date is not None and schedule_date < date.today() and str(item.get("status") or "") != "completed")
+    return item
+
+
+def list_refurb_capacity_profiles(conn, category: str | None = None) -> List[Dict[str, Any]]:
+    query = """
+        SELECT
+            id, refurb_category, stage_key, stage_name, daily_capacity,
+            owner_name, owner_role, effective_date, is_enabled, sort_order, note,
+            created_by, updated_by, created_at, updated_at
+        FROM bi_refurb_capacity_profile
+        WHERE 1 = 1
+    """
+    params: Dict[str, Any] = {}
+    if category:
+        query += " AND refurb_category = :refurb_category"
+        params["refurb_category"] = category
+    query += " ORDER BY refurb_category ASC, sort_order ASC, id ASC"
+    rows = conn.execute(text(query), params).mappings().all()
+    return [serialize_refurb_capacity_row(row) for row in rows]
+
+
+def build_refurb_capacity_lookup(capacity_profiles: Sequence[Dict[str, Any]]) -> Dict[Tuple[str, str], float]:
+    lookup: Dict[Tuple[str, str], float] = {}
+    for item in capacity_profiles:
+        if not item.get("is_enabled", True):
+            continue
+        lookup[(str(item.get("refurb_category") or ""), str(item.get("stage_key") or ""))] = float(item.get("daily_capacity") or 0)
+    return lookup
+
+
+def list_refurb_schedule_items(
+    conn,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    category: str | None = None,
+    stage_key: str | None = None,
+    status_value: str | None = None,
+    risk_level: str | None = None,
+    keyword: str | None = None,
+    limit: int = 240,
+) -> List[Dict[str, Any]]:
+    query = """
+        SELECT
+            id, schedule_no, schedule_date, refurb_category, material_name, stage_key,
+            planned_qty, actual_qty, backlog_qty, material_ready_qty, status, risk_level,
+            owner_name, owner_role, blocker_reason, note, sort_order,
+            created_by, updated_by, created_at, updated_at
+        FROM bi_refurb_schedule_item
+        WHERE 1 = 1
+    """
+    params: Dict[str, Any] = {"limit": max(1, min(int(limit or 240), 500))}
+    if start_date is not None:
+        query += " AND schedule_date >= :start_date"
+        params["start_date"] = start_date
+    if end_date is not None:
+        query += " AND schedule_date <= :end_date"
+        params["end_date"] = end_date
+    if category:
+        query += " AND refurb_category = :refurb_category"
+        params["refurb_category"] = category
+    if stage_key:
+        query += " AND stage_key = :stage_key"
+        params["stage_key"] = stage_key
+    if status_value:
+        query += " AND status = :status"
+        params["status"] = status_value
+    if risk_level:
+        query += " AND risk_level = :risk_level"
+        params["risk_level"] = risk_level
+    if keyword:
+        query += " AND (schedule_no LIKE :keyword OR material_name LIKE :keyword OR blocker_reason LIKE :keyword OR note LIKE :keyword)"
+        params["keyword"] = f"%{keyword}%"
+    query += " ORDER BY FIELD(status, 'blocked', 'pending', 'in_progress', 'completed'), schedule_date ASC, sort_order ASC, id DESC LIMIT :limit"
+    rows = conn.execute(text(query), params).mappings().all()
+    capacity_lookup = build_refurb_capacity_lookup(list_refurb_capacity_profiles(conn))
+    return [serialize_refurb_schedule_row(row, capacity_lookup=capacity_lookup) for row in rows]
+
+
+def list_refurb_recent_actuals(
+    conn,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    category: str | None = None,
+    limit: int = 12,
+) -> List[Dict[str, Any]]:
+    rows = refurb_production_summaries(conn, start_date=start_date, end_date=end_date, limit=limit * 4)
+    if category:
+        rows = [row for row in rows if str(row.get("refurb_category") or "") == category]
+    return rows[:limit]
+
+
+def ensure_refurb_collaboration_seed(conn, updated_by: str = "system") -> Dict[str, int]:
+    capacity_count = int(conn.execute(text("SELECT COUNT(*) FROM bi_refurb_capacity_profile")).scalar() or 0)
+    schedule_count = int(conn.execute(text("SELECT COUNT(*) FROM bi_refurb_schedule_item")).scalar() or 0)
+    seeded_capacity = 0
+    seeded_schedule = 0
+
+    recent_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, biz_date, refurb_category, material_name, feeding_qty, total_work_hours,
+                plan_qty, quality_defect_qty, production_good_qty, production_bad_qty,
+                final_good_qty, non_refurbishable_rate, quality_reject_rate,
+                plan_achievement_rate, refurb_efficiency
+            FROM bi_refurb_production_daily
+            ORDER BY biz_date DESC, updated_at DESC, id DESC
+            LIMIT 16
+            """
+        )
+    ).mappings().all()
+    recent_actuals = [dict(row) for row in recent_rows]
+
+    if capacity_count == 0:
+        categories: List[str] = []
+        for row in recent_actuals:
+            category_value = str(row.get("refurb_category") or "").strip()
+            if category_value and category_value not in categories:
+                categories.append(category_value)
+        if not categories:
+            categories = ["整机翻新"]
+        for index, category_value in enumerate(categories[:3], start=1):
+            average_plan = max(
+                10.0,
+                sum(float(item.get("plan_qty") or 0) for item in recent_actuals if str(item.get("refurb_category") or "") == category_value) / max(
+                    1,
+                    sum(1 for item in recent_actuals if str(item.get("refurb_category") or "") == category_value),
+                ),
+            )
+            for stage_offset, stage in enumerate(refurb_stage_options(), start=1):
+                stage_multiplier = {"dismantle": 1.0, "repair": 0.85, "assembly": 0.9}.get(stage["value"], 1.0)
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO bi_refurb_capacity_profile(
+                            refurb_category, stage_key, stage_name, daily_capacity,
+                            owner_name, owner_role, effective_date, is_enabled, sort_order, note,
+                            created_by, updated_by
+                        ) VALUES (
+                            :refurb_category, :stage_key, :stage_name, :daily_capacity,
+                            :owner_name, :owner_role, :effective_date, :is_enabled, :sort_order, :note,
+                            :created_by, :updated_by
+                        )
+                        """
+                    ),
+                    {
+                        "refurb_category": category_value,
+                        "stage_key": stage["value"],
+                        "stage_name": stage["label"],
+                        "daily_capacity": round(average_plan * stage_multiplier, 2),
+                        "owner_name": "",
+                        "owner_role": "翻新运营",
+                        "effective_date": date.today(),
+                        "is_enabled": 1,
+                        "sort_order": index * 10 + stage_offset,
+                        "note": "系统根据近期翻新日报生成的默认产能档",
+                        "created_by": updated_by,
+                        "updated_by": updated_by,
+                    },
+                )
+                seeded_capacity += 1
+
+    if schedule_count == 0 and recent_actuals:
+        for index, row in enumerate(recent_actuals[:8], start=1):
+            schedule_date = parse_date_or_none(str(to_plain(row.get("biz_date")) or "").strip()) or date.today()
+            refurb_category = str(row.get("refurb_category") or "").strip() or "整机翻新"
+            material_name = str(row.get("material_name") or "").strip() or f"翻新物料 {index}"
+            plan_qty = float(row.get("plan_qty") or 0)
+            actual_qty = float(row.get("final_good_qty") or 0)
+            backlog_qty = max(plan_qty - actual_qty, 0)
+            material_ready_qty = float(row.get("feeding_qty") or 0)
+            quality_reject_rate = float(row.get("quality_reject_rate") or 0)
+            if backlog_qty > 0 and schedule_date < date.today():
+                status_value = "blocked"
+            elif actual_qty >= plan_qty and plan_qty > 0:
+                status_value = "completed"
+            elif actual_qty > 0:
+                status_value = "in_progress"
+            else:
+                status_value = "pending"
+            risk_level = "high" if quality_reject_rate >= 0.08 or backlog_qty > 0 else "normal"
+            blocker_reason = ""
+            if quality_reject_rate >= 0.08:
+                blocker_reason = "质检不良率偏高，需要复核产线节拍与返修策略"
+            elif backlog_qty > 0:
+                blocker_reason = "计划未按期完成，建议检查待料或工位节拍"
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_refurb_schedule_item(
+                        schedule_no, schedule_date, refurb_category, material_name, stage_key,
+                        planned_qty, actual_qty, backlog_qty, material_ready_qty,
+                        status, risk_level, owner_name, owner_role, blocker_reason, note,
+                        sort_order, created_by, updated_by
+                    ) VALUES (
+                        :schedule_no, :schedule_date, :refurb_category, :material_name, :stage_key,
+                        :planned_qty, :actual_qty, :backlog_qty, :material_ready_qty,
+                        :status, :risk_level, :owner_name, :owner_role, :blocker_reason, :note,
+                        :sort_order, :created_by, :updated_by
+                    )
+                    """
+                ),
+                {
+                    "schedule_no": build_refurb_schedule_no(schedule_date, refurb_category, "assembly", material_name),
+                    "schedule_date": schedule_date,
+                    "refurb_category": refurb_category,
+                    "material_name": material_name,
+                    "stage_key": "assembly",
+                    "planned_qty": plan_qty,
+                    "actual_qty": actual_qty,
+                    "backlog_qty": backlog_qty,
+                    "material_ready_qty": material_ready_qty,
+                    "status": status_value,
+                    "risk_level": risk_level,
+                    "owner_name": "",
+                    "owner_role": "翻新运营",
+                    "blocker_reason": blocker_reason,
+                    "note": "系统根据近期翻新日报生成的初始排产视图",
+                    "sort_order": index * 10,
+                    "created_by": updated_by,
+                    "updated_by": updated_by,
+                },
+            )
+            seeded_schedule += 1
+
+    if schedule_count == 0 and not recent_actuals and seeded_schedule == 0:
+        capacity_profiles = list_refurb_capacity_profiles(conn)
+        first_profile = capacity_profiles[0] if capacity_profiles else None
+        if first_profile:
+            schedule_date = date.today() + timedelta(days=1)
+            planned_qty = max(float(first_profile.get("daily_capacity") or 0) * 0.8, 12)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_refurb_schedule_item(
+                        schedule_no, schedule_date, refurb_category, material_name, stage_key,
+                        planned_qty, actual_qty, backlog_qty, material_ready_qty, status, risk_level,
+                        owner_name, owner_role, blocker_reason, note, sort_order, created_by, updated_by
+                    ) VALUES (
+                        :schedule_no, :schedule_date, :refurb_category, :material_name, :stage_key,
+                        :planned_qty, :actual_qty, :backlog_qty, :material_ready_qty, :status, :risk_level,
+                        :owner_name, :owner_role, :blocker_reason, :note, :sort_order, :created_by, :updated_by
+                    )
+                    """
+                ),
+                {
+                    "schedule_no": build_refurb_schedule_no(
+                        schedule_date,
+                        str(first_profile.get("refurb_category") or "整机翻新"),
+                        str(first_profile.get("stage_key") or "assembly"),
+                        "系统初始化协同草稿",
+                    ),
+                    "schedule_date": schedule_date,
+                    "refurb_category": str(first_profile.get("refurb_category") or "整机翻新"),
+                    "material_name": "系统初始化协同草稿",
+                    "stage_key": str(first_profile.get("stage_key") or "assembly"),
+                    "planned_qty": planned_qty,
+                    "actual_qty": 0,
+                    "backlog_qty": planned_qty,
+                    "material_ready_qty": max(planned_qty * 0.5, 0),
+                    "status": "pending",
+                    "risk_level": "normal",
+                    "owner_name": "",
+                    "owner_role": "翻新运营",
+                    "blocker_reason": "",
+                    "note": "系统生成的初始协同草稿，可直接修改覆盖",
+                    "sort_order": 10,
+                    "created_by": updated_by,
+                    "updated_by": updated_by,
+                },
+            )
+            seeded_schedule += 1
+
+    return {"seeded_capacity": seeded_capacity, "seeded_schedule": seeded_schedule}
+
+
+def upsert_refurb_capacity_profile(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+    existing = None
+    if int(payload.get("id") or 0) > 0:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_refurb_capacity_profile
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": int(payload["id"])},
+        ).mappings().first()
+    if existing is None:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_refurb_capacity_profile
+                WHERE refurb_category = :refurb_category AND stage_key = :stage_key
+                LIMIT 1
+                """
+            ),
+            {"refurb_category": payload["refurb_category"], "stage_key": payload["stage_key"]},
+        ).mappings().first()
+
+    record = {
+        **payload,
+        "is_enabled": 1 if bool(payload.get("is_enabled", True)) else 0,
+        "updated_by": updated_by,
+    }
+    if existing:
+        conn.execute(
+            text(
+                """
+                UPDATE bi_refurb_capacity_profile
+                SET
+                    refurb_category = :refurb_category,
+                    stage_key = :stage_key,
+                    stage_name = :stage_name,
+                    daily_capacity = :daily_capacity,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    effective_date = :effective_date,
+                    is_enabled = :is_enabled,
+                    sort_order = :sort_order,
+                    note = :note,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {**record, "id": int(existing["id"])},
+        )
+        return {"id": int(existing["id"]), "created": False}
+
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_refurb_capacity_profile(
+                refurb_category, stage_key, stage_name, daily_capacity,
+                owner_name, owner_role, effective_date, is_enabled,
+                sort_order, note, created_by, updated_by
+            ) VALUES (
+                :refurb_category, :stage_key, :stage_name, :daily_capacity,
+                :owner_name, :owner_role, :effective_date, :is_enabled,
+                :sort_order, :note, :created_by, :updated_by
+            )
+            """
+        ),
+        {**record, "created_by": updated_by},
+    )
+    return {"id": int(result.lastrowid or 0), "created": True}
+
+
+def upsert_refurb_schedule_item(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+    existing = None
+    if int(payload.get("id") or 0) > 0:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_refurb_schedule_item
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": int(payload["id"])},
+        ).mappings().first()
+    if existing is None:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_refurb_schedule_item
+                WHERE schedule_date = :schedule_date
+                  AND refurb_category = :refurb_category
+                  AND material_name = :material_name
+                  AND stage_key = :stage_key
+                LIMIT 1
+                """
+            ),
+            {
+                "schedule_date": payload["schedule_date"],
+                "refurb_category": payload["refurb_category"],
+                "material_name": payload["material_name"],
+                "stage_key": payload["stage_key"],
+            },
+        ).mappings().first()
+
+    record = {**payload, "updated_by": updated_by}
+    if existing:
+        conn.execute(
+            text(
+                """
+                UPDATE bi_refurb_schedule_item
+                SET
+                    schedule_no = :schedule_no,
+                    schedule_date = :schedule_date,
+                    refurb_category = :refurb_category,
+                    material_name = :material_name,
+                    stage_key = :stage_key,
+                    planned_qty = :planned_qty,
+                    actual_qty = :actual_qty,
+                    backlog_qty = :backlog_qty,
+                    material_ready_qty = :material_ready_qty,
+                    status = :status,
+                    risk_level = :risk_level,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    blocker_reason = :blocker_reason,
+                    note = :note,
+                    sort_order = :sort_order,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {**record, "id": int(existing["id"])},
+        )
+        return {"id": int(existing["id"]), "created": False}
+
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_refurb_schedule_item(
+                schedule_no, schedule_date, refurb_category, material_name, stage_key,
+                planned_qty, actual_qty, backlog_qty, material_ready_qty, status, risk_level,
+                owner_name, owner_role, blocker_reason, note, sort_order, created_by, updated_by
+            ) VALUES (
+                :schedule_no, :schedule_date, :refurb_category, :material_name, :stage_key,
+                :planned_qty, :actual_qty, :backlog_qty, :material_ready_qty, :status, :risk_level,
+                :owner_name, :owner_role, :blocker_reason, :note, :sort_order, :created_by, :updated_by
+            )
+            """
+        ),
+        {**record, "created_by": updated_by},
+    )
+    return {"id": int(result.lastrowid or 0), "created": True}
+
+
 def normalize_forecast_manual_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
     raw = payload or {}
     forecast_date = parse_refurb_date(raw.get("forecast_date"), "棰勬祴鏃ユ湡")
@@ -3087,6 +3671,25 @@ def task_center_category_options() -> List[Dict[str, str]]:
     ]
 
 
+def task_center_source_module_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement", "label": "采购到货"},
+        {"value": "inventory_flow", "label": "库存流转"},
+        {"value": "refurb", "label": "翻新协同"},
+    ]
+
+
+def task_center_category_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement_followup", "label": "到货跟进"},
+        {"value": "exception_followup", "label": "异常补偿"},
+        {"value": "inventory_execution", "label": "库存执行"},
+        {"value": "inventory_exception", "label": "库存阻塞"},
+        {"value": "production_schedule", "label": "翻新排产"},
+        {"value": "production_blocker", "label": "产线阻塞"},
+    ]
+
+
 def task_center_status_label(value: str) -> str:
     lookup = {item["value"]: item["label"] for item in task_center_status_options()}
     return lookup.get(str(value or "").strip(), str(value or "").strip())
@@ -3281,6 +3884,64 @@ def build_task_center_item_from_inventory_task(task_item: Dict[str, Any]) -> Dic
     }
 
 
+def build_task_center_item_from_refurb_schedule(schedule_item: Dict[str, Any]) -> Dict[str, Any]:
+    schedule_status = str(schedule_item.get("status") or "pending")
+    risk_level = str(schedule_item.get("risk_level") or "normal")
+    material_gap_qty = float(schedule_item.get("material_gap_qty") or 0)
+    if schedule_status == "blocked":
+        task_status = "blocked"
+        task_category = "production_blocker"
+    elif schedule_status == "completed":
+        task_status = "completed"
+        task_category = "production_schedule"
+    elif float(schedule_item.get("actual_qty") or 0) > 0:
+        task_status = "in_progress"
+        task_category = "production_schedule"
+    else:
+        task_status = "open"
+        task_category = "production_schedule"
+
+    return {
+        "source_module": "refurb",
+        "source_type": "refurb_schedule_item",
+        "source_id": str(schedule_item.get("id") or ""),
+        "source_no": str(schedule_item.get("schedule_no") or ""),
+        "task_title": f"翻新排产 · {schedule_item.get('schedule_no') or schedule_item.get('material_name') or '未命名排产'}",
+        "task_category": task_category,
+        "task_status": task_status,
+        "priority": risk_level if risk_level in {"high", "normal", "low"} else "normal",
+        "owner_name": str(schedule_item.get("owner_name") or "").strip(),
+        "owner_role": str(schedule_item.get("owner_role") or "翻新运营").strip(),
+        "due_date": parse_date_or_none(str(schedule_item.get("schedule_date") or "").strip()),
+        "source_status": schedule_status,
+        "source_detail_status": str(schedule_item.get("stage_key") or ""),
+        "summary_text": (
+            f"{schedule_item.get('material_name') or '--'} / "
+            f"计划 {schedule_item.get('planned_qty') or 0} / "
+            f"实际 {schedule_item.get('actual_qty') or 0} / "
+            f"待料 {material_gap_qty}"
+        ),
+        "note": str(schedule_item.get("blocker_reason") or schedule_item.get("note") or "").strip(),
+        "sort_order": 30 + task_center_status_sort(task_status) * 10,
+        "source_snapshot": {
+            "refurb_category": schedule_item.get("refurb_category"),
+            "material_name": schedule_item.get("material_name"),
+            "stage_key": schedule_item.get("stage_key"),
+            "stage_label": schedule_item.get("stage_label"),
+            "planned_qty": schedule_item.get("planned_qty"),
+            "actual_qty": schedule_item.get("actual_qty"),
+            "backlog_qty": schedule_item.get("backlog_qty"),
+            "material_ready_qty": schedule_item.get("material_ready_qty"),
+            "material_gap_qty": schedule_item.get("material_gap_qty"),
+            "capacity_gap_qty": schedule_item.get("capacity_gap_qty"),
+            "risk_level": schedule_item.get("risk_level"),
+            "risk_label": schedule_item.get("risk_level_label"),
+            "blocker_reason": schedule_item.get("blocker_reason"),
+            "note": schedule_item.get("note"),
+        },
+    }
+
+
 def upsert_task_center_item(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
     existing = conn.execute(
         text(
@@ -3397,14 +4058,30 @@ def sync_task_center_snapshot(conn, updated_by: str = "system") -> Dict[str, int
             """
         )
     ).mappings().all()
+    refurb_schedule_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, schedule_no, schedule_date, refurb_category, material_name, stage_key,
+                planned_qty, actual_qty, backlog_qty, material_ready_qty, status, risk_level,
+                owner_name, owner_role, blocker_reason, note, sort_order, created_by, updated_by,
+                created_at, updated_at
+            FROM bi_refurb_schedule_item
+            ORDER BY schedule_date DESC, sort_order ASC, id DESC
+            """
+        )
+    ).mappings().all()
 
-    stats = {"procurement_synced": 0, "inventory_synced": 0}
+    stats = {"procurement_synced": 0, "inventory_synced": 0, "refurb_synced": 0}
     for row in procurement_rows:
         upsert_task_center_item(conn, build_task_center_item_from_procurement(serialize_procurement_arrival_row(row)), updated_by)
         stats["procurement_synced"] += 1
     for row in inventory_rows:
         upsert_task_center_item(conn, build_task_center_item_from_inventory_task(serialize_inventory_flow_task_row(row)), updated_by)
         stats["inventory_synced"] += 1
+    for row in refurb_schedule_rows:
+        upsert_task_center_item(conn, build_task_center_item_from_refurb_schedule(serialize_refurb_schedule_row(row)), updated_by)
+        stats["refurb_synced"] += 1
     return stats
 
 
@@ -4982,6 +5659,66 @@ def ensure_schema() -> None:
                     INDEX idx_bi_refurb_date (biz_date),
                     INDEX idx_bi_refurb_category (refurb_category),
                     INDEX idx_bi_refurb_material (material_name)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_refurb_capacity_profile (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    refurb_category VARCHAR(128) NOT NULL,
+                    stage_key VARCHAR(32) NOT NULL,
+                    stage_name VARCHAR(64) NOT NULL,
+                    daily_capacity DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    owner_name VARCHAR(64) NOT NULL DEFAULT '',
+                    owner_role VARCHAR(64) NOT NULL DEFAULT '翻新运营',
+                    effective_date DATE NULL,
+                    is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    note TEXT NULL,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_refurb_capacity (refurb_category, stage_key),
+                    INDEX idx_bi_refurb_capacity_category (refurb_category),
+                    INDEX idx_bi_refurb_capacity_stage (stage_key)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_refurb_schedule_item (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    schedule_no VARCHAR(64) NOT NULL,
+                    schedule_date DATE NOT NULL,
+                    refurb_category VARCHAR(128) NOT NULL,
+                    material_name VARCHAR(255) NOT NULL,
+                    stage_key VARCHAR(32) NOT NULL,
+                    planned_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    actual_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    backlog_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    material_ready_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                    risk_level VARCHAR(16) NOT NULL DEFAULT 'normal',
+                    owner_name VARCHAR(64) NOT NULL DEFAULT '',
+                    owner_role VARCHAR(64) NOT NULL DEFAULT '翻新运营',
+                    blocker_reason TEXT NULL,
+                    note TEXT NULL,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_refurb_schedule_unique (schedule_date, refurb_category, material_name, stage_key),
+                    UNIQUE KEY uk_bi_refurb_schedule_no (schedule_no),
+                    INDEX idx_bi_refurb_schedule_date (schedule_date),
+                    INDEX idx_bi_refurb_schedule_status (status, risk_level),
+                    INDEX idx_bi_refurb_schedule_category (refurb_category, stage_key)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
@@ -7241,6 +7978,195 @@ async def import_refurb_production(
     )
 
 
+@router.get("/bi-dashboard/api/refurb-collaboration")
+async def refurb_collaboration_overview(
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    refurb_category: str | None = Query(None),
+    stage_key: str | None = Query(None),
+    status_value: str | None = Query(None, alias="status"),
+    risk_level: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(180, ge=1, le=500),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    today_value = date.today()
+    start = parse_date_or_none(start_date) or (today_value - timedelta(days=6))
+    end = parse_date_or_none(end_date) or (today_value + timedelta(days=14))
+    if start > end:
+        start, end = end, start
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        ensure_refurb_collaboration_seed(conn, "system")
+        sync_task_center_snapshot(conn, "system")
+        capacity_profiles = list_refurb_capacity_profiles(conn, category=refurb_category)
+        schedule_items = list_refurb_schedule_items(
+            conn,
+            start_date=start,
+            end_date=end,
+            category=refurb_category,
+            stage_key=stage_key,
+            status_value=status_value,
+            risk_level=risk_level,
+            keyword=str(keyword or "").strip() or None,
+            limit=limit,
+        )
+        recent_actuals = list_refurb_recent_actuals(conn, start_date=start, end_date=end, category=refurb_category, limit=10)
+
+    summary = {
+        "schedule_count": len(schedule_items),
+        "pending_count": sum(1 for item in schedule_items if item["status"] == "pending"),
+        "in_progress_count": sum(1 for item in schedule_items if item["status"] == "in_progress"),
+        "blocked_count": sum(1 for item in schedule_items if item["status"] == "blocked"),
+        "completed_count": sum(1 for item in schedule_items if item["status"] == "completed"),
+        "high_risk_count": sum(1 for item in schedule_items if item["risk_level"] == "high"),
+        "capacity_gap_count": sum(1 for item in schedule_items if float(item.get("capacity_gap_qty") or 0) > 0),
+        "material_shortage_count": sum(1 for item in schedule_items if float(item.get("material_gap_qty") or 0) > 0),
+        "total_planned_qty": sum(float(item.get("planned_qty") or 0) for item in schedule_items),
+        "total_actual_qty": sum(float(item.get("actual_qty") or 0) for item in schedule_items),
+        "latest_schedule_date": max((item["schedule_date"] for item in schedule_items if item.get("schedule_date")), default=None),
+        "latest_actual_date": max((row["biz_date"] for row in recent_actuals if row.get("biz_date")), default=None),
+        "active_category_count": len({str(item.get("refurb_category") or "") for item in schedule_items if item.get("refurb_category")}),
+    }
+    planned_total = float(summary["total_planned_qty"] or 0)
+    summary["achievement_rate"] = 0 if planned_total <= 0 else round(float(summary["total_actual_qty"] or 0) / planned_total, 4)
+
+    calendar_map: Dict[str, Dict[str, Any]] = {}
+    for item in schedule_items:
+        schedule_day = str(item.get("schedule_date") or "")
+        if not schedule_day:
+            continue
+        bucket = calendar_map.setdefault(
+            schedule_day,
+            {
+                "schedule_date": schedule_day,
+                "planned_qty": 0.0,
+                "actual_qty": 0.0,
+                "blocked_count": 0,
+                "high_risk_count": 0,
+            },
+        )
+        bucket["planned_qty"] += float(item.get("planned_qty") or 0)
+        bucket["actual_qty"] += float(item.get("actual_qty") or 0)
+        bucket["blocked_count"] += 1 if item.get("status") == "blocked" else 0
+        bucket["high_risk_count"] += 1 if item.get("risk_level") == "high" else 0
+    calendar = [calendar_map[key] for key in sorted(calendar_map.keys())]
+
+    category_values = sorted(
+        {
+            str(item.get("refurb_category") or "").strip()
+            for item in [*capacity_profiles, *schedule_items, *recent_actuals]
+            if str(item.get("refurb_category") or "").strip()
+        }
+    )
+
+    return JSONResponse(
+        {
+            "summary": summary,
+            "capacity_profiles": capacity_profiles,
+            "schedule_items": schedule_items,
+            "recent_actuals": recent_actuals,
+            "calendar": calendar,
+            "date_range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
+            "category_options": [{"value": value, "label": value} for value in category_values],
+            "stage_options": refurb_stage_options(),
+            "status_options": refurb_schedule_status_options(),
+            "risk_options": inventory_flow_priority_options(),
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/refurb-collaboration/capacity")
+async def save_refurb_capacity_profile(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    record = normalize_refurb_capacity_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        result = upsert_refurb_capacity_profile(conn, record, username)
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, refurb_category, stage_key, stage_name, daily_capacity,
+                    owner_name, owner_role, effective_date, is_enabled, sort_order, note,
+                    created_by, updated_by, created_at, updated_at
+                FROM bi_refurb_capacity_profile
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": result["id"]},
+        ).mappings().first()
+    item = serialize_refurb_capacity_row(saved_row)
+    record_dashboard_audit(
+        module_key="refurb",
+        module_name="翻新协同",
+        action_key="capacity.upsert",
+        action_name="保存翻新产能档",
+        target_type="refurb_capacity",
+        target_id=f"{item['refurb_category']}|{item['stage_key']}",
+        target_name=f"{item['refurb_category']} / {item['stage_label']}",
+        detail_summary=f"日产能 {item['daily_capacity']}，负责人 {item['owner_name'] or item['owner_role'] or '未分配'}",
+        detail=item,
+        triggered_by=username,
+        source_path=REFURB_CAPACITY_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"saved": True, "item": item})
+
+
+@router.post("/bi-dashboard/api/refurb-collaboration/schedule-items")
+async def save_refurb_schedule_item(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    record = normalize_refurb_schedule_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        ensure_refurb_collaboration_seed(conn, "system")
+        result = upsert_refurb_schedule_item(conn, record, username)
+        task_center_sync = sync_task_center_snapshot(conn, username)
+        capacity_lookup = build_refurb_capacity_lookup(list_refurb_capacity_profiles(conn))
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, schedule_no, schedule_date, refurb_category, material_name, stage_key,
+                    planned_qty, actual_qty, backlog_qty, material_ready_qty, status, risk_level,
+                    owner_name, owner_role, blocker_reason, note, sort_order,
+                    created_by, updated_by, created_at, updated_at
+                FROM bi_refurb_schedule_item
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": result["id"]},
+        ).mappings().first()
+    item = serialize_refurb_schedule_row(saved_row, capacity_lookup=capacity_lookup)
+    record_dashboard_audit(
+        module_key="refurb",
+        module_name="翻新协同",
+        action_key="schedule.upsert",
+        action_name="保存翻新排产项",
+        target_type="refurb_schedule",
+        target_id=item["schedule_no"],
+        target_name=f"{item['schedule_date']} / {item['refurb_category']} / {item['material_name']}",
+        detail_summary=f"{item['status_label']} / {item['stage_label']} / 风险 {item['risk_level_label']}",
+        detail={"item": item, "task_center_sync": task_center_sync},
+        triggered_by=username,
+        source_path=REFURB_SCHEDULE_ITEM_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"saved": True, "item": item, "task_center_sync": task_center_sync})
+
+
 @router.get("/bi-dashboard/api/forecast-alerts/overview")
 async def forecast_alert_overview(_auth: str = Depends(require_auth)) -> JSONResponse:
     ensure_schema()
@@ -8898,6 +9824,7 @@ async def list_task_center_items(
         "overdue_count": sum(1 for item in items if item["is_overdue"]),
         "procurement_count": sum(1 for item in items if item["source_module"] == "procurement"),
         "inventory_flow_count": sum(1 for item in items if item["source_module"] == "inventory_flow"),
+        "refurb_count": sum(1 for item in items if item["source_module"] == "refurb"),
         "high_priority_count": sum(1 for item in items if item["priority"] == "high"),
         "latest_updated_at": max((item["updated_at"] for item in items if item["updated_at"]), default=None),
     }

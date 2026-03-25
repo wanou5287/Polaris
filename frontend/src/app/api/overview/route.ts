@@ -9,12 +9,10 @@ import type {
   MetricDictionaryResponse,
   OverviewResponse,
   ReconciliationResponse,
+  RefurbCollaborationResponse,
   TaskCenterResponse,
 } from "@/lib/polaris-types";
-import {
-  POLARIS_SESSION_COOKIE,
-  fetchPolarisJson,
-} from "@/lib/polaris-server";
+import { POLARIS_SESSION_COOKIE, fetchPolarisJson } from "@/lib/polaris-server";
 
 function countBy<T>(items: T[], selector: (item: T) => string) {
   const map = new Map<string, number>();
@@ -37,46 +35,20 @@ export async function GET(request: NextRequest) {
       metricDictionary,
       masterData,
       taskCenter,
+      refurbCollaboration,
       reconciliation,
       auditLogs,
       agentStatus,
       reports,
     ] = await Promise.all([
-      fetchPolarisJson<MetricDictionaryResponse>(
-        "/financial/bi-dashboard/api/metric-dictionary",
-        undefined,
-        session,
-      ),
-      fetchPolarisJson<MasterDataResponse>(
-        "/financial/bi-dashboard/api/master-data",
-        undefined,
-        session,
-      ),
-      fetchPolarisJson<TaskCenterResponse>(
-        "/financial/bi-dashboard/api/task-center?limit=12",
-        undefined,
-        session,
-      ),
-      fetchPolarisJson<ReconciliationResponse>(
-        "/financial/bi-dashboard/api/reconciliation-center?limit=10",
-        undefined,
-        session,
-      ),
-      fetchPolarisJson<AuditLogResponse>(
-        "/financial/bi-dashboard/api/audit-logs?limit=24",
-        undefined,
-        session,
-      ),
-      fetchPolarisJson<DataAgentStatus>(
-        "/financial/bi-dashboard/api/data-agent/status",
-        undefined,
-        session,
-      ),
-      fetchPolarisJson<DataAgentReportsResponse>(
-        "/financial/bi-dashboard/api/data-agent/reports?limit=8",
-        undefined,
-        session,
-      ),
+      fetchPolarisJson<MetricDictionaryResponse>("/financial/bi-dashboard/api/metric-dictionary", undefined, session),
+      fetchPolarisJson<MasterDataResponse>("/financial/bi-dashboard/api/master-data", undefined, session),
+      fetchPolarisJson<TaskCenterResponse>("/financial/bi-dashboard/api/task-center?limit=12", undefined, session),
+      fetchPolarisJson<RefurbCollaborationResponse>("/financial/bi-dashboard/api/refurb-collaboration?limit=10", undefined, session),
+      fetchPolarisJson<ReconciliationResponse>("/financial/bi-dashboard/api/reconciliation-center?limit=10", undefined, session),
+      fetchPolarisJson<AuditLogResponse>("/financial/bi-dashboard/api/audit-logs?limit=24", undefined, session),
+      fetchPolarisJson<DataAgentStatus>("/financial/bi-dashboard/api/data-agent/status", undefined, session),
+      fetchPolarisJson<DataAgentReportsResponse>("/financial/bi-dashboard/api/data-agent/reports?limit=8", undefined, session),
     ]);
 
     const auditItems = auditLogs.items || [];
@@ -89,6 +61,10 @@ export async function GET(request: NextRequest) {
         ...taskCenter.summary,
         latestItems: taskCenter.items.slice(0, 5),
       },
+      refurbSummary: {
+        ...refurbCollaboration.summary,
+        latestItems: refurbCollaboration.schedule_items.slice(0, 4),
+      },
       reconciliationSummary: {
         ...reconciliation.summary,
         latestItems: reconciliation.items.slice(0, 4),
@@ -98,30 +74,20 @@ export async function GET(request: NextRequest) {
         success: auditItems.filter((item) => item.result_status === "success").length,
         failed: auditItems.filter((item) => item.result_status === "failed").length,
         latestItems: auditItems.slice(0, 6),
-        moduleBreakdown: countBy(
-          auditItems,
-          (item: AuditLogItem) => item.module_name || item.module_key || "未分类",
-        ),
+        moduleBreakdown: countBy(auditItems, (item: AuditLogItem) => item.module_name || item.module_key || "未分类"),
       },
       agentStatus,
       reports: {
         items: reportItems,
-        weeklyCount: reportItems.filter((item) => item.report_type === "weekly")
-          .length,
-        monthlyCount: reportItems.filter(
-          (item) => item.report_type === "monthly",
-        ).length,
-        series: countByToSeries(
-          reportItems,
-          (item) => item.period_label || "未命名周期",
-        ),
+        weeklyCount: reportItems.filter((item) => item.report_type === "weekly").length,
+        monthlyCount: reportItems.filter((item) => item.report_type === "monthly").length,
+        series: countByToSeries(reportItems, (item) => item.period_label || "未命名周期"),
       },
     };
 
     return NextResponse.json(payload);
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "总览数据加载失败，请稍后重试";
+    const message = error instanceof Error ? error.message : "总览数据加载失败，请稍后重试";
     return NextResponse.json({ message }, { status: 500 });
   }
 }

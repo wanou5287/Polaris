@@ -307,6 +307,7 @@ export type TaskCenterResponse = {
     overdue_count: number;
     procurement_count: number;
     inventory_flow_count: number;
+    refurb_count: number;
     high_priority_count: number;
     latest_updated_at: string | null;
   };
@@ -371,6 +372,114 @@ export type ReconciliationResponse = {
   compensation_action_options: Option[];
 };
 
+export type RefurbCapacityProfile = {
+  id: number;
+  refurb_category: string;
+  stage_key: string;
+  stage_label: string;
+  stage_name: string;
+  daily_capacity: number;
+  owner_name: string;
+  owner_role: string;
+  effective_date: string | null;
+  is_enabled: boolean;
+  sort_order: number;
+  note: string;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type RefurbScheduleItem = {
+  id: number;
+  schedule_no: string;
+  schedule_date: string | null;
+  refurb_category: string;
+  material_name: string;
+  stage_key: string;
+  stage_label: string;
+  planned_qty: number;
+  actual_qty: number;
+  backlog_qty: number;
+  material_ready_qty: number;
+  material_gap_qty: number;
+  stage_capacity: number;
+  capacity_gap_qty: number;
+  status: string;
+  status_label: string;
+  risk_level: string;
+  risk_level_label: string;
+  owner_name: string;
+  owner_role: string;
+  blocker_reason: string;
+  note: string;
+  sort_order: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  is_overdue: boolean;
+};
+
+export type RefurbActualItem = {
+  id: number;
+  biz_date: string | null;
+  refurb_category: string;
+  material_name: string;
+  feeding_qty: number;
+  total_work_hours: number;
+  plan_qty: number;
+  quality_defect_qty: number;
+  production_good_qty: number;
+  production_bad_qty: number;
+  final_good_qty: number;
+  non_refurbishable_rate: number;
+  quality_reject_rate: number;
+  plan_achievement_rate: number;
+  refurb_efficiency: number;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type RefurbCollaborationResponse = {
+  summary: {
+    schedule_count: number;
+    pending_count: number;
+    in_progress_count: number;
+    blocked_count: number;
+    completed_count: number;
+    high_risk_count: number;
+    capacity_gap_count: number;
+    material_shortage_count: number;
+    total_planned_qty: number;
+    total_actual_qty: number;
+    achievement_rate: number;
+    latest_schedule_date: string | null;
+    latest_actual_date: string | null;
+    active_category_count: number;
+  };
+  capacity_profiles: RefurbCapacityProfile[];
+  schedule_items: RefurbScheduleItem[];
+  recent_actuals: RefurbActualItem[];
+  calendar: Array<{
+    schedule_date: string;
+    planned_qty: number;
+    actual_qty: number;
+    blocked_count: number;
+    high_risk_count: number;
+  }>;
+  date_range: {
+    start_date: string;
+    end_date: string;
+  };
+  category_options: Option[];
+  stage_options: Option[];
+  status_options: Option[];
+  risk_options: Option[];
+};
+
 export type DataAgentStatus = {
   module_name: string;
   display_name: string;
@@ -420,6 +529,9 @@ export type OverviewResponse = {
   masterSummary: MasterDataResponse["summary"];
   taskCenterSummary: TaskCenterResponse["summary"] & {
     latestItems: TaskCenterItem[];
+  };
+  refurbSummary: RefurbCollaborationResponse["summary"] & {
+    latestItems: RefurbScheduleItem[];
   };
   reconciliationSummary: ReconciliationResponse["summary"] & {
     latestItems: ReconciliationCase[];

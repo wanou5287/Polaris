@@ -5,6 +5,7 @@ import {
   BookCheck,
   Boxes,
   ChartColumnIncreasing,
+  Factory,
   LayoutGrid,
   ListTodo,
   Package,
@@ -86,6 +87,12 @@ export const navSections: NavSection[] = [
         icon: ArrowLeftRight,
         description: "状态流转、仓间调拨与自动触发任务",
       },
+      {
+        title: "翻新协同",
+        href: "/operations/refurb-production",
+        icon: Factory,
+        description: "产能配置、排产日历和产线风险协同",
+      },
     ],
   },
   {
@@ -149,6 +156,11 @@ export const overviewQuickLinks = [
     title: "处理库存流转",
     href: "/operations/inventory-flows",
     icon: ArrowLeftRight,
+  },
+  {
+    title: "进入翻新协同",
+    href: "/operations/refurb-production",
+    icon: Factory,
   },
   {
     title: "进入 DataAgent",
