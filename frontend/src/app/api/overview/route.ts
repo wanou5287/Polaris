@@ -9,6 +9,7 @@ import type {
   MetricDictionaryResponse,
   OverviewResponse,
   ReconciliationResponse,
+  ReplenishmentWorkbenchResponse,
   RefurbCollaborationResponse,
   TaskCenterResponse,
 } from "@/lib/polaris-types";
@@ -35,6 +36,7 @@ export async function GET(request: NextRequest) {
       metricDictionary,
       masterData,
       taskCenter,
+      replenishment,
       refurbCollaboration,
       reconciliation,
       auditLogs,
@@ -44,6 +46,7 @@ export async function GET(request: NextRequest) {
       fetchPolarisJson<MetricDictionaryResponse>("/financial/bi-dashboard/api/metric-dictionary", undefined, session),
       fetchPolarisJson<MasterDataResponse>("/financial/bi-dashboard/api/master-data", undefined, session),
       fetchPolarisJson<TaskCenterResponse>("/financial/bi-dashboard/api/task-center?limit=12", undefined, session),
+      fetchPolarisJson<ReplenishmentWorkbenchResponse>("/financial/bi-dashboard/api/replenishment-workbench?limit=10", undefined, session),
       fetchPolarisJson<RefurbCollaborationResponse>("/financial/bi-dashboard/api/refurb-collaboration?limit=10", undefined, session),
       fetchPolarisJson<ReconciliationResponse>("/financial/bi-dashboard/api/reconciliation-center?limit=10", undefined, session),
       fetchPolarisJson<AuditLogResponse>("/financial/bi-dashboard/api/audit-logs?limit=24", undefined, session),
@@ -60,6 +63,10 @@ export async function GET(request: NextRequest) {
       taskCenterSummary: {
         ...taskCenter.summary,
         latestItems: taskCenter.items.slice(0, 5),
+      },
+      replenishmentSummary: {
+        ...replenishment.summary,
+        latestItems: replenishment.items.slice(0, 4),
       },
       refurbSummary: {
         ...refurbCollaboration.summary,

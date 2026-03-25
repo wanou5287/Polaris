@@ -116,7 +116,7 @@ function TopBar({ username }: { username: string }) {
 
   return (
     <header className="sticky top-0 z-30 border-b border-border/70 bg-white/72 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-[1400px] items-center gap-4 px-4 py-4 sm:px-6 lg:px-10">
+      <div className="mx-auto flex max-w-[1560px] items-center gap-4 px-4 py-4 sm:px-5 lg:px-6 xl:px-8">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild className="lg:hidden">
             <Button variant="outline" size="icon" className="rounded-2xl">
@@ -194,7 +194,7 @@ export function AppShell({
         </aside>
         <div className="lg:pl-[280px]">
           <TopBar username={username} />
-          <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-10">
+          <main className="mx-auto max-w-[1560px] px-4 py-6 sm:px-5 lg:px-6 xl:px-8">
             {children}
           </main>
         </div>

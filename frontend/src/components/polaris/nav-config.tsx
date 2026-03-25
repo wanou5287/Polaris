@@ -1,4 +1,4 @@
-import type { LucideIcon } from "lucide-react";
+﻿import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeftRight,
   Bot,
@@ -9,6 +9,8 @@ import {
   LayoutGrid,
   ListTodo,
   Package,
+  PackagePlus,
+  RotateCcw,
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
@@ -44,7 +46,7 @@ export const navSections: NavSection[] = [
         title: "指标口径",
         href: "/governance/metrics",
         icon: BookCheck,
-        description: "统一经营口径、责任人与版本信息",
+        description: "统一经营口径、责任人和版本信息",
       },
       {
         title: "主数据",
@@ -92,6 +94,18 @@ export const navSections: NavSection[] = [
         href: "/operations/refurb-production",
         icon: Factory,
         description: "产能配置、排产日历和产线风险协同",
+      },
+      {
+        title: "逆向售后",
+        href: "/operations/after-sales-returns",
+        icon: RotateCcw,
+        description: "退货收件、质检诊断、翻新承接与退款闭环入口",
+      },
+      {
+        title: "补货协同",
+        href: "/operations/replenishment-planning",
+        icon: PackagePlus,
+        description: "从库存预警到补货建议、供应方式和责任计划协同",
       },
     ],
   },
@@ -161,6 +175,16 @@ export const overviewQuickLinks = [
     title: "进入翻新协同",
     href: "/operations/refurb-production",
     icon: Factory,
+  },
+  {
+    title: "进入逆向售后",
+    href: "/operations/after-sales-returns",
+    icon: RotateCcw,
+  },
+  {
+    title: "进入补货协同",
+    href: "/operations/replenishment-planning",
+    icon: PackagePlus,
   },
   {
     title: "进入 DataAgent",

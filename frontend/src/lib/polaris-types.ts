@@ -308,6 +308,8 @@ export type TaskCenterResponse = {
     procurement_count: number;
     inventory_flow_count: number;
     refurb_count: number;
+    after_sales_count: number;
+    replenishment_count: number;
     high_priority_count: number;
     latest_updated_at: string | null;
   };
@@ -480,6 +482,181 @@ export type RefurbCollaborationResponse = {
   risk_options: Option[];
 };
 
+export type ReturnUnpackAttendanceSummary = {
+  biz_date: string | null;
+  attendance_count: number;
+  sales_return_warehouse: number;
+  total_return_qty: number;
+  total_sales_qty: number;
+  return_unpack_efficiency: number;
+};
+
+export type AfterSalesCase = {
+  id: number;
+  case_no: string;
+  order_no: string;
+  reverse_type: string;
+  reverse_type_label: string;
+  status: string;
+  status_label: string;
+  severity: string;
+  severity_label: string;
+  channel_code: string;
+  channel_name: string;
+  shop_name: string;
+  sku_code: string;
+  sku_name: string;
+  request_qty: number;
+  received_qty: number;
+  pending_receive_qty: number;
+  receive_rate: number;
+  refund_amount: number;
+  issue_category: string;
+  reverse_warehouse_code: string;
+  reverse_warehouse_name: string;
+  intake_date: string | null;
+  promised_finish_date: string | null;
+  owner_name: string;
+  owner_role: string;
+  customer_reason: string;
+  diagnosis_result: string;
+  action_plan: string;
+  note: string;
+  sort_order: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  aging_days: number;
+  is_overdue: boolean;
+};
+
+export type AfterSalesWorkbenchResponse = {
+  summary: {
+    total_count: number;
+    submitted_count: number;
+    received_count: number;
+    diagnosing_count: number;
+    refurbishing_count: number;
+    refund_pending_count: number;
+    closed_count: number;
+    blocked_count: number;
+    overdue_count: number;
+    high_severity_count: number;
+    total_request_qty: number;
+    total_received_qty: number;
+    total_refund_amount: number;
+    reverse_warehouse_count: number;
+    latest_intake_date: string | null;
+    latest_attendance_date: string | null;
+    latest_attendance_count: number;
+    latest_return_qty: number;
+  };
+  items: AfterSalesCase[];
+  attendance: ReturnUnpackAttendanceSummary[];
+  date_range: {
+    start_date: string;
+    end_date: string;
+  };
+  status_options: Option[];
+  type_options: Option[];
+  severity_options: Option[];
+  warehouse_options: Option[];
+  channel_options: Option[];
+};
+
+export type ReplenishmentAlertSnapshot = {
+  id: number;
+  snapshot_date: string | null;
+  material_name: string;
+  demand_type: string;
+  material_role: string;
+  current_stock_qty: number;
+  forecast_14d_qty: number;
+  coverage_days: number;
+  threshold_days: number;
+  alert_level: string;
+  pushed_to_dingtalk: boolean | number;
+  push_result: string;
+  message: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type ReplenishmentForecastSnapshot = {
+  material_name: string;
+  demand_type: string;
+  material_role: string;
+  forecast_14d_qty: number;
+  latest_forecast_date: string | null;
+  threshold_days: number;
+};
+
+export type ReplenishmentPlanItem = {
+  id: number;
+  suggestion_no: string;
+  plan_date: string | null;
+  material_name: string;
+  demand_type: string;
+  material_role: string;
+  current_stock_qty: number;
+  forecast_14d_qty: number;
+  coverage_days: number;
+  threshold_days: number;
+  target_stock_qty: number;
+  suggested_qty: number;
+  supply_mode: string;
+  supply_mode_label: string;
+  plan_status: string;
+  plan_status_label: string;
+  priority: string;
+  priority_label: string;
+  owner_name: string;
+  owner_role: string;
+  expected_ready_date: string | null;
+  supplier_name: string;
+  linked_refurb_category: string;
+  note: string;
+  source_snapshot: Record<string, unknown> | null;
+  sort_order: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  is_overdue: boolean;
+};
+
+export type ReplenishmentWorkbenchResponse = {
+  summary: {
+    total_count: number;
+    draft_count: number;
+    reviewing_count: number;
+    confirmed_count: number;
+    executing_count: number;
+    blocked_count: number;
+    closed_count: number;
+    overdue_count: number;
+    high_priority_count: number;
+    purchase_count: number;
+    refurb_count: number;
+    transfer_count: number;
+    watch_count: number;
+    total_suggested_qty: number;
+    total_target_stock_qty: number;
+    material_count: number;
+    alert_count: number;
+    latest_plan_date: string | null;
+    latest_alert_date: string | null;
+  };
+  items: ReplenishmentPlanItem[];
+  alerts: ReplenishmentAlertSnapshot[];
+  forecasts: ReplenishmentForecastSnapshot[];
+  plan_status_options: Option[];
+  supply_mode_options: Option[];
+  priority_options: Option[];
+  demand_type_options: Option[];
+};
+
 export type DataAgentStatus = {
   module_name: string;
   display_name: string;
@@ -529,6 +706,9 @@ export type OverviewResponse = {
   masterSummary: MasterDataResponse["summary"];
   taskCenterSummary: TaskCenterResponse["summary"] & {
     latestItems: TaskCenterItem[];
+  };
+  replenishmentSummary: ReplenishmentWorkbenchResponse["summary"] & {
+    latestItems: ReplenishmentPlanItem[];
   };
   refurbSummary: RefurbCollaborationResponse["summary"] & {
     latestItems: RefurbScheduleItem[];

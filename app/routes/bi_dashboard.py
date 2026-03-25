@@ -85,6 +85,10 @@ RECONCILIATION_CASE_API_PATH = "/financial/bi-dashboard/api/reconciliation-cente
 REFURB_COLLABORATION_API_PATH = "/financial/bi-dashboard/api/refurb-collaboration"
 REFURB_CAPACITY_API_PATH = "/financial/bi-dashboard/api/refurb-collaboration/capacity"
 REFURB_SCHEDULE_ITEM_API_PATH = "/financial/bi-dashboard/api/refurb-collaboration/schedule-items"
+AFTER_SALES_WORKBENCH_API_PATH = "/financial/bi-dashboard/api/after-sales-workbench"
+AFTER_SALES_CASE_API_PATH = "/financial/bi-dashboard/api/after-sales-workbench/cases"
+REPLENISHMENT_WORKBENCH_API_PATH = "/financial/bi-dashboard/api/replenishment-workbench"
+REPLENISHMENT_PLAN_API_PATH = "/financial/bi-dashboard/api/replenishment-workbench/plans"
 DATA_AGENT_ENTRY_PATH = "/financial/bi-dashboard/data-agent"
 DATA_AGENT_STATUS_API_PATH = "/financial/bi-dashboard/api/data-agent/status"
 DATA_AGENT_CHAT_API_PATH = "/financial/bi-dashboard/api/data-agent/chat"
@@ -2448,6 +2452,960 @@ def upsert_refurb_schedule_item(conn, payload: Dict[str, Any], updated_by: str) 
     return {"id": int(result.lastrowid or 0), "created": True}
 
 
+def after_sales_reverse_type_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "return_refund", "label": "退货退款"},
+        {"value": "refund_only", "label": "仅退款"},
+        {"value": "exchange", "label": "换货"},
+        {"value": "repair", "label": "维修"},
+        {"value": "reverse_refurb", "label": "退回翻新"},
+    ]
+
+
+def after_sales_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "submitted", "label": "待收件"},
+        {"value": "received", "label": "已收件"},
+        {"value": "diagnosing", "label": "质检诊断"},
+        {"value": "refurbishing", "label": "翻新处理中"},
+        {"value": "refund_pending", "label": "待退款"},
+        {"value": "closed", "label": "已闭环"},
+        {"value": "blocked", "label": "阻塞异常"},
+    ]
+
+
+def after_sales_reverse_type_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in after_sales_reverse_type_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def after_sales_status_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in after_sales_status_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def generate_after_sales_case_no() -> str:
+    return f"SHH{datetime.now().strftime('%Y%m%d%H%M%S')}{int(time.time() * 1000) % 1000:03d}"
+
+
+def default_after_sales_case_rows() -> List[Dict[str, Any]]:
+    today = date.today()
+    return [
+        {
+            "case_no": f"SHH{today.strftime('%Y%m%d')}001",
+            "order_no": f"SO{today.strftime('%Y%m')}031",
+            "reverse_type": "return_refund",
+            "status": "diagnosing",
+            "severity": "high",
+            "channel_code": "JD",
+            "channel_name": "京东自营",
+            "shop_name": "北极星数码旗舰店",
+            "sku_code": "TAB-PRO-256G",
+            "sku_name": "学习平板 Pro 256G",
+            "request_qty": 12,
+            "received_qty": 12,
+            "refund_amount": 21588,
+            "issue_category": "屏幕异常",
+            "reverse_warehouse_code": "SZ-RV",
+            "reverse_warehouse_name": "深圳逆向仓",
+            "intake_date": today - timedelta(days=2),
+            "promised_finish_date": today + timedelta(days=1),
+            "owner_name": "刘媛",
+            "owner_role": "售后质检",
+            "customer_reason": "屏幕花屏，申请退货退款",
+            "diagnosis_result": "其中 9 台可返修，3 台需直接退回供应商。",
+            "action_plan": "先分拣返修机，再同步供应商责任认定。",
+            "note": "优先处理，避免超时赔付。",
+            "sort_order": 10,
+        },
+        {
+            "case_no": f"SHH{today.strftime('%Y%m%d')}002",
+            "order_no": f"SO{today.strftime('%Y%m')}047",
+            "reverse_type": "exchange",
+            "status": "received",
+            "severity": "normal",
+            "channel_code": "TMALL",
+            "channel_name": "天猫旗舰店",
+            "shop_name": "北极星官方旗舰店",
+            "sku_code": "TAB-LITE-64G",
+            "sku_name": "学习平板 Lite 64G",
+            "request_qty": 8,
+            "received_qty": 6,
+            "refund_amount": 0,
+            "issue_category": "电池异常",
+            "reverse_warehouse_code": "SH-RV",
+            "reverse_warehouse_name": "上海逆向仓",
+            "intake_date": today - timedelta(days=1),
+            "promised_finish_date": today + timedelta(days=2),
+            "owner_name": "陈岳",
+            "owner_role": "售后运营",
+            "customer_reason": "续航明显下降，申请换货",
+            "diagnosis_result": "已收件 6 台，待剩余 2 台到仓后统一质检。",
+            "action_plan": "完成收件后切入质检诊断，确认是否直接换新。",
+            "note": "",
+            "sort_order": 20,
+        },
+        {
+            "case_no": f"SHH{today.strftime('%Y%m%d')}003",
+            "order_no": f"SO{today.strftime('%Y%m')}058",
+            "reverse_type": "reverse_refurb",
+            "status": "refurbishing",
+            "severity": "normal",
+            "channel_code": "DY",
+            "channel_name": "抖音商城",
+            "shop_name": "北极星直播专营店",
+            "sku_code": "TAB-A12-128G",
+            "sku_name": "学习平板 A12 128G",
+            "request_qty": 15,
+            "received_qty": 15,
+            "refund_amount": 0,
+            "issue_category": "外观瑕疵",
+            "reverse_warehouse_code": "WH-RV",
+            "reverse_warehouse_name": "武汉逆向仓",
+            "intake_date": today - timedelta(days=4),
+            "promised_finish_date": today + timedelta(days=3),
+            "owner_name": "孙驰",
+            "owner_role": "翻新运营",
+            "customer_reason": "外观磨损，二次销售前需翻新。",
+            "diagnosis_result": "可全部进入翻新工位，不涉及退款。",
+            "action_plan": "并入翻新日排产，优先处理直播间高周转机型。",
+            "note": "与翻新协同联动。",
+            "sort_order": 30,
+        },
+        {
+            "case_no": f"SHH{today.strftime('%Y%m%d')}004",
+            "order_no": f"SO{today.strftime('%Y%m')}066",
+            "reverse_type": "refund_only",
+            "status": "blocked",
+            "severity": "high",
+            "channel_code": "PDD",
+            "channel_name": "拼多多",
+            "shop_name": "北极星教育电器",
+            "sku_code": "ACC-PEN-A12",
+            "sku_name": "A12 原装手写笔",
+            "request_qty": 20,
+            "received_qty": 20,
+            "refund_amount": 2998,
+            "issue_category": "批次不良",
+            "reverse_warehouse_code": "SZ-RV",
+            "reverse_warehouse_name": "深圳逆向仓",
+            "intake_date": today - timedelta(days=6),
+            "promised_finish_date": today - timedelta(days=1),
+            "owner_name": "李蓉",
+            "owner_role": "售后主管",
+            "customer_reason": "批次不良集中投诉，平台要求退款。",
+            "diagnosis_result": "需等待供应商赔付确认后再统一退款。",
+            "action_plan": "供应商责任未确认前暂不出款，先保留平台沟通记录。",
+            "note": "已超承诺时效，需要重点跟进。",
+            "sort_order": 40,
+        },
+    ]
+
+
+def ensure_after_sales_case_seed(conn) -> None:
+    count = int(conn.execute(text("SELECT COUNT(*) FROM bi_after_sales_case")).scalar() or 0)
+    if count > 0:
+        return
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_after_sales_case(
+                case_no, order_no, reverse_type, status, severity,
+                channel_code, channel_name, shop_name, sku_code, sku_name,
+                request_qty, received_qty, refund_amount, issue_category,
+                reverse_warehouse_code, reverse_warehouse_name, intake_date, promised_finish_date,
+                owner_name, owner_role, customer_reason, diagnosis_result, action_plan, note,
+                sort_order, created_by, updated_by
+            ) VALUES (
+                :case_no, :order_no, :reverse_type, :status, :severity,
+                :channel_code, :channel_name, :shop_name, :sku_code, :sku_name,
+                :request_qty, :received_qty, :refund_amount, :issue_category,
+                :reverse_warehouse_code, :reverse_warehouse_name, :intake_date, :promised_finish_date,
+                :owner_name, :owner_role, :customer_reason, :diagnosis_result, :action_plan, :note,
+                :sort_order, 'system', 'system'
+            )
+            """
+        ),
+        default_after_sales_case_rows(),
+    )
+
+
+def normalize_after_sales_case_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    reverse_type = str(item.get("reverse_type") or "return_refund").strip().lower() or "return_refund"
+    status_value = str(item.get("status") or "submitted").strip().lower() or "submitted"
+    severity = str(item.get("severity") or "normal").strip().lower() or "normal"
+    valid_types = {option["value"] for option in after_sales_reverse_type_options()}
+    valid_statuses = {option["value"] for option in after_sales_status_options()}
+    valid_priorities = {option["value"] for option in inventory_flow_priority_options()}
+    if reverse_type not in valid_types:
+        raise HTTPException(status_code=400, detail="逆向类型不合法")
+    if status_value not in valid_statuses:
+        raise HTTPException(status_code=400, detail="售后状态不合法")
+    if severity not in valid_priorities:
+        raise HTTPException(status_code=400, detail="优先级不合法")
+
+    sku_code = str(item.get("sku_code") or "").strip()
+    sku_name = str(item.get("sku_name") or "").strip()
+    if not sku_code or not sku_name:
+        raise HTTPException(status_code=400, detail="售后工单需要 SKU 编码和名称")
+
+    intake_date = parse_date_or_none(str(item.get("intake_date") or "").strip())
+    if intake_date is None:
+        raise HTTPException(status_code=400, detail="售后工单需要收件日期")
+    promised_finish_date = parse_date_or_none(str(item.get("promised_finish_date") or "").strip())
+    request_qty = max(0.0, to_number(item.get("request_qty")) or 0.0)
+    received_qty = max(0.0, to_number(item.get("received_qty")) or 0.0)
+    if request_qty <= 0:
+        raise HTTPException(status_code=400, detail="申请数量必须大于 0")
+    if received_qty > request_qty:
+        received_qty = request_qty
+    refund_amount = max(0.0, to_number(item.get("refund_amount")) or 0.0)
+
+    return {
+        "id": parse_int_or_default(item.get("id"), 0),
+        "case_no": str(item.get("case_no") or "").strip() or generate_after_sales_case_no(),
+        "order_no": str(item.get("order_no") or "").strip(),
+        "reverse_type": reverse_type,
+        "status": status_value,
+        "severity": severity,
+        "channel_code": str(item.get("channel_code") or "").strip(),
+        "channel_name": str(item.get("channel_name") or "").strip(),
+        "shop_name": str(item.get("shop_name") or "").strip(),
+        "sku_code": sku_code,
+        "sku_name": sku_name,
+        "request_qty": round(request_qty, 2),
+        "received_qty": round(received_qty, 2),
+        "refund_amount": round(refund_amount, 2),
+        "issue_category": str(item.get("issue_category") or "").strip(),
+        "reverse_warehouse_code": str(item.get("reverse_warehouse_code") or "").strip(),
+        "reverse_warehouse_name": str(item.get("reverse_warehouse_name") or "").strip(),
+        "intake_date": intake_date,
+        "promised_finish_date": promised_finish_date,
+        "owner_name": str(item.get("owner_name") or "").strip(),
+        "owner_role": str(item.get("owner_role") or "售后运营").strip() or "售后运营",
+        "customer_reason": str(item.get("customer_reason") or "").strip(),
+        "diagnosis_result": str(item.get("diagnosis_result") or "").strip(),
+        "action_plan": str(item.get("action_plan") or "").strip(),
+        "note": str(item.get("note") or "").strip(),
+        "sort_order": max(0, parse_int_or_default(item.get("sort_order"), 100)),
+    }
+
+
+def serialize_after_sales_case_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["id"] = int(item.get("id") or 0)
+    item["request_qty"] = float(item.get("request_qty") or 0.0)
+    item["received_qty"] = float(item.get("received_qty") or 0.0)
+    item["refund_amount"] = float(item.get("refund_amount") or 0.0)
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    item["pending_receive_qty"] = round(max(item["request_qty"] - item["received_qty"], 0.0), 2)
+    item["receive_rate"] = round(item["received_qty"] / item["request_qty"], 4) if item["request_qty"] > 0 else 0.0
+    intake_date = parse_date_or_none(str(item.get("intake_date") or "").strip())
+    promised_finish_date = parse_date_or_none(str(item.get("promised_finish_date") or "").strip())
+    item["aging_days"] = max((date.today() - intake_date).days, 0) if intake_date else 0
+    item["is_overdue"] = bool(
+        promised_finish_date is not None
+        and promised_finish_date < date.today()
+        and str(item.get("status") or "").strip() != "closed"
+    )
+    item["reverse_type_label"] = after_sales_reverse_type_label(str(item.get("reverse_type") or ""))
+    item["status_label"] = after_sales_status_label(str(item.get("status") or ""))
+    item["severity_label"] = inventory_flow_priority_label(str(item.get("severity") or ""))
+    return item
+
+
+def list_after_sales_cases(
+    conn,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    status_value: str | None = None,
+    reverse_type: str | None = None,
+    severity: str | None = None,
+    reverse_warehouse_code: str | None = None,
+    keyword: str | None = None,
+    limit: int = 180,
+) -> List[Dict[str, Any]]:
+    conditions = ["1 = 1"]
+    params: Dict[str, Any] = {"limit": max(1, min(limit, 500))}
+    if start_date is not None:
+        conditions.append("intake_date >= :start_date")
+        params["start_date"] = start_date
+    if end_date is not None:
+        conditions.append("intake_date <= :end_date")
+        params["end_date"] = end_date
+    if status_value:
+        conditions.append("status = :status")
+        params["status"] = str(status_value).strip()
+    if reverse_type:
+        conditions.append("reverse_type = :reverse_type")
+        params["reverse_type"] = str(reverse_type).strip()
+    if severity:
+        conditions.append("severity = :severity")
+        params["severity"] = str(severity).strip()
+    if reverse_warehouse_code:
+        conditions.append("reverse_warehouse_code = :reverse_warehouse_code")
+        params["reverse_warehouse_code"] = str(reverse_warehouse_code).strip()
+    if keyword:
+        conditions.append(
+            """
+            (
+                case_no LIKE :keyword OR order_no LIKE :keyword OR sku_code LIKE :keyword
+                OR sku_name LIKE :keyword OR customer_reason LIKE :keyword
+                OR diagnosis_result LIKE :keyword OR note LIKE :keyword
+            )
+            """
+        )
+        params["keyword"] = f"%{str(keyword).strip()}%"
+    where_sql = " AND ".join(conditions)
+    rows = conn.execute(
+        text(
+            f"""
+            SELECT
+                id, case_no, order_no, reverse_type, status, severity,
+                channel_code, channel_name, shop_name, sku_code, sku_name,
+                request_qty, received_qty, refund_amount, issue_category,
+                reverse_warehouse_code, reverse_warehouse_name, intake_date, promised_finish_date,
+                owner_name, owner_role, customer_reason, diagnosis_result, action_plan, note,
+                sort_order, created_by, updated_by, created_at, updated_at
+            FROM bi_after_sales_case
+            WHERE {where_sql}
+            ORDER BY FIELD(status, 'blocked', 'submitted', 'received', 'diagnosing', 'refurbishing', 'refund_pending', 'closed'),
+                     FIELD(severity, 'high', 'normal', 'low'),
+                     CASE WHEN promised_finish_date IS NULL THEN 1 ELSE 0 END,
+                     promised_finish_date ASC,
+                     intake_date DESC,
+                     sort_order ASC,
+                     id DESC
+            LIMIT :limit
+            """
+        ),
+        params,
+    ).mappings().all()
+    return [serialize_after_sales_case_row(row) for row in rows]
+
+
+def list_reverse_warehouse_options(conn) -> List[Dict[str, str]]:
+    if not table_exists(conn, "bi_inventory_warehouse_map"):
+        return []
+    rows = conn.execute(
+        text(
+            """
+            SELECT warehouse_code, warehouse_name_clean
+            FROM bi_inventory_warehouse_map
+            WHERE is_enabled = 1 AND is_reverse_warehouse = 1
+            ORDER BY sort_order, id
+            """
+        )
+    ).mappings().all()
+    return [
+        {
+            "value": str(row["warehouse_code"] or "").strip(),
+            "label": str(row["warehouse_name_clean"] or row["warehouse_code"] or "").strip(),
+        }
+        for row in rows
+        if str(row["warehouse_code"] or "").strip()
+    ]
+
+
+def list_after_sales_channel_options(conn) -> List[Dict[str, str]]:
+    if not table_exists(conn, "bi_channel_shop_master"):
+        return []
+    rows = conn.execute(
+        text(
+            """
+            SELECT channel_code, channel_name
+            FROM bi_channel_shop_master
+            WHERE is_active = 1
+            GROUP BY channel_code, channel_name
+            ORDER BY MIN(sort_order), MIN(id)
+            """
+        )
+    ).mappings().all()
+    return [
+        {
+            "value": str(row["channel_code"] or "").strip(),
+            "label": str(row["channel_name"] or row["channel_code"] or "").strip(),
+        }
+        for row in rows
+        if str(row["channel_code"] or "").strip()
+    ]
+
+
+def upsert_after_sales_case(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+    existing = None
+    if int(payload.get("id") or 0) > 0:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_after_sales_case
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": int(payload["id"])},
+        ).mappings().first()
+    if existing is None:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_after_sales_case
+                WHERE case_no = :case_no
+                LIMIT 1
+                """
+            ),
+            {"case_no": payload["case_no"]},
+        ).mappings().first()
+
+    record = {**payload, "updated_by": updated_by}
+    if existing:
+        conn.execute(
+            text(
+                """
+                UPDATE bi_after_sales_case
+                SET
+                    case_no = :case_no,
+                    order_no = :order_no,
+                    reverse_type = :reverse_type,
+                    status = :status,
+                    severity = :severity,
+                    channel_code = :channel_code,
+                    channel_name = :channel_name,
+                    shop_name = :shop_name,
+                    sku_code = :sku_code,
+                    sku_name = :sku_name,
+                    request_qty = :request_qty,
+                    received_qty = :received_qty,
+                    refund_amount = :refund_amount,
+                    issue_category = :issue_category,
+                    reverse_warehouse_code = :reverse_warehouse_code,
+                    reverse_warehouse_name = :reverse_warehouse_name,
+                    intake_date = :intake_date,
+                    promised_finish_date = :promised_finish_date,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    customer_reason = :customer_reason,
+                    diagnosis_result = :diagnosis_result,
+                    action_plan = :action_plan,
+                    note = :note,
+                    sort_order = :sort_order,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {**record, "id": int(existing["id"])},
+        )
+        return {"id": int(existing["id"]), "created": False}
+
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_after_sales_case(
+                case_no, order_no, reverse_type, status, severity,
+                channel_code, channel_name, shop_name, sku_code, sku_name,
+                request_qty, received_qty, refund_amount, issue_category,
+                reverse_warehouse_code, reverse_warehouse_name, intake_date, promised_finish_date,
+                owner_name, owner_role, customer_reason, diagnosis_result, action_plan, note,
+                sort_order, created_by, updated_by
+            ) VALUES (
+                :case_no, :order_no, :reverse_type, :status, :severity,
+                :channel_code, :channel_name, :shop_name, :sku_code, :sku_name,
+                :request_qty, :received_qty, :refund_amount, :issue_category,
+                :reverse_warehouse_code, :reverse_warehouse_name, :intake_date, :promised_finish_date,
+                :owner_name, :owner_role, :customer_reason, :diagnosis_result, :action_plan, :note,
+                :sort_order, :created_by, :updated_by
+            )
+            """
+        ),
+        {**record, "created_by": updated_by},
+    )
+    return {"id": int(result.lastrowid or 0), "created": True}
+
+
+def replenishment_plan_status_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "draft", "label": "待评审"},
+        {"value": "reviewing", "label": "评审中"},
+        {"value": "confirmed", "label": "已确认"},
+        {"value": "executing", "label": "执行中"},
+        {"value": "closed", "label": "已闭环"},
+        {"value": "blocked", "label": "阻塞"},
+    ]
+
+
+def replenishment_supply_mode_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "purchase", "label": "采购补货"},
+        {"value": "refurb", "label": "翻新承接"},
+        {"value": "transfer", "label": "调拨补货"},
+        {"value": "watch", "label": "继续观察"},
+    ]
+
+
+def replenishment_plan_status_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in replenishment_plan_status_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def replenishment_supply_mode_label(value: str) -> str:
+    lookup = {item["value"]: item["label"] for item in replenishment_supply_mode_options()}
+    return lookup.get(str(value or "").strip(), str(value or "").strip())
+
+
+def infer_replenishment_supply_mode(demand_type: str, material_role: str, suggested_qty: float) -> str:
+    if suggested_qty <= 0:
+        return "watch"
+    if str(demand_type or "").strip() == "refurb":
+        return "refurb"
+    if str(material_role or "").strip() == "machine":
+        return "purchase"
+    return "purchase"
+
+
+def replenishment_lead_days(supply_mode: str) -> int:
+    mapping = {"purchase": 7, "refurb": 5, "transfer": 3, "watch": 2}
+    return mapping.get(str(supply_mode or "").strip(), 5)
+
+
+def generate_replenishment_suggestion_no() -> str:
+    return f"BHJY{datetime.now().strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}"
+
+
+def build_replenishment_seed_rows(conn, limit: int = 10) -> List[Dict[str, Any]]:
+    today_value = date.today()
+    latest_snapshot_date = conn.execute(text("SELECT MAX(snapshot_date) FROM bi_inventory_alert_log")).scalar()
+    alert_rows: List[Dict[str, Any]] = []
+    if latest_snapshot_date is not None:
+        alert_rows = [
+            {key: to_plain(value) for key, value in dict(row).items()}
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT
+                        snapshot_date, material_name, demand_type, material_role, current_stock_qty,
+                        forecast_14d_qty, coverage_days, threshold_days, alert_level, message
+                    FROM bi_inventory_alert_log
+                    WHERE snapshot_date = :snapshot_date
+                    ORDER BY coverage_days ASC, material_name ASC
+                    LIMIT :limit
+                    """
+                ),
+                {"snapshot_date": latest_snapshot_date, "limit": max(1, min(limit, 30))},
+            ).mappings().all()
+        ]
+
+    rows: List[Dict[str, Any]] = []
+    for index, row in enumerate(alert_rows, start=1):
+        forecast_14d_qty = float(row.get("forecast_14d_qty") or 0.0)
+        current_stock_qty = float(row.get("current_stock_qty") or 0.0)
+        threshold_days = max(1, int(row.get("threshold_days") or 14))
+        daily_avg = forecast_14d_qty / 14 if forecast_14d_qty > 0 else 0.0
+        target_stock_qty = round(daily_avg * max(threshold_days, 14), 2)
+        suggested_qty = round(max(target_stock_qty - current_stock_qty, 0.0), 2)
+        supply_mode = infer_replenishment_supply_mode(str(row.get("demand_type") or ""), str(row.get("material_role") or ""), suggested_qty)
+        rows.append(
+            {
+                "suggestion_no": generate_replenishment_suggestion_no(),
+                "plan_date": today_value,
+                "material_name": str(row.get("material_name") or "").strip(),
+                "demand_type": str(row.get("demand_type") or "sales").strip() or "sales",
+                "material_role": str(row.get("material_role") or "").strip(),
+                "current_stock_qty": round(current_stock_qty, 2),
+                "forecast_14d_qty": round(forecast_14d_qty, 2),
+                "coverage_days": round(float(row.get("coverage_days") or 0.0), 2),
+                "threshold_days": threshold_days,
+                "target_stock_qty": target_stock_qty,
+                "suggested_qty": suggested_qty,
+                "supply_mode": supply_mode,
+                "plan_status": "draft",
+                "priority": "high" if str(row.get("alert_level") or "") == "critical" else "normal",
+                "owner_name": "",
+                "owner_role": "计划运营",
+                "expected_ready_date": today_value + timedelta(days=replenishment_lead_days(supply_mode)),
+                "supplier_name": "",
+                "linked_refurb_category": str(row.get("material_name") or "").strip() if supply_mode == "refurb" else "",
+                "note": str(row.get("message") or "").strip(),
+                "source_snapshot_json": json_dumps({"seed_source": "inventory_alert", **row}),
+                "created_by": "system",
+                "updated_by": "system",
+                "sort_order": index * 10,
+            }
+        )
+
+    if rows:
+        return rows
+
+    forecast_rows = conn.execute(
+        text(
+            """
+            SELECT
+                material_name,
+                demand_type,
+                material_role,
+                ROUND(COALESCE(SUM(final_qty), 0), 4) AS forecast_14d_qty
+            FROM bi_sales_forecast_ai_daily
+            WHERE forecast_date BETWEEN :start_date AND :end_date
+            GROUP BY material_name, demand_type, material_role
+            HAVING SUM(final_qty) > 0
+            ORDER BY forecast_14d_qty DESC, material_name ASC
+            LIMIT :limit
+            """
+        ),
+        {"start_date": today_value, "end_date": today_value + timedelta(days=13), "limit": max(1, min(limit, 12))},
+    ).mappings().all()
+    for index, row in enumerate(forecast_rows, start=1):
+        forecast_14d_qty = float(row.get("forecast_14d_qty") or 0.0)
+        target_stock_qty = round(forecast_14d_qty, 2)
+        suggested_qty = round(forecast_14d_qty, 2)
+        supply_mode = infer_replenishment_supply_mode(str(row.get("demand_type") or ""), str(row.get("material_role") or ""), suggested_qty)
+        rows.append(
+            {
+                "suggestion_no": generate_replenishment_suggestion_no(),
+                "plan_date": today_value,
+                "material_name": str(row.get("material_name") or "").strip(),
+                "demand_type": str(row.get("demand_type") or "sales").strip() or "sales",
+                "material_role": str(row.get("material_role") or "").strip(),
+                "current_stock_qty": 0.0,
+                "forecast_14d_qty": round(forecast_14d_qty, 2),
+                "coverage_days": 0.0,
+                "threshold_days": 14,
+                "target_stock_qty": target_stock_qty,
+                "suggested_qty": suggested_qty,
+                "supply_mode": supply_mode,
+                "plan_status": "draft",
+                "priority": "normal",
+                "owner_name": "",
+                "owner_role": "计划运营",
+                "expected_ready_date": today_value + timedelta(days=replenishment_lead_days(supply_mode)),
+                "supplier_name": "",
+                "linked_refurb_category": str(row.get("material_name") or "").strip() if supply_mode == "refurb" else "",
+                "note": "当前未取到库存预警快照，先按未来 14 天预测量生成计划草稿。",
+                "source_snapshot_json": json_dumps({"seed_source": "ai_forecast", **{key: to_plain(value) for key, value in dict(row).items()}}),
+                "created_by": "system",
+                "updated_by": "system",
+                "sort_order": index * 10,
+            }
+        )
+    return rows
+
+
+def ensure_replenishment_plan_seed(conn) -> None:
+    count = int(conn.execute(text("SELECT COUNT(*) FROM bi_replenishment_plan_item")).scalar() or 0)
+    if count > 0:
+        return
+    rows = build_replenishment_seed_rows(conn)
+    if not rows:
+        return
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_replenishment_plan_item(
+                suggestion_no, plan_date, material_name, demand_type, material_role,
+                current_stock_qty, forecast_14d_qty, coverage_days, threshold_days,
+                target_stock_qty, suggested_qty, supply_mode, plan_status, priority,
+                owner_name, owner_role, expected_ready_date, supplier_name, linked_refurb_category,
+                note, source_snapshot_json, created_by, updated_by, sort_order
+            ) VALUES (
+                :suggestion_no, :plan_date, :material_name, :demand_type, :material_role,
+                :current_stock_qty, :forecast_14d_qty, :coverage_days, :threshold_days,
+                :target_stock_qty, :suggested_qty, :supply_mode, :plan_status, :priority,
+                :owner_name, :owner_role, :expected_ready_date, :supplier_name, :linked_refurb_category,
+                :note, :source_snapshot_json, :created_by, :updated_by, :sort_order
+            )
+            """
+        ),
+        rows,
+    )
+
+
+def normalize_replenishment_plan_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = payload if isinstance(payload, dict) else {}
+    plan_status = str(item.get("plan_status") or "draft").strip().lower() or "draft"
+    supply_mode = str(item.get("supply_mode") or "purchase").strip().lower() or "purchase"
+    priority = str(item.get("priority") or "normal").strip().lower() or "normal"
+    demand_type = str(item.get("demand_type") or "sales").strip().lower() or "sales"
+    valid_statuses = {option["value"] for option in replenishment_plan_status_options()}
+    valid_supply_modes = {option["value"] for option in replenishment_supply_mode_options()}
+    valid_priorities = {item["value"] for item in inventory_flow_priority_options()}
+    if plan_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="补货计划状态不合法")
+    if supply_mode not in valid_supply_modes:
+        raise HTTPException(status_code=400, detail="补货方式不合法")
+    if priority not in valid_priorities:
+        raise HTTPException(status_code=400, detail="补货优先级不合法")
+    material_name = str(item.get("material_name") or "").strip()
+    if not material_name:
+        raise HTTPException(status_code=400, detail="补货计划需要物料名称")
+    plan_date = parse_date_or_none(str(item.get("plan_date") or "").strip())
+    if plan_date is None:
+        raise HTTPException(status_code=400, detail="补货计划需要计划日期")
+    threshold_days = max(1, parse_int_or_default(item.get("threshold_days"), 14))
+    current_stock_qty = max(0.0, to_number(item.get("current_stock_qty")) or 0.0)
+    forecast_14d_qty = max(0.0, to_number(item.get("forecast_14d_qty")) or 0.0)
+    target_stock_qty = max(0.0, to_number(item.get("target_stock_qty")) or 0.0)
+    suggested_qty = max(0.0, to_number(item.get("suggested_qty")) or 0.0)
+    coverage_days = max(0.0, to_number(item.get("coverage_days")) or 0.0)
+    expected_ready_date = parse_date_or_none(str(item.get("expected_ready_date") or "").strip())
+    return {
+        "id": parse_int_or_default(item.get("id"), 0),
+        "suggestion_no": str(item.get("suggestion_no") or "").strip() or generate_replenishment_suggestion_no(),
+        "plan_date": plan_date,
+        "material_name": material_name,
+        "demand_type": demand_type,
+        "material_role": str(item.get("material_role") or "").strip(),
+        "current_stock_qty": round(current_stock_qty, 2),
+        "forecast_14d_qty": round(forecast_14d_qty, 2),
+        "coverage_days": round(coverage_days, 2),
+        "threshold_days": threshold_days,
+        "target_stock_qty": round(target_stock_qty, 2),
+        "suggested_qty": round(suggested_qty, 2),
+        "supply_mode": supply_mode,
+        "plan_status": plan_status,
+        "priority": priority,
+        "owner_name": str(item.get("owner_name") or "").strip(),
+        "owner_role": str(item.get("owner_role") or "计划运营").strip() or "计划运营",
+        "expected_ready_date": expected_ready_date,
+        "supplier_name": str(item.get("supplier_name") or "").strip(),
+        "linked_refurb_category": str(item.get("linked_refurb_category") or "").strip(),
+        "note": str(item.get("note") or "").strip(),
+        "source_snapshot_json": json_dumps(item.get("source_snapshot") or json_loads(item.get("source_snapshot_json"), {})),
+        "sort_order": max(0, parse_int_or_default(item.get("sort_order"), 100)),
+    }
+
+
+def serialize_replenishment_plan_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    item["id"] = int(item.get("id") or 0)
+    item["current_stock_qty"] = float(item.get("current_stock_qty") or 0.0)
+    item["forecast_14d_qty"] = float(item.get("forecast_14d_qty") or 0.0)
+    item["coverage_days"] = float(item.get("coverage_days") or 0.0)
+    item["threshold_days"] = int(item.get("threshold_days") or 14)
+    item["target_stock_qty"] = float(item.get("target_stock_qty") or 0.0)
+    item["suggested_qty"] = float(item.get("suggested_qty") or 0.0)
+    item["sort_order"] = int(item.get("sort_order") or 0)
+    expected_ready_date = parse_date_or_none(str(item.get("expected_ready_date") or "").strip())
+    item["is_overdue"] = bool(
+        expected_ready_date is not None
+        and expected_ready_date < date.today()
+        and str(item.get("plan_status") or "").strip() not in {"closed"}
+    )
+    item["plan_status_label"] = replenishment_plan_status_label(str(item.get("plan_status") or ""))
+    item["supply_mode_label"] = replenishment_supply_mode_label(str(item.get("supply_mode") or ""))
+    item["priority_label"] = inventory_flow_priority_label(str(item.get("priority") or ""))
+    snapshot = json_loads(item.get("source_snapshot_json"), {})
+    item["source_snapshot"] = snapshot if isinstance(snapshot, dict) else {}
+    item.pop("source_snapshot_json", None)
+    return item
+
+
+def list_replenishment_plan_items(
+    conn,
+    *,
+    plan_status: str | None = None,
+    supply_mode: str | None = None,
+    priority: str | None = None,
+    demand_type: str | None = None,
+    keyword: str | None = None,
+    limit: int = 180,
+) -> List[Dict[str, Any]]:
+    conditions = ["1 = 1"]
+    params: Dict[str, Any] = {"limit": max(1, min(limit, 500))}
+    if plan_status:
+        conditions.append("plan_status = :plan_status")
+        params["plan_status"] = str(plan_status).strip()
+    if supply_mode:
+        conditions.append("supply_mode = :supply_mode")
+        params["supply_mode"] = str(supply_mode).strip()
+    if priority:
+        conditions.append("priority = :priority")
+        params["priority"] = str(priority).strip()
+    if demand_type:
+        conditions.append("demand_type = :demand_type")
+        params["demand_type"] = str(demand_type).strip()
+    if keyword:
+        conditions.append(
+            "(suggestion_no LIKE :keyword OR material_name LIKE :keyword OR supplier_name LIKE :keyword OR note LIKE :keyword)"
+        )
+        params["keyword"] = f"%{str(keyword).strip()}%"
+    where_sql = " AND ".join(conditions)
+    rows = conn.execute(
+        text(
+            f"""
+            SELECT
+                id, suggestion_no, plan_date, material_name, demand_type, material_role,
+                current_stock_qty, forecast_14d_qty, coverage_days, threshold_days,
+                target_stock_qty, suggested_qty, supply_mode, plan_status, priority,
+                owner_name, owner_role, expected_ready_date, supplier_name, linked_refurb_category,
+                note, source_snapshot_json, created_by, updated_by, created_at, updated_at, sort_order
+            FROM bi_replenishment_plan_item
+            WHERE {where_sql}
+            ORDER BY FIELD(plan_status, 'blocked', 'draft', 'reviewing', 'confirmed', 'executing', 'closed'),
+                     FIELD(priority, 'high', 'normal', 'low'),
+                     coverage_days ASC,
+                     expected_ready_date ASC,
+                     sort_order ASC,
+                     id DESC
+            LIMIT :limit
+            """
+        ),
+        params,
+    ).mappings().all()
+    return [serialize_replenishment_plan_row(row) for row in rows]
+
+
+def upsert_replenishment_plan_item(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+    existing = None
+    if int(payload.get("id") or 0) > 0:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_replenishment_plan_item
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": int(payload["id"])},
+        ).mappings().first()
+    if existing is None:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_replenishment_plan_item
+                WHERE plan_date = :plan_date AND material_name = :material_name AND demand_type = :demand_type
+                LIMIT 1
+                """
+            ),
+            {
+                "plan_date": payload["plan_date"],
+                "material_name": payload["material_name"],
+                "demand_type": payload["demand_type"],
+            },
+        ).mappings().first()
+
+    record = {**payload, "updated_by": updated_by}
+    if existing:
+        conn.execute(
+            text(
+                """
+                UPDATE bi_replenishment_plan_item
+                SET
+                    suggestion_no = :suggestion_no,
+                    plan_date = :plan_date,
+                    material_name = :material_name,
+                    demand_type = :demand_type,
+                    material_role = :material_role,
+                    current_stock_qty = :current_stock_qty,
+                    forecast_14d_qty = :forecast_14d_qty,
+                    coverage_days = :coverage_days,
+                    threshold_days = :threshold_days,
+                    target_stock_qty = :target_stock_qty,
+                    suggested_qty = :suggested_qty,
+                    supply_mode = :supply_mode,
+                    plan_status = :plan_status,
+                    priority = :priority,
+                    owner_name = :owner_name,
+                    owner_role = :owner_role,
+                    expected_ready_date = :expected_ready_date,
+                    supplier_name = :supplier_name,
+                    linked_refurb_category = :linked_refurb_category,
+                    note = :note,
+                    source_snapshot_json = :source_snapshot_json,
+                    sort_order = :sort_order,
+                    updated_by = :updated_by
+                WHERE id = :id
+                """
+            ),
+            {**record, "id": int(existing["id"])},
+        )
+        return {"id": int(existing["id"]), "created": False}
+
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_replenishment_plan_item(
+                suggestion_no, plan_date, material_name, demand_type, material_role,
+                current_stock_qty, forecast_14d_qty, coverage_days, threshold_days,
+                target_stock_qty, suggested_qty, supply_mode, plan_status, priority,
+                owner_name, owner_role, expected_ready_date, supplier_name, linked_refurb_category,
+                note, source_snapshot_json, created_by, updated_by, sort_order
+            ) VALUES (
+                :suggestion_no, :plan_date, :material_name, :demand_type, :material_role,
+                :current_stock_qty, :forecast_14d_qty, :coverage_days, :threshold_days,
+                :target_stock_qty, :suggested_qty, :supply_mode, :plan_status, :priority,
+                :owner_name, :owner_role, :expected_ready_date, :supplier_name, :linked_refurb_category,
+                :note, :source_snapshot_json, :created_by, :updated_by, :sort_order
+            )
+            """
+        ),
+        {**record, "created_by": updated_by},
+    )
+    return {"id": int(result.lastrowid or 0), "created": True}
+
+
+def replenishment_demand_type_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "sales", "label": "Sales"},
+        {"value": "refurb", "label": "Refurb"},
+    ]
+
+
+def build_replenishment_forecast_snapshots(
+    conn,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int = 12,
+) -> List[Dict[str, Any]]:
+    today_value = date.today()
+    start = start_date or today_value
+    end = end_date or (today_value + timedelta(days=13))
+    profiles = {
+        (str(profile.get("material_name") or "").strip(), str(profile.get("demand_type") or "").strip()): profile
+        for profile in list_forecast_profiles(conn)
+    }
+    grouped: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    for row in list_ai_forecasts(conn, start_date=start, end_date=end, limit=max(200, limit * 30)):
+        material_name = str(row.get("material_name") or "").strip()
+        demand_type = str(row.get("demand_type") or "").strip() or "sales"
+        material_role = str(row.get("material_role") or "").strip()
+        if not material_name:
+            continue
+        key = (material_name, demand_type, material_role)
+        bucket = grouped.setdefault(
+            key,
+            {
+                "material_name": material_name,
+                "demand_type": demand_type,
+                "material_role": material_role,
+                "forecast_14d_qty": 0.0,
+                "latest_forecast_date": None,
+                "threshold_days": 14,
+            },
+        )
+        bucket["forecast_14d_qty"] += float(row.get("final_qty") or 0.0)
+        forecast_date = row.get("forecast_date")
+        if forecast_date and (bucket["latest_forecast_date"] is None or str(forecast_date) > str(bucket["latest_forecast_date"])):
+            bucket["latest_forecast_date"] = forecast_date
+        profile = profiles.get((material_name, demand_type), {})
+        bucket["threshold_days"] = int(profile.get("threshold_days") or bucket["threshold_days"] or 14)
+
+    items = list(grouped.values())
+    items.sort(key=lambda item: (-float(item.get("forecast_14d_qty") or 0.0), str(item.get("material_name") or "")))
+    return [
+        {
+            **item,
+            "forecast_14d_qty": round(float(item.get("forecast_14d_qty") or 0.0), 2),
+            "latest_forecast_date": _plain_date_value(item.get("latest_forecast_date")),
+        }
+        for item in items[: max(1, min(limit, 24))]
+    ]
+
+
 def normalize_forecast_manual_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
     raw = payload or {}
     forecast_date = parse_refurb_date(raw.get("forecast_date"), "棰勬祴鏃ユ湡")
@@ -3690,6 +4648,56 @@ def task_center_category_options() -> List[Dict[str, str]]:
     ]
 
 
+def task_center_source_module_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement", "label": "采购到货"},
+        {"value": "inventory_flow", "label": "库存流转"},
+        {"value": "refurb", "label": "翻新协同"},
+        {"value": "after_sales", "label": "逆向售后"},
+    ]
+
+
+def task_center_category_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement_followup", "label": "到货跟进"},
+        {"value": "exception_followup", "label": "异常补偿"},
+        {"value": "inventory_execution", "label": "库存执行"},
+        {"value": "inventory_exception", "label": "库存阻塞"},
+        {"value": "production_schedule", "label": "翻新排产"},
+        {"value": "production_blocker", "label": "生产阻塞"},
+        {"value": "after_sales_intake", "label": "售后收件"},
+        {"value": "after_sales_processing", "label": "售后处理中"},
+        {"value": "after_sales_blocker", "label": "售后阻塞"},
+    ]
+
+
+def task_center_source_module_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement", "label": "閲囪喘鍒拌揣"},
+        {"value": "inventory_flow", "label": "搴撳瓨娴佽浆"},
+        {"value": "refurb", "label": "缈绘柊鍗忓悓"},
+        {"value": "after_sales", "label": "閫嗗悜鍞悗"},
+        {"value": "replenishment", "label": "琛ヨ揣鍗忓悓"},
+    ]
+
+
+def task_center_category_options() -> List[Dict[str, str]]:
+    return [
+        {"value": "procurement_followup", "label": "鍒拌揣璺熻繘"},
+        {"value": "exception_followup", "label": "寮傚父琛ュ伩"},
+        {"value": "inventory_execution", "label": "搴撳瓨鎵ц"},
+        {"value": "inventory_exception", "label": "搴撳瓨闃诲"},
+        {"value": "production_schedule", "label": "缈绘柊鎺掍骇"},
+        {"value": "production_blocker", "label": "鐢熶骇闃诲"},
+        {"value": "after_sales_intake", "label": "鍞悗鏀朵欢"},
+        {"value": "after_sales_processing", "label": "鍞悗澶勭悊涓"},
+        {"value": "after_sales_blocker", "label": "鍞悗闃诲"},
+        {"value": "replenishment_review", "label": "琛ヨ揣璇勫"},
+        {"value": "replenishment_execution", "label": "琛ヨ揣鎵ц"},
+        {"value": "replenishment_blocker", "label": "琛ヨ揣闃诲"},
+    ]
+
+
 def task_center_status_label(value: str) -> str:
     lookup = {item["value"]: item["label"] for item in task_center_status_options()}
     return lookup.get(str(value or "").strip(), str(value or "").strip())
@@ -3942,6 +4950,126 @@ def build_task_center_item_from_refurb_schedule(schedule_item: Dict[str, Any]) -
     }
 
 
+def build_task_center_item_from_after_sales_case(case_item: Dict[str, Any]) -> Dict[str, Any]:
+    source_status = str(case_item.get("status") or "submitted").strip()
+    reverse_type = str(case_item.get("reverse_type") or "return_refund").strip()
+    refund_amount = float(case_item.get("refund_amount") or 0.0)
+    if source_status == "blocked":
+        task_status = "blocked"
+        task_category = "after_sales_blocker"
+    elif source_status == "closed":
+        task_status = "completed"
+        task_category = "after_sales_processing"
+    elif source_status in {"diagnosing", "refurbishing", "refund_pending"} or float(case_item.get("received_qty") or 0.0) > 0:
+        task_status = "in_progress"
+        task_category = "after_sales_processing"
+    else:
+        task_status = "open"
+        task_category = "after_sales_intake"
+
+    return {
+        "source_module": "after_sales",
+        "source_type": "after_sales_case",
+        "source_id": str(case_item.get("id") or ""),
+        "source_no": str(case_item.get("case_no") or ""),
+        "task_title": f"逆向售后 · {case_item.get('case_no') or case_item.get('sku_name') or '未命名工单'}",
+        "task_category": task_category,
+        "task_status": task_status,
+        "priority": str(case_item.get("severity") or "normal"),
+        "owner_name": str(case_item.get("owner_name") or "").strip(),
+        "owner_role": str(case_item.get("owner_role") or "售后运营").strip(),
+        "due_date": parse_date_or_none(str(case_item.get("promised_finish_date") or "").strip()),
+        "source_status": source_status,
+        "source_detail_status": reverse_type,
+        "summary_text": (
+            f"{case_item.get('sku_name') or '--'} / "
+            f"收件 {case_item.get('received_qty') or 0}/{case_item.get('request_qty') or 0} / "
+            f"退款 {refund_amount:.2f}"
+        ),
+        "note": str(case_item.get("action_plan") or case_item.get("note") or "").strip(),
+        "sort_order": 40 + task_center_status_sort(task_status) * 10,
+        "source_snapshot": {
+            "order_no": case_item.get("order_no"),
+            "reverse_type": reverse_type,
+            "reverse_type_label": case_item.get("reverse_type_label"),
+            "channel_name": case_item.get("channel_name"),
+            "shop_name": case_item.get("shop_name"),
+            "sku_code": case_item.get("sku_code"),
+            "sku_name": case_item.get("sku_name"),
+            "request_qty": case_item.get("request_qty"),
+            "received_qty": case_item.get("received_qty"),
+            "pending_receive_qty": case_item.get("pending_receive_qty"),
+            "refund_amount": case_item.get("refund_amount"),
+            "issue_category": case_item.get("issue_category"),
+            "reverse_warehouse_name": case_item.get("reverse_warehouse_name"),
+            "customer_reason": case_item.get("customer_reason"),
+            "diagnosis_result": case_item.get("diagnosis_result"),
+            "action_plan": case_item.get("action_plan"),
+            "status_label": case_item.get("status_label"),
+        },
+    }
+
+
+def build_task_center_item_from_replenishment_plan(plan_item: Dict[str, Any]) -> Dict[str, Any]:
+    source_status = str(plan_item.get("plan_status") or "draft").strip()
+    supply_mode = str(plan_item.get("supply_mode") or "purchase").strip()
+    suggested_qty = float(plan_item.get("suggested_qty") or 0.0)
+    if source_status == "blocked":
+        task_status = "blocked"
+        task_category = "replenishment_blocker"
+    elif source_status == "closed":
+        task_status = "completed"
+        task_category = "replenishment_execution"
+    elif source_status in {"confirmed", "executing"}:
+        task_status = "in_progress"
+        task_category = "replenishment_execution"
+    else:
+        task_status = "open"
+        task_category = "replenishment_review"
+
+    return {
+        "source_module": "replenishment",
+        "source_type": "replenishment_plan_item",
+        "source_id": str(plan_item.get("id") or ""),
+        "source_no": str(plan_item.get("suggestion_no") or ""),
+        "task_title": f"琛ヨ揣鍗忓悓 路 {plan_item.get('material_name') or plan_item.get('suggestion_no') or '鏈懡鍚嶈鍒'}",
+        "task_category": task_category,
+        "task_status": task_status,
+        "priority": str(plan_item.get("priority") or "normal"),
+        "owner_name": str(plan_item.get("owner_name") or "").strip(),
+        "owner_role": str(plan_item.get("owner_role") or "璁″垝杩愯惀").strip(),
+        "due_date": parse_date_or_none(str(plan_item.get("expected_ready_date") or "").strip()),
+        "source_status": source_status,
+        "source_detail_status": supply_mode,
+        "summary_text": (
+            f"{plan_item.get('material_name') or '--'} / "
+            f"寤鸿 {plan_item.get('suggested_qty') or 0} / "
+            f"瑕嗙洊 {plan_item.get('coverage_days') or 0} 澶?"
+        ),
+        "note": str(plan_item.get("note") or "").strip(),
+        "sort_order": 50 + task_center_status_sort(task_status) * 10,
+        "source_snapshot": {
+            "plan_date": plan_item.get("plan_date"),
+            "material_name": plan_item.get("material_name"),
+            "demand_type": plan_item.get("demand_type"),
+            "material_role": plan_item.get("material_role"),
+            "current_stock_qty": plan_item.get("current_stock_qty"),
+            "forecast_14d_qty": plan_item.get("forecast_14d_qty"),
+            "coverage_days": plan_item.get("coverage_days"),
+            "threshold_days": plan_item.get("threshold_days"),
+            "target_stock_qty": plan_item.get("target_stock_qty"),
+            "suggested_qty": suggested_qty,
+            "supply_mode": supply_mode,
+            "supply_mode_label": plan_item.get("supply_mode_label"),
+            "plan_status_label": plan_item.get("plan_status_label"),
+            "supplier_name": plan_item.get("supplier_name"),
+            "linked_refurb_category": plan_item.get("linked_refurb_category"),
+            "expected_ready_date": plan_item.get("expected_ready_date"),
+            "note": plan_item.get("note"),
+        },
+    }
+
+
 def upsert_task_center_item(conn, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
     existing = conn.execute(
         text(
@@ -4071,8 +5199,43 @@ def sync_task_center_snapshot(conn, updated_by: str = "system") -> Dict[str, int
             """
         )
     ).mappings().all()
+    after_sales_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, case_no, order_no, reverse_type, status, severity,
+                channel_code, channel_name, shop_name, sku_code, sku_name,
+                request_qty, received_qty, refund_amount, issue_category,
+                reverse_warehouse_code, reverse_warehouse_name, intake_date, promised_finish_date,
+                owner_name, owner_role, customer_reason, diagnosis_result, action_plan, note,
+                sort_order, created_by, updated_by, created_at, updated_at
+            FROM bi_after_sales_case
+            ORDER BY intake_date DESC, sort_order ASC, id DESC
+            """
+        )
+    ).mappings().all()
+    replenishment_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, suggestion_no, plan_date, material_name, demand_type, material_role,
+                current_stock_qty, forecast_14d_qty, coverage_days, threshold_days,
+                target_stock_qty, suggested_qty, supply_mode, plan_status, priority,
+                owner_name, owner_role, expected_ready_date, supplier_name, linked_refurb_category,
+                note, source_snapshot_json, sort_order, created_by, updated_by, created_at, updated_at
+            FROM bi_replenishment_plan_item
+            ORDER BY expected_ready_date ASC, sort_order ASC, id DESC
+            """
+        )
+    ).mappings().all()
 
-    stats = {"procurement_synced": 0, "inventory_synced": 0, "refurb_synced": 0}
+    stats = {
+        "procurement_synced": 0,
+        "inventory_synced": 0,
+        "refurb_synced": 0,
+        "after_sales_synced": 0,
+        "replenishment_synced": 0,
+    }
     for row in procurement_rows:
         upsert_task_center_item(conn, build_task_center_item_from_procurement(serialize_procurement_arrival_row(row)), updated_by)
         stats["procurement_synced"] += 1
@@ -4082,6 +5245,16 @@ def sync_task_center_snapshot(conn, updated_by: str = "system") -> Dict[str, int
     for row in refurb_schedule_rows:
         upsert_task_center_item(conn, build_task_center_item_from_refurb_schedule(serialize_refurb_schedule_row(row)), updated_by)
         stats["refurb_synced"] += 1
+    for row in after_sales_rows:
+        upsert_task_center_item(conn, build_task_center_item_from_after_sales_case(serialize_after_sales_case_row(row)), updated_by)
+        stats["after_sales_synced"] += 1
+    for row in replenishment_rows:
+        upsert_task_center_item(
+            conn,
+            build_task_center_item_from_replenishment_plan(serialize_replenishment_plan_row(row)),
+            updated_by,
+        )
+        stats["replenishment_synced"] += 1
     return stats
 
 
@@ -5726,6 +6899,94 @@ def ensure_schema() -> None:
         conn.execute(
             text(
                 """
+                CREATE TABLE IF NOT EXISTS bi_after_sales_case (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    case_no VARCHAR(64) NOT NULL,
+                    order_no VARCHAR(64) NOT NULL DEFAULT '',
+                    reverse_type VARCHAR(32) NOT NULL DEFAULT 'return_refund',
+                    status VARCHAR(32) NOT NULL DEFAULT 'submitted',
+                    severity VARCHAR(16) NOT NULL DEFAULT 'normal',
+                    channel_code VARCHAR(64) NOT NULL DEFAULT '',
+                    channel_name VARCHAR(128) NOT NULL DEFAULT '',
+                    shop_name VARCHAR(128) NOT NULL DEFAULT '',
+                    sku_code VARCHAR(64) NOT NULL DEFAULT '',
+                    sku_name VARCHAR(255) NOT NULL DEFAULT '',
+                    request_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    received_qty DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    refund_amount DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    issue_category VARCHAR(64) NOT NULL DEFAULT '',
+                    reverse_warehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    reverse_warehouse_name VARCHAR(128) NOT NULL DEFAULT '',
+                    intake_date DATE NOT NULL,
+                    promised_finish_date DATE NULL,
+                    owner_name VARCHAR(64) NOT NULL DEFAULT '',
+                    owner_role VARCHAR(64) NOT NULL DEFAULT '售后运营',
+                    customer_reason VARCHAR(255) NOT NULL DEFAULT '',
+                    diagnosis_result LONGTEXT NULL,
+                    action_plan LONGTEXT NULL,
+                    note LONGTEXT NULL,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_after_sales_case_no (case_no),
+                    INDEX idx_bi_after_sales_status (status, severity, promised_finish_date),
+                    INDEX idx_bi_after_sales_reverse_type (reverse_type, intake_date),
+                    INDEX idx_bi_after_sales_warehouse (reverse_warehouse_code, intake_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_replenishment_plan_item (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    suggestion_no VARCHAR(64) NOT NULL,
+                    plan_date DATE NOT NULL,
+                    material_name VARCHAR(255) NOT NULL,
+                    demand_type VARCHAR(16) NOT NULL DEFAULT 'sales',
+                    material_role VARCHAR(32) NOT NULL DEFAULT '',
+                    current_stock_qty DECIMAL(18, 4) NOT NULL DEFAULT 0,
+                    forecast_14d_qty DECIMAL(18, 4) NOT NULL DEFAULT 0,
+                    coverage_days DECIMAL(18, 4) NOT NULL DEFAULT 0,
+                    threshold_days INT NOT NULL DEFAULT 14,
+                    target_stock_qty DECIMAL(18, 4) NOT NULL DEFAULT 0,
+                    suggested_qty DECIMAL(18, 4) NOT NULL DEFAULT 0,
+                    supply_mode VARCHAR(32) NOT NULL DEFAULT 'purchase',
+                    plan_status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                    priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+                    owner_name VARCHAR(64) NOT NULL DEFAULT '',
+                    owner_role VARCHAR(64) NOT NULL DEFAULT '计划运营',
+                    expected_ready_date DATE NULL,
+                    supplier_name VARCHAR(128) NOT NULL DEFAULT '',
+                    linked_refurb_category VARCHAR(128) NOT NULL DEFAULT '',
+                    note LONGTEXT NULL,
+                    source_snapshot_json LONGTEXT NULL,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_replenishment_suggestion_no (suggestion_no),
+                    UNIQUE KEY uk_bi_replenishment_plan_unique (plan_date, material_name, demand_type),
+                    INDEX idx_bi_replenishment_status (plan_status, priority, expected_ready_date),
+                    INDEX idx_bi_replenishment_supply (supply_mode, demand_type),
+                    INDEX idx_bi_replenishment_material (material_name)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        ensure_table_columns(
+            conn,
+            "bi_replenishment_plan_item",
+            {
+                "sort_order": "INT NOT NULL DEFAULT 100",
+            },
+        )
+        conn.execute(
+            text(
+                """
                 CREATE TABLE IF NOT EXISTS bi_data_agent_report (
                     id BIGINT PRIMARY KEY AUTO_INCREMENT,
                     report_type VARCHAR(16) NOT NULL,
@@ -6043,6 +7304,8 @@ def ensure_schema() -> None:
         ensure_master_data_seed(conn)
         ensure_procurement_arrival_seed(conn)
         ensure_inventory_flow_seed(conn)
+        ensure_after_sales_case_seed(conn)
+        ensure_replenishment_plan_seed(conn)
         count = int(conn.execute(text("SELECT COUNT(*) FROM bi_dashboard_view")).scalar() or 0)
         if count == 0:
             conn.execute(
@@ -8167,6 +9430,242 @@ async def save_refurb_schedule_item(
     return JSONResponse({"saved": True, "item": item, "task_center_sync": task_center_sync})
 
 
+@router.get("/bi-dashboard/api/after-sales-workbench")
+async def after_sales_workbench_overview(
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    status_value: str | None = Query(None, alias="status"),
+    reverse_type: str | None = Query(None),
+    severity: str | None = Query(None),
+    reverse_warehouse_code: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(180, ge=1, le=500),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    today_value = date.today()
+    start = parse_date_or_none(start_date) or (today_value - timedelta(days=14))
+    end = parse_date_or_none(end_date) or today_value
+    if start > end:
+        start, end = end, start
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        ensure_after_sales_case_seed(conn)
+        sync_task_center_snapshot(conn, "system")
+        items = list_after_sales_cases(
+            conn,
+            start_date=start,
+            end_date=end,
+            status_value=status_value,
+            reverse_type=reverse_type,
+            severity=severity,
+            reverse_warehouse_code=reverse_warehouse_code,
+            keyword=str(keyword or "").strip() or None,
+            limit=limit,
+        )
+        attendance = return_unpack_attendance_summaries(
+            conn,
+            start_date=max(start, today_value - timedelta(days=13)),
+            end_date=end,
+            limit=14,
+        )
+        warehouse_options = list_reverse_warehouse_options(conn)
+        channel_options = list_after_sales_channel_options(conn)
+
+    latest_attendance = attendance[0] if attendance else {}
+    summary = {
+        "total_count": len(items),
+        "submitted_count": sum(1 for item in items if item["status"] == "submitted"),
+        "received_count": sum(1 for item in items if item["status"] == "received"),
+        "diagnosing_count": sum(1 for item in items if item["status"] == "diagnosing"),
+        "refurbishing_count": sum(1 for item in items if item["status"] == "refurbishing"),
+        "refund_pending_count": sum(1 for item in items if item["status"] == "refund_pending"),
+        "closed_count": sum(1 for item in items if item["status"] == "closed"),
+        "blocked_count": sum(1 for item in items if item["status"] == "blocked"),
+        "overdue_count": sum(1 for item in items if item["is_overdue"]),
+        "high_severity_count": sum(1 for item in items if item["severity"] == "high"),
+        "total_request_qty": sum(float(item.get("request_qty") or 0) for item in items),
+        "total_received_qty": sum(float(item.get("received_qty") or 0) for item in items),
+        "total_refund_amount": sum(float(item.get("refund_amount") or 0) for item in items),
+        "reverse_warehouse_count": len(warehouse_options),
+        "latest_intake_date": max((item["intake_date"] for item in items if item.get("intake_date")), default=None),
+        "latest_attendance_date": latest_attendance.get("biz_date"),
+        "latest_attendance_count": float(latest_attendance.get("attendance_count") or 0),
+        "latest_return_qty": float(latest_attendance.get("total_return_qty") or 0),
+    }
+    return JSONResponse(
+        {
+            "summary": summary,
+            "items": items,
+            "attendance": attendance,
+            "date_range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
+            "status_options": after_sales_status_options(),
+            "type_options": after_sales_reverse_type_options(),
+            "severity_options": inventory_flow_priority_options(),
+            "warehouse_options": warehouse_options,
+            "channel_options": channel_options,
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/after-sales-workbench/cases")
+async def save_after_sales_case(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    record = normalize_after_sales_case_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        ensure_after_sales_case_seed(conn)
+        result = upsert_after_sales_case(conn, record, username)
+        task_center_sync = sync_task_center_snapshot(conn, username)
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, case_no, order_no, reverse_type, status, severity,
+                    channel_code, channel_name, shop_name, sku_code, sku_name,
+                    request_qty, received_qty, refund_amount, issue_category,
+                    reverse_warehouse_code, reverse_warehouse_name, intake_date, promised_finish_date,
+                    owner_name, owner_role, customer_reason, diagnosis_result, action_plan, note,
+                    sort_order, created_by, updated_by, created_at, updated_at
+                FROM bi_after_sales_case
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": result["id"]},
+        ).mappings().first()
+    item = serialize_after_sales_case_row(saved_row)
+    record_dashboard_audit(
+        module_key="after_sales",
+        module_name="逆向售后",
+        action_key="case.upsert",
+        action_name="保存逆向售后工单",
+        target_type="after_sales_case",
+        target_id=item["case_no"],
+        target_name=f"{item['sku_name']} / {item['status_label']}",
+        detail_summary=f"{item['reverse_type_label']} / {item['severity_label']} / 收件 {item['received_qty']}/{item['request_qty']}",
+        detail={"item": item, "task_center_sync": task_center_sync},
+        triggered_by=username,
+        source_path=AFTER_SALES_CASE_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"saved": True, "created": result["created"], "item": item, "task_center_sync": task_center_sync})
+
+
+@router.get("/bi-dashboard/api/replenishment-workbench")
+async def replenishment_workbench_overview(
+    plan_status: str | None = Query(None),
+    supply_mode: str | None = Query(None),
+    priority: str | None = Query(None),
+    demand_type: str | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int = Query(180, ge=1, le=500),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        ensure_replenishment_plan_seed(conn)
+        sync_task_center_snapshot(conn, "system")
+        items = list_replenishment_plan_items(
+            conn,
+            plan_status=plan_status,
+            supply_mode=supply_mode,
+            priority=priority,
+            demand_type=demand_type,
+            keyword=str(keyword or "").strip() or None,
+            limit=limit,
+        )
+        alerts = list_inventory_alerts(conn, limit=12)
+        forecasts = build_replenishment_forecast_snapshots(conn, limit=12)
+
+    latest_alert_date = max((alert.get("snapshot_date") for alert in alerts if alert.get("snapshot_date")), default=None)
+    summary = {
+        "total_count": len(items),
+        "draft_count": sum(1 for item in items if item["plan_status"] == "draft"),
+        "reviewing_count": sum(1 for item in items if item["plan_status"] == "reviewing"),
+        "confirmed_count": sum(1 for item in items if item["plan_status"] == "confirmed"),
+        "executing_count": sum(1 for item in items if item["plan_status"] == "executing"),
+        "blocked_count": sum(1 for item in items if item["plan_status"] == "blocked"),
+        "closed_count": sum(1 for item in items if item["plan_status"] == "closed"),
+        "overdue_count": sum(1 for item in items if item["is_overdue"]),
+        "high_priority_count": sum(1 for item in items if item["priority"] == "high"),
+        "purchase_count": sum(1 for item in items if item["supply_mode"] == "purchase"),
+        "refurb_count": sum(1 for item in items if item["supply_mode"] == "refurb"),
+        "transfer_count": sum(1 for item in items if item["supply_mode"] == "transfer"),
+        "watch_count": sum(1 for item in items if item["supply_mode"] == "watch"),
+        "total_suggested_qty": round(sum(float(item.get("suggested_qty") or 0.0) for item in items), 2),
+        "total_target_stock_qty": round(sum(float(item.get("target_stock_qty") or 0.0) for item in items), 2),
+        "material_count": len({str(item.get("material_name") or "").strip() for item in items if str(item.get("material_name") or "").strip()}),
+        "alert_count": len(alerts),
+        "latest_plan_date": max((item["plan_date"] for item in items if item.get("plan_date")), default=None),
+        "latest_alert_date": latest_alert_date,
+    }
+    return JSONResponse(
+        {
+            "summary": summary,
+            "items": items,
+            "alerts": alerts,
+            "forecasts": forecasts,
+            "plan_status_options": replenishment_plan_status_options(),
+            "supply_mode_options": replenishment_supply_mode_options(),
+            "priority_options": inventory_flow_priority_options(),
+            "demand_type_options": replenishment_demand_type_options(),
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/replenishment-workbench/plans")
+async def save_replenishment_plan(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    record = normalize_replenishment_plan_payload(payload)
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        ensure_replenishment_plan_seed(conn)
+        result = upsert_replenishment_plan_item(conn, record, username)
+        task_center_sync = sync_task_center_snapshot(conn, username)
+        saved_row = conn.execute(
+            text(
+                """
+                SELECT
+                    id, suggestion_no, plan_date, material_name, demand_type, material_role,
+                    current_stock_qty, forecast_14d_qty, coverage_days, threshold_days,
+                    target_stock_qty, suggested_qty, supply_mode, plan_status, priority,
+                    owner_name, owner_role, expected_ready_date, supplier_name, linked_refurb_category,
+                    note, source_snapshot_json, created_by, updated_by, created_at, updated_at, sort_order
+                FROM bi_replenishment_plan_item
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": result["id"]},
+        ).mappings().first()
+    item = serialize_replenishment_plan_row(saved_row)
+    record_dashboard_audit(
+        module_key="replenishment",
+        module_name="琛ヨ揣鍗忓悓",
+        action_key="plan.upsert",
+        action_name="淇濆瓨琛ヨ揣璁″垝",
+        target_type="replenishment_plan_item",
+        target_id=item["suggestion_no"],
+        target_name=f"{item['material_name']} / {item['supply_mode_label']}",
+        detail_summary=f"{item['plan_status_label']} / 寤鸿 {item['suggested_qty']} / 瑕嗙洊 {item['coverage_days']} 澶?",
+        detail={"item": item, "task_center_sync": task_center_sync},
+        triggered_by=username,
+        source_path=REPLENISHMENT_PLAN_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"saved": True, "created": result["created"], "item": item, "task_center_sync": task_center_sync})
+
+
 @router.get("/bi-dashboard/api/forecast-alerts/overview")
 async def forecast_alert_overview(_auth: str = Depends(require_auth)) -> JSONResponse:
     ensure_schema()
@@ -9825,6 +11324,8 @@ async def list_task_center_items(
         "procurement_count": sum(1 for item in items if item["source_module"] == "procurement"),
         "inventory_flow_count": sum(1 for item in items if item["source_module"] == "inventory_flow"),
         "refurb_count": sum(1 for item in items if item["source_module"] == "refurb"),
+        "after_sales_count": sum(1 for item in items if item["source_module"] == "after_sales"),
+        "replenishment_count": sum(1 for item in items if item["source_module"] == "replenishment"),
         "high_priority_count": sum(1 for item in items if item["priority"] == "high"),
         "latest_updated_at": max((item["updated_at"] for item in items if item["updated_at"]), default=None),
     }

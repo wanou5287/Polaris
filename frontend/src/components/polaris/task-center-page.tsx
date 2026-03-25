@@ -55,6 +55,16 @@ const sourceMeta: Record<string, { label: string; className: string }> = {
   inventory_flow: { label: "库存流转", className: "border-zinc-900 bg-zinc-900 text-white" },
 };
 
+(sourceMeta as Record<string, { label: string; className: string }>).after_sales = {
+  label: "逆向售后",
+  className: "border-sky-200 bg-sky-50 text-sky-700",
+};
+
+(sourceMeta as Record<string, { label: string; className: string }>).refurb = {
+  label: "翻新协同",
+  className: "border-slate-200 bg-white text-foreground",
+};
+
 async function requestTaskCenter(params: URLSearchParams) {
   return apiFetch<TaskCenterResponse>(`/api/backend/task-center?${params.toString()}`);
 }
@@ -484,6 +494,25 @@ function SourceSnapshot({ item }: { item: TaskCenterItem }) {
         <SnapshotField label="待补数量" value={asNumber(snapshot.pending_qty)} />
         <SnapshotField label="单据状态" value={`${asText(snapshot.status)} / ${asText(snapshot.document_status)}`} />
         <SnapshotField label="异常原因" value={asText(snapshot.exception_reason)} />
+      </div>
+    );
+  }
+
+  if (item.source_module === "after_sales") {
+    return (
+      <div className="grid gap-4 md:grid-cols-2">
+        <SnapshotField label="订单号" value={asText(snapshot.order_no)} />
+        <SnapshotField label="逆向类型" value={asText(snapshot.reverse_type_label ?? snapshot.reverse_type)} />
+        <SnapshotField label="渠道 / 店铺" value={`${asText(snapshot.channel_name)} / ${asText(snapshot.shop_name)}`} />
+        <SnapshotField label="SKU" value={`${asText(snapshot.sku_code)} / ${asText(snapshot.sku_name)}`} />
+        <SnapshotField label="申请 / 收件" value={`${asNumber(snapshot.request_qty)} / ${asNumber(snapshot.received_qty)}`} />
+        <SnapshotField label="待收件" value={asNumber(snapshot.pending_receive_qty)} />
+        <SnapshotField label="退款金额" value={asNumber(snapshot.refund_amount)} />
+        <SnapshotField label="逆向仓" value={asText(snapshot.reverse_warehouse_name)} />
+        <SnapshotField label="问题分类" value={asText(snapshot.issue_category)} />
+        <SnapshotField label="客户原因" value={asText(snapshot.customer_reason)} />
+        <SnapshotField label="诊断结论" value={asText(snapshot.diagnosis_result)} />
+        <SnapshotField label="处理动作" value={asText(snapshot.action_plan)} />
       </div>
     );
   }

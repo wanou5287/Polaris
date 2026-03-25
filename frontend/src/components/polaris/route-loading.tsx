@@ -3,8 +3,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function RouteLoading({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="min-h-screen bg-background px-4 py-6 sm:px-6 lg:px-10">
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-6">
+    <div className="min-h-screen bg-background px-4 py-6 sm:px-5 lg:px-6 xl:px-8">
+      <div className="mx-auto flex max-w-[1560px] flex-col gap-6">
         {!compact ? (
           <div className="surface-panel p-6">
             <Skeleton className="h-4 w-28 rounded-full" />
