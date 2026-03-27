@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import hashlib
 import hmac
 import io
@@ -23,7 +24,7 @@ import requests
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from openpyxl import load_workbook
 from sqlalchemy import create_engine, text
@@ -41,18 +42,28 @@ from app.services.forecast_alert_service import (
     save_manual_forecast,
     save_promotion_events,
 )
+from app.services.yonyou_procurement_service import (
+    YonyouRequestError,
+    is_procurement_yonyou_configured,
+    launch_procurement_document,
+    query_procurement_document_rows,
+)
 from scripts.yonyou_inventory_sync import (
     AppConfig,
     InventorySyncService,
     JobConfig,
+    YonyouApiError,
+    YonyouOpenApiClient,
     build_logger,
     default_dates_from_job,
     refresh_inventory_cleaning,
     ensure_inventory_processing_schema,
     ensure_sales_processing_schema,
+    extract_items,
     load_config,
     quote_mysql_url,
     save_return_unpack_attendance,
+    transform_inventory_rows,
 )
 
 
@@ -74,8 +85,11 @@ METRIC_DICTIONARY_ENTRY_PATH = "/financial/bi-dashboard/metric-dictionary"
 METRIC_DICTIONARY_API_PATH = "/financial/bi-dashboard/api/metric-dictionary"
 PROCUREMENT_ARRIVAL_ENTRY_PATH = "/financial/bi-dashboard/procurement-arrivals"
 PROCUREMENT_ARRIVAL_API_PATH = "/financial/bi-dashboard/api/procurement-arrivals"
+PROCUREMENT_SUPPLY_API_PATH = "/financial/bi-dashboard/api/procurement-supply"
+PROCUREMENT_SUPPLY_SERIAL_IMPORT_API_PATH = "/financial/bi-dashboard/api/procurement-supply/serial-import-preview"
 INVENTORY_FLOW_ENTRY_PATH = "/financial/bi-dashboard/inventory-flows"
 INVENTORY_FLOW_API_PATH = "/financial/bi-dashboard/api/inventory-flows"
+INVENTORY_FLOW_LIVE_STOCK_API_PATH = "/financial/bi-dashboard/api/inventory-flows/live-stock"
 INVENTORY_FLOW_RULE_API_PATH = "/financial/bi-dashboard/api/inventory-flows/rules"
 INVENTORY_FLOW_TASK_API_PATH = "/financial/bi-dashboard/api/inventory-flows/tasks"
 TASK_CENTER_API_PATH = "/financial/bi-dashboard/api/task-center"
@@ -98,13 +112,16 @@ SYNC_SCHEDULER_TIMEZONE = "Asia/Shanghai"
 sync_scheduler: BackgroundScheduler | None = None
 sync_scheduler_lock = threading.RLock()
 sync_run_lock = threading.Lock()
+inventory_live_stock_cache_lock = threading.RLock()
+inventory_live_stock_cache: Dict[str, Dict[str, Any]] = {}
+INVENTORY_LIVE_STOCK_CACHE_TTL_SECONDS = 90
 PREFERRED_SALES_VIEW_NAME = "销售/退货看板"
 PREFERRED_SALES_VIEW_DESCRIPTION = "基于销售清洗表预置的销售与退货经营看板"
 PREFERRED_INVENTORY_VIEW_NAME = "库存清洗看板"
 PREFERRED_INVENTORY_VIEW_DESCRIPTION = "基于库存清洗表预置的库存结构与明细看板"
 DATA_AGENT_GITHUB_URL = "https://github.com/3600818203/DataAgent"
 DATA_AGENT_REPO_DIR = project_root / "vendor" / "DataAgent"
-DATA_AGENT_NAME = "???? Agent"
+DATA_AGENT_NAME = "小北-数据分析Agent"
 DATA_AGENT_API_PORT = 18080
 DATA_AGENT_UI_PORT = 18501
 DATA_AGENT_API_URL = f"http://127.0.0.1:{DATA_AGENT_API_PORT}"
@@ -939,10 +956,16 @@ def dashboard_page_context(active_key: str, replacements: Dict[str, str] | None 
         "__BI_SIDE_NAV__": dashboard_sidebar_html(active_key),
         "__BI_TRANSITION_OVERLAY__": dashboard_transition_overlay_markup(),
         "__BI_PAGE_TRANSITION_SCRIPT__": dashboard_transition_script(),
+        "__BI_EMBEDDED_CLASS__": "",
     }
     if replacements:
         context.update(replacements)
     return context
+
+
+def dashboard_embedded_mode(request: Request) -> bool:
+    value = str(request.query_params.get("embedded") or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def is_local_port_open(host: str, port: int, timeout: float = 0.35) -> bool:
@@ -1065,7 +1088,7 @@ def data_agent_status_payload() -> Dict[str, Any]:
     env_ready = data_agent_env_snapshot()
     return {
         "module_name": DATA_AGENT_NAME,
-        "display_name": "鏁版嵁鍒嗘瀽Agent",
+        "display_name": "小北-数据分析Agent",
         "github_url": DATA_AGENT_GITHUB_URL,
         "repo_path": str(repo_dir),
         "repo_present": repo_dir.exists(),
@@ -1088,7 +1111,7 @@ def data_agent_status_payload() -> Dict[str, Any]:
             "流式对话、代码执行与分析报告生成",
             "支持 MCP 与 RAGFlow 扩展",
         ],
-        "integration_note": "当前阶段已升级为数据分析 Agent：北极星负责统一入口、状态探测、问答代理、报告生成与 AI 洞察接入，底层仍复用 DataAgent 作为独立智能体服务。",
+        "integration_note": "当前阶段已升级为小北-数据分析Agent：小北负责统一入口、状态探测、问答代理、报告生成与 AI 洞察接入，底层智能体服务已经完成统一封装。",
     }
 
 def json_dumps(value: Any) -> str:
@@ -1285,7 +1308,19 @@ def load_sync_base_config() -> AppConfig:
 
 
 def default_sync_schedule_settings() -> Dict[str, Any]:
-    base_config = load_sync_base_config()
+    fallback = {
+        "schedule_key": SYNC_SCHEDULE_KEY,
+        "is_enabled": False,
+        "mode": "all",
+        "cron_expr": "59 23 * * *",
+        "sales_days_behind": 1,
+        "sales_window_days": 1,
+        "snapshot_days_behind": 0,
+    }
+    try:
+        base_config = load_sync_base_config()
+    except Exception:
+        return fallback
     cron_expr = str(base_config.job.cron or "").strip()
     return {
         "schedule_key": SYNC_SCHEDULE_KEY,
@@ -1761,6 +1796,901 @@ def parse_refurb_excel_rows(upload_file: UploadFile, content: bytes) -> List[Dic
     if not normalized_rows:
         raise HTTPException(status_code=400, detail=f"{upload_file.filename or 'Excel 鏂囦欢'} 涓病鏈夊彲瀵煎叆鐨勬暟鎹")
     return normalized_rows
+
+
+def procurement_supply_material_profiles() -> List[Dict[str, Any]]:
+    return [
+        {
+            "material_code": "yscs061601",
+            "material_name": "学习机成品",
+            "material_type": "成品",
+            "serial_managed": True,
+            "default_unit": "EA",
+            "recommended_workflow": "learning_device_bulk_shipping",
+            "description": "面向学习机大货出货流程的成品物料，默认要求上传序列号明细。",
+        },
+        {
+            "material_code": "003000013",
+            "material_name": "学习机彩盒",
+            "material_type": "半成品",
+            "serial_managed": False,
+            "default_unit": "EA",
+            "recommended_workflow": "learning_device_bulk_shipping",
+            "description": "非序列号物料，编排时自动关闭序列号导入入口。",
+        },
+        {
+            "material_code": "004000001",
+            "material_name": "学习机主板",
+            "material_type": "半成品",
+            "serial_managed": True,
+            "default_unit": "EA",
+            "recommended_workflow": "learning_device_bulk_shipping",
+            "description": "序列号管理子件，可在形态转换环节引用在库 SN 明细。",
+        },
+    ]
+
+
+def procurement_supply_material_lookup() -> Dict[str, Dict[str, Any]]:
+    return {str(item["material_code"]): item for item in procurement_supply_material_profiles()}
+
+
+def procurement_supply_bom_profiles() -> List[Dict[str, Any]]:
+    return [
+        {
+            "bom_code": "BOM20260301",
+            "bom_name": "学习机大货出货 BOM",
+            "material_code": "yscs061601",
+            "material_name": "学习机成品",
+            "version_tag": "v1.0",
+            "status": "启用",
+            "component_count": 3,
+            "description": "用于学习机大货出货的标准形态转换 BOM。",
+            "lines": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 2026},
+                {"line_type": "半成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 2026},
+                {"line_type": "半成品", "material_code": "003000013", "material_name": "学习机彩盒", "qty": 2026},
+                {"line_type": "半成品", "material_code": "004000001", "material_name": "学习机主板", "qty": 20},
+            ],
+        },
+        {
+            "bom_code": "BOM20260308",
+            "bom_name": "学习机城市补货 BOM",
+            "material_code": "yscs061601",
+            "material_name": "学习机成品",
+            "version_tag": "v0.9",
+            "status": "联调中",
+            "component_count": 3,
+            "description": "用于区域补货的轻量化形态转换 BOM。",
+            "lines": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 800},
+                {"line_type": "半成品", "material_code": "003000013", "material_name": "学习机彩盒", "qty": 800},
+                {"line_type": "半成品", "material_code": "004000001", "material_name": "学习机主板", "qty": 8},
+            ],
+        },
+        {
+            "bom_code": "BOM20260312",
+            "bom_name": "学习机市场试投 BOM",
+            "material_code": "yscs061601",
+            "material_name": "学习机成品",
+            "version_tag": "v0.3",
+            "status": "草稿",
+            "component_count": 2,
+            "description": "用于市场试投的草稿 BOM，当前仅配置成品和彩盒。",
+            "lines": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 120},
+                {"line_type": "半成品", "material_code": "003000013", "material_name": "学习机彩盒", "qty": 120},
+            ],
+        },
+        {
+            "bom_code": "BOM20260218",
+            "bom_name": "学习机逆向调拨 BOM",
+            "material_code": "yscs061601",
+            "material_name": "学习机成品",
+            "version_tag": "v1.1",
+            "status": "停用",
+            "component_count": 1,
+            "description": "历史逆向调拨使用的 BOM，当前仅保留供审计查看。",
+            "lines": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 60},
+            ],
+        },
+        {
+            "bom_code": "BOM20260320",
+            "bom_name": "学习机彩盒独立组装 BOM",
+            "material_code": "003000013",
+            "material_name": "学习机彩盒",
+            "version_tag": "v1.0",
+            "status": "启用",
+            "component_count": 1,
+            "description": "面向彩盒独立组装的包装 BOM。",
+            "lines": [
+                {"line_type": "半成品", "material_code": "003000013", "material_name": "学习机彩盒", "qty": 1},
+            ],
+        },
+    ]
+
+
+def procurement_supply_document_modules() -> List[Dict[str, Any]]:
+    return [
+        {
+            "key": "purchase_order",
+            "title": "采购订单",
+            "description": "直接向用友创建采购订单，适合作为新业务起点，也可独立补录。",
+            "stage_label": "供应起点",
+            "supports_standalone": True,
+            "supports_workflow": True,
+            "serial_policy": "none",
+            "required_fields": ["业务类型", "供应商", "采购组织", "汇率类型", "税目", "物料", "数量", "单价"],
+            "recommended_fields": ["开票供应商", "单位", "创建人", "到货组织"],
+            "yonyou_interfaces": [
+                {"label": "采购订单保存", "path": "/yonbip/scm/purchaseorder/singleSave_v1"},
+                {"label": "采购订单提交", "path": "/yonbip/scm/purchaseorder/batchsubmit"},
+            ],
+            "status_summary": {"draft": 1, "pending": 1, "approved": 0, "completed": 0},
+        },
+        {
+            "key": "purchase_inbound",
+            "title": "采购入库",
+            "description": "可作为流程中的第一步，也可单独引用采购订单来源生成并提交审批。",
+            "stage_label": "仓内入库",
+            "supports_standalone": True,
+            "supports_workflow": True,
+            "serial_policy": "material_based",
+            "required_fields": ["采购订单编号", "仓库", "交易类型", "物料", "数量"],
+            "recommended_fields": ["供应商", "组织", "单据日期"],
+            "yonyou_interfaces": [
+                {"label": "采购入库来源生单保存", "path": "/yonbip/scm/purinrecord/mergeSourceData/save"},
+                {"label": "采购入库提交", "path": "/yonbip/scm/purinrecord/batchsubmit"},
+            ],
+            "status_summary": {"draft": 0, "pending": 1, "approved": 1, "completed": 0},
+        },
+        {
+            "key": "morphology_conversion",
+            "title": "形态转换",
+            "description": "支持按 BOM 发起形态转换，序列号物料会在此环节强校验导入明细。",
+            "stage_label": "加工转换",
+            "supports_standalone": True,
+            "supports_workflow": True,
+            "serial_policy": "material_based",
+            "required_fields": ["交易类型", "转换前仓库", "转换后仓库", "成品", "BOM 子件", "数量"],
+            "recommended_fields": ["备注", "创建人", "操作员"],
+            "yonyou_interfaces": [
+                {"label": "形态转换保存", "path": "/yonbip/scm/morphologyconversion/save"},
+                {"label": "形态转换提交", "path": "/yonbip/scm/morphologyconversion/batchsubmit"},
+            ],
+            "status_summary": {"draft": 1, "pending": 0, "approved": 1, "completed": 0},
+        },
+        {
+            "key": "transfer_order",
+            "title": "调拨订单",
+            "description": "在审批通过后创建仓间调拨申请，适合作为跨仓出货的前置单据。",
+            "stage_label": "仓间申请",
+            "supports_standalone": True,
+            "supports_workflow": True,
+            "serial_policy": "none",
+            "required_fields": ["调出仓", "调入仓", "物料", "数量", "交易类型"],
+            "recommended_fields": ["备注", "来源单据编号"],
+            "yonyou_interfaces": [
+                {"label": "调拨订单保存", "path": "/yonbip/scm/transferapply/save"},
+                {"label": "调拨订单审核", "path": "/yonbip/scm/transferapply/batchaudit"},
+            ],
+            "status_summary": {"draft": 0, "pending": 0, "approved": 1, "completed": 0},
+        },
+        {
+            "key": "storeout",
+            "title": "调出单",
+            "description": "承接调拨订单或其他来源单据生成调出，提交后即可驱动后续调入。",
+            "stage_label": "仓间调出",
+            "supports_standalone": True,
+            "supports_workflow": True,
+            "serial_policy": "material_based",
+            "required_fields": ["来源单据编号", "调出仓", "调入仓", "物料", "数量"],
+            "recommended_fields": ["交易类型", "生单规则"],
+            "yonyou_interfaces": [
+                {"label": "调出来源生单保存", "path": "/yonbip/scm/storeout/mergeSourceData/save"},
+                {"label": "调出提交", "path": "/yonbip/scm/storeout/batchsubmit"},
+            ],
+            "status_summary": {"draft": 1, "pending": 0, "approved": 0, "completed": 1},
+        },
+        {
+            "key": "storein",
+            "title": "调入单",
+            "description": "在调出单生效后同步下推调入单，作为跨仓链路的收口单据。",
+            "stage_label": "仓间调入",
+            "supports_standalone": True,
+            "supports_workflow": True,
+            "serial_policy": "material_based",
+            "required_fields": ["来源调出单编号", "调入仓", "物料", "数量"],
+            "recommended_fields": ["交易类型", "生单规则"],
+            "yonyou_interfaces": [
+                {"label": "调入来源生单保存", "path": "/yonbip/scm/storein/mergeSourceData/save"},
+                {"label": "调入提交", "path": "/yonbip/scm/storein/batchsubmit"},
+            ],
+            "status_summary": {"draft": 0, "pending": 1, "approved": 0, "completed": 1},
+        },
+        {
+            "key": "purchase_return",
+            "title": "采购退货",
+            "description": "面向采购入库后的退货场景，用于承接供应商退货退仓的单据入口。",
+            "stage_label": "退货处理",
+            "supports_standalone": True,
+            "supports_workflow": True,
+            "serial_policy": "material_based",
+            "required_fields": ["来源入库单号", "供应商", "退货仓库", "物料", "数量", "退货原因"],
+            "recommended_fields": ["业务类型", "红蓝字标记", "备注"],
+            "yonyou_interfaces": [
+                {"label": "采购退货接口待补充", "path": "待确认接口路径"},
+            ],
+            "status_summary": {"draft": 0, "pending": 0, "approved": 0, "completed": 0},
+        },
+        {
+            "key": "purchase_invoice",
+            "title": "采购发票",
+            "description": "面向采购结算场景的发票录入和核对入口，用于承接采购单据的票据管理。",
+            "stage_label": "票据结算",
+            "supports_standalone": True,
+            "supports_workflow": False,
+            "serial_policy": "none",
+            "required_fields": ["供应商", "发票类型", "发票号", "开票日期", "金额", "税额"],
+            "recommended_fields": ["来源采购单号", "币种", "税率"],
+            "yonyou_interfaces": [
+                {"label": "采购发票接口待补充", "path": "待确认接口路径"},
+            ],
+            "status_summary": {"draft": 0, "pending": 0, "approved": 0, "completed": 0},
+        },
+    ]
+
+
+def summarize_procurement_supply_document_rows(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    summary = {"draft": 0, "pending": 0, "approved": 0, "completed": 0}
+    for row in rows:
+        status_key = str(row.get("status") or "").strip()
+        if status_key in summary:
+            summary[status_key] += 1
+    return summary
+
+
+def procurement_supply_document_detail_profiles() -> Dict[str, Dict[str, Any]]:
+    return {
+        "purchase_order": {
+            "detail_columns": [
+                {"key": "document_no", "label": "采购订单号"},
+                {"key": "vendor_name", "label": "供应商"},
+                {"key": "material_code", "label": "物料编码"},
+                {"key": "qty", "label": "采购数量"},
+                {"key": "creator", "label": "创建人"},
+                {"key": "updated_at", "label": "更新时间"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "po-pending-1",
+                    "status": "pending",
+                    "values": {
+                        "document_no": "CGDD260325000004",
+                        "vendor_name": "杭州速豪供应链",
+                        "material_code": "yscs061601",
+                        "qty": 2026,
+                        "creator": "唐为康",
+                        "updated_at": "2026-03-25 15:25",
+                    },
+                },
+                {
+                    "id": "po-draft-1",
+                    "status": "draft",
+                    "values": {
+                        "document_no": "CGDD260326DRAFT001",
+                        "vendor_name": "杭州速豪供应链",
+                        "material_code": "003000013",
+                        "qty": 600,
+                        "creator": "采购专员",
+                        "updated_at": "2026-03-26 09:12",
+                    },
+                },
+            ],
+        },
+        "purchase_inbound": {
+            "detail_columns": [
+                {"key": "document_no", "label": "采购入库单号"},
+                {"key": "source_no", "label": "来源采购单"},
+                {"key": "warehouse_name", "label": "入库仓"},
+                {"key": "material_code", "label": "物料编码"},
+                {"key": "qty", "label": "入库数量"},
+                {"key": "updated_at", "label": "更新时间"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "inbound-pending-1",
+                    "status": "pending",
+                    "values": {
+                        "document_no": "CGRK000020260325000005",
+                        "source_no": "CGDD260325000004",
+                        "warehouse_name": "精准学良品仓",
+                        "material_code": "yscs061601",
+                        "qty": 2026,
+                        "updated_at": "2026-03-25 16:58",
+                    },
+                },
+                {
+                    "id": "inbound-approved-1",
+                    "status": "approved",
+                    "values": {
+                        "document_no": "CGRK000020260324000014",
+                        "source_no": "CGDD260324000019",
+                        "warehouse_name": "精准学余杭速豪盒马云仓",
+                        "material_code": "yscs061601",
+                        "qty": 1200,
+                        "updated_at": "2026-03-24 18:20",
+                    },
+                },
+            ],
+        },
+        "morphology_conversion": {
+            "detail_columns": [
+                {"key": "document_no", "label": "形态转换单号"},
+                {"key": "bom_code", "label": "BOM编码"},
+                {"key": "warehouse_name", "label": "转换仓"},
+                {"key": "material_code", "label": "成品编码"},
+                {"key": "qty", "label": "转换数量"},
+                {"key": "updated_at", "label": "更新时间"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "mc-draft-1",
+                    "status": "draft",
+                    "values": {
+                        "document_no": "XTZH000020260326000003",
+                        "bom_code": "BOM20260312",
+                        "warehouse_name": "精准学良品仓",
+                        "material_code": "yscs061601",
+                        "qty": 120,
+                        "updated_at": "2026-03-26 10:05",
+                    },
+                },
+                {
+                    "id": "mc-approved-1",
+                    "status": "approved",
+                    "values": {
+                        "document_no": "XTZH000020260325000002",
+                        "bom_code": "BOM20260301",
+                        "warehouse_name": "精准学良品仓",
+                        "material_code": "yscs061601",
+                        "qty": 2026,
+                        "updated_at": "2026-03-25 18:46",
+                    },
+                },
+            ],
+        },
+        "transfer_order": {
+            "detail_columns": [
+                {"key": "document_no", "label": "调拨订单号"},
+                {"key": "out_warehouse", "label": "调出仓"},
+                {"key": "in_warehouse", "label": "调入仓"},
+                {"key": "material_code", "label": "物料编码"},
+                {"key": "qty", "label": "调拨数量"},
+                {"key": "updated_at", "label": "更新时间"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "transfer-approved-1",
+                    "status": "approved",
+                    "values": {
+                        "document_no": "DBDD000020260325000010",
+                        "out_warehouse": "000003",
+                        "in_warehouse": "15532921",
+                        "material_code": "yscs061601",
+                        "qty": 2026,
+                        "updated_at": "2026-03-25 18:46",
+                    },
+                }
+            ],
+        },
+        "storeout": {
+            "detail_columns": [
+                {"key": "document_no", "label": "调出单号"},
+                {"key": "source_no", "label": "来源调拨单"},
+                {"key": "out_warehouse", "label": "调出仓"},
+                {"key": "material_code", "label": "物料编码"},
+                {"key": "qty", "label": "调出数量"},
+                {"key": "updated_at", "label": "更新时间"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "storeout-draft-1",
+                    "status": "draft",
+                    "values": {
+                        "document_no": "DBCK000020260326000002",
+                        "source_no": "DBDD000020260326000003",
+                        "out_warehouse": "000003",
+                        "material_code": "003000013",
+                        "qty": 300,
+                        "updated_at": "2026-03-26 11:10",
+                    },
+                },
+                {
+                    "id": "storeout-completed-1",
+                    "status": "completed",
+                    "values": {
+                        "document_no": "DBCK000020260325000008",
+                        "source_no": "DBDD000020260325000010",
+                        "out_warehouse": "000003",
+                        "material_code": "yscs061601",
+                        "qty": 2026,
+                        "updated_at": "2026-03-25 18:52",
+                    },
+                },
+            ],
+        },
+        "storein": {
+            "detail_columns": [
+                {"key": "document_no", "label": "调入单号"},
+                {"key": "source_no", "label": "来源调出单"},
+                {"key": "in_warehouse", "label": "调入仓"},
+                {"key": "material_code", "label": "物料编码"},
+                {"key": "qty", "label": "调入数量"},
+                {"key": "updated_at", "label": "更新时间"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "storein-pending-1",
+                    "status": "pending",
+                    "values": {
+                        "document_no": "DBRK000020260325000008",
+                        "source_no": "DBCK000020260325000008",
+                        "in_warehouse": "15532921",
+                        "material_code": "yscs061601",
+                        "qty": 2026,
+                        "updated_at": "2026-03-25 19:01",
+                    },
+                },
+                {
+                    "id": "storein-completed-1",
+                    "status": "completed",
+                    "values": {
+                        "document_no": "DBRK000020260324000006",
+                        "source_no": "DBCK000020260324000005",
+                        "in_warehouse": "15532921",
+                        "material_code": "003000013",
+                        "qty": 860,
+                        "updated_at": "2026-03-24 17:32",
+                    },
+                },
+            ],
+        },
+        "purchase_return": {
+            "detail_columns": [
+                {"key": "document_no", "label": "采购退货单号"},
+                {"key": "source_no", "label": "来源入库单"},
+                {"key": "vendor_name", "label": "供应商"},
+                {"key": "warehouse_name", "label": "退货仓"},
+                {"key": "qty", "label": "退货数量"},
+                {"key": "updated_at", "label": "更新时间"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "return-draft-1",
+                    "status": "draft",
+                    "values": {
+                        "document_no": "CGTH000020260326000001",
+                        "source_no": "CGRK000020260326000003",
+                        "vendor_name": "杭州速豪供应链",
+                        "warehouse_name": "精准学良品仓",
+                        "qty": 120,
+                        "updated_at": "2026-03-26 14:20",
+                    },
+                }
+            ],
+        },
+        "purchase_invoice": {
+            "detail_columns": [
+                {"key": "document_no", "label": "采购发票号"},
+                {"key": "vendor_name", "label": "供应商"},
+                {"key": "source_no", "label": "来源采购单"},
+                {"key": "invoice_type", "label": "发票类型"},
+                {"key": "amount", "label": "金额"},
+                {"key": "updated_at", "label": "开票日期"},
+            ],
+            "detail_rows": [
+                {
+                    "id": "invoice-pending-1",
+                    "status": "pending",
+                    "values": {
+                        "document_no": "FP20260326001",
+                        "vendor_name": "杭州速豪供应链",
+                        "source_no": "CGDD260326000015",
+                        "invoice_type": "专票",
+                        "amount": "68,000.00",
+                        "updated_at": "2026-03-26",
+                    },
+                }
+            ],
+        },
+    }
+
+
+def attach_procurement_supply_document_details(
+    document_modules: List[Dict[str, Any]],
+    live_rows_by_module: Dict[str, List[Dict[str, Any]]] | None = None,
+) -> List[Dict[str, Any]]:
+    detail_profiles = procurement_supply_document_detail_profiles()
+    hydrated_modules: List[Dict[str, Any]] = []
+    for module in document_modules:
+        detail_profile = detail_profiles.get(module["key"], {})
+        detail_rows = (live_rows_by_module or {}).get(module["key"], detail_profile.get("detail_rows", []))
+        hydrated_modules.append(
+            {
+                **module,
+                "detail_columns": detail_profile.get("detail_columns", []),
+                "detail_rows": detail_rows,
+                "status_summary": summarize_procurement_supply_document_rows(detail_rows),
+            }
+        )
+    return hydrated_modules
+
+
+def normalize_procurement_supply_workflow_template(template: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = copy.deepcopy(template)
+    requires_purchase_order = not any(step.get("key") == "purchase_order" for step in normalized.get("steps", []))
+    normalized["purchase_order_required"] = requires_purchase_order
+    normalized["default_purchase_order_placeholder"] = (
+        "例如：CGDD260325000004"
+        if requires_purchase_order
+        else "该业务流已包含采购订单节点，无需额外输入采购订单编号"
+    )
+
+    required_inputs = [item for item in normalized.get("required_inputs", []) if item != "用友采购订单编号"]
+    if requires_purchase_order:
+        required_inputs.insert(0, "用友采购订单编号")
+    normalized["required_inputs"] = required_inputs
+    return normalized
+
+
+def procurement_supply_workflow_templates() -> List[Dict[str, Any]]:
+    templates = [
+        {
+            "key": "learning_device_bulk_shipping",
+            "title": "学习机大货出货",
+            "description": "适用于采购订单已在用友完成建单，后续由采购入库驱动形态转换、调拨、调出和调入的链路。",
+            "workflow_code": "WF-LEARN-001",
+            "version": "v1.0",
+            "bom_code": "BOM20260301",
+            "status": "published",
+            "purchase_order_required": True,
+            "serial_upload_policy": "material_based_required",
+            "serial_upload_label": "序列号明细表",
+            "serial_upload_note": "当所选物料为序列号管理时，用户必须导入 .xlsx / .csv 序列号明细表。",
+            "default_material_code": "yscs061601",
+            "default_purchase_order_placeholder": "例如：CGDD260325000004",
+            "steps": [
+                {
+                    "key": "purchase_inbound",
+                    "title": "采购入库",
+                    "description": "引用现有采购订单生成采购入库单，并进入审批。",
+                },
+                {
+                    "key": "morphology_conversion",
+                    "title": "形态转换",
+                    "description": "依据 BOM 完成成品/半成品转换，序列号物料在此环节做强校验。",
+                },
+                {
+                    "key": "transfer_order",
+                    "title": "调拨订单",
+                    "description": "形态转换通过后，自动发起调拨订单并进入审核。",
+                },
+                {
+                    "key": "storeout",
+                    "title": "调出单",
+                    "description": "按调拨订单生成调出单，提交后即刻生效。",
+                },
+                {
+                    "key": "storein",
+                    "title": "调入单",
+                    "description": "根据调出单自动下推调入单并提交，完成跨仓闭环。",
+                },
+            ],
+            "required_inputs": [
+                "用友采购订单编号",
+                "物料编码",
+                "数量",
+                "目标工作流模板",
+                "当物料为序列号管理时，必须上传序列号明细表",
+            ],
+            "bom_preview": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 2026},
+                {"line_type": "半成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 2026},
+                {"line_type": "半成品", "material_code": "003000013", "material_name": "学习机彩盒", "qty": 2026},
+                {"line_type": "半成品", "material_code": "004000001", "material_name": "学习机主板", "qty": 20},
+            ],
+        },
+        {
+            "key": "learning_device_city_restock",
+            "title": "学习机城市补货",
+            "description": "面向区域补货场景的待发布业务流，预留采购入库、调拨订单、调出和调入的顺序编排。",
+            "workflow_code": "WF-LEARN-002",
+            "version": "v0.9",
+            "bom_code": "BOM20260308",
+            "status": "unpublished",
+            "purchase_order_required": True,
+            "serial_upload_policy": "material_based_required",
+            "serial_upload_label": "序列号明细表",
+            "serial_upload_note": "城市补货默认沿用学习机序列号校验规则，发布前需完成明细模板联调。",
+            "default_material_code": "yscs061601",
+            "default_purchase_order_placeholder": "例如：CGDD260325000004",
+            "steps": [
+                {
+                    "key": "purchase_inbound",
+                    "title": "采购入库",
+                    "description": "沿用原始采购订单生成采购入库，作为区域补货的起点。",
+                },
+                {
+                    "key": "transfer_order",
+                    "title": "调拨订单",
+                    "description": "按目标城市云仓创建调拨订单，等待审核并进入执行。",
+                },
+                {
+                    "key": "storeout",
+                    "title": "调出单",
+                    "description": "根据调拨订单下推调出单，驱动仓间出库。",
+                },
+                {
+                    "key": "storein",
+                    "title": "调入单",
+                    "description": "在目标仓完成调入单提交，形成补货闭环。",
+                },
+            ],
+            "required_inputs": [
+                "用友采购订单编号",
+                "物料编码",
+                "数量",
+                "调入仓",
+                "序列号明细表",
+            ],
+            "bom_preview": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 800},
+                {"line_type": "半成品", "material_code": "003000013", "material_name": "学习机彩盒", "qty": 800},
+                {"line_type": "半成品", "material_code": "004000001", "material_name": "学习机主板", "qty": 8},
+            ],
+        },
+        {
+            "key": "learning_device_market_trial",
+            "title": "学习机市场试投",
+            "description": "草稿态业务流，当前仅保留试投场景的入库、形态转换和调拨节点草案。",
+            "workflow_code": "WF-LEARN-003",
+            "version": "v0.3",
+            "bom_code": "BOM20260312",
+            "status": "draft",
+            "purchase_order_required": True,
+            "serial_upload_policy": "material_based_required",
+            "serial_upload_label": "序列号明细表",
+            "serial_upload_note": "草稿态仅完成了基础字段和序列号入口预配置，正式发布前仍需补齐仓库规则。",
+            "default_material_code": "yscs061601",
+            "default_purchase_order_placeholder": "例如：CGDD260325000004",
+            "steps": [
+                {
+                    "key": "purchase_inbound",
+                    "title": "采购入库",
+                    "description": "承接已有采购订单，生成试投批次的采购入库。",
+                },
+                {
+                    "key": "morphology_conversion",
+                    "title": "形态转换",
+                    "description": "按轻量试投 BOM 做形态转换，为后续调拨预热。",
+                },
+                {
+                    "key": "transfer_order",
+                    "title": "调拨订单",
+                    "description": "草稿中仅定义调拨订单骨架，后续需补齐目标仓和审批规则。",
+                },
+            ],
+            "required_inputs": [
+                "用友采购订单编号",
+                "物料编码",
+                "数量",
+                "目标业务流模板",
+            ],
+            "bom_preview": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 120},
+                {"line_type": "半成品", "material_code": "003000013", "material_name": "学习机彩盒", "qty": 120},
+            ],
+        },
+        {
+            "key": "learning_device_reverse_allocation",
+            "title": "学习机逆向调拨",
+            "description": "已停用业务流，保留历史逆向调拨配置供审计查看，默认不再出现在前台执行列表。",
+            "workflow_code": "WF-LEARN-004",
+            "version": "v1.1",
+            "bom_code": "BOM20260218",
+            "status": "disabled",
+            "purchase_order_required": False,
+            "serial_upload_policy": "material_based_optional",
+            "serial_upload_label": "序列号明细表",
+            "serial_upload_note": "逆向调拨流程已停用，如需复用请先恢复业务流后再执行。",
+            "default_material_code": "yscs061601",
+            "default_purchase_order_placeholder": "该业务流无需采购订单编号",
+            "steps": [
+                {
+                    "key": "transfer_order",
+                    "title": "调拨订单",
+                    "description": "从逆向仓生成调拨订单，准备回流主仓。",
+                },
+                {
+                    "key": "storeout",
+                    "title": "调出单",
+                    "description": "按逆向调拨订单执行调出，释放逆向仓库存。",
+                },
+                {
+                    "key": "storein",
+                    "title": "调入单",
+                    "description": "在主仓完成调入，收口逆向回流流程。",
+                },
+            ],
+            "required_inputs": [
+                "调出仓",
+                "调入仓",
+                "物料编码",
+                "数量",
+            ],
+            "bom_preview": [
+                {"line_type": "成品", "material_code": "yscs061601", "material_name": "学习机成品", "qty": 60},
+            ],
+        },
+    ]
+    return [normalize_procurement_supply_workflow_template(item) for item in templates]
+
+
+def build_procurement_supply_console_payload() -> Dict[str, Any]:
+    live_rows_by_module: Dict[str, List[Dict[str, Any]]] = {}
+    if is_procurement_yonyou_configured():
+        try:
+            live_rows_by_module = query_procurement_document_rows(limit=20)
+        except Exception as exc:
+            app_logger.warning("Failed to query live procurement-supply rows from Yonyou: %s", exc)
+    document_modules = attach_procurement_supply_document_details(
+        procurement_supply_document_modules(),
+        live_rows_by_module=live_rows_by_module,
+    )
+    workflow_templates = procurement_supply_workflow_templates()
+    material_profiles = procurement_supply_material_profiles()
+    bom_profiles = procurement_supply_bom_profiles()
+    return {
+        "module_intro": {
+            "title": "采购供应",
+            "summary": "把单据独立发起、工作流编排、来源单据约束和序列号导入预检收敛到同一个操作台。",
+            "highlights": [
+                "采购订单、采购入库、形态转换、调拨订单、调出单、调入单可单独进入配置。",
+                "支持按业务场景定义工作流模板，例如学习机大货出货。",
+                "当物料为序列号管理时，自动强制展示并校验序列号明细导入入口。",
+            ],
+        },
+        "summary": {
+            "document_module_count": len(document_modules),
+            "workflow_template_count": len(workflow_templates),
+            "standalone_launch_count": sum(1 for item in document_modules if item["supports_standalone"]),
+            "serial_managed_material_count": sum(1 for item in material_profiles if item["serial_managed"]),
+            "workflow_step_count": len(workflow_templates[0]["steps"]) if workflow_templates else 0,
+        },
+        "document_modules": document_modules,
+        "workflow_templates": workflow_templates,
+        "material_profiles": material_profiles,
+        "bom_profiles": bom_profiles,
+        "serial_import_template": {
+            "accepted_extensions": [".xlsx", ".csv"],
+            "required_headers": ["序列号"],
+            "optional_headers": ["物料编码", "物料名称", "备注"],
+            "tips": [
+                "建议每个序列号一行，保留表头。",
+                "系统会在导入时自动识别重复 SN 和空白行。",
+                "非序列号物料会自动关闭导入入口。",
+            ],
+        },
+    }
+
+
+def default_bom_master_rows() -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for index, item in enumerate(procurement_supply_bom_profiles(), start=1):
+        rows.append(
+            {
+                "id": index,
+                "bom_code": item["bom_code"],
+                "bom_name": item["bom_name"],
+                "material_code": item["material_code"],
+                "material_name": item["material_name"],
+                "version_tag": item["version_tag"],
+                "component_count": item["component_count"],
+                "status": item["status"],
+                "updated_at": datetime.now().replace(microsecond=0),
+            }
+        )
+    return rows
+
+
+def normalize_serial_column_name(value: Any) -> str:
+    return str(value or "").strip().replace(" ", "").replace("_", "").replace("-", "").lower()
+
+
+SERIAL_HEADER_TOKENS = {"序列号", "sn", "serial", "serialno", "serialnumber"}
+
+
+def decode_procurement_serial_text(content: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise HTTPException(status_code=400, detail="序列号文件编码无法识别，请使用 UTF-8、UTF-8 BOM 或 GBK/GB18030")
+
+
+def locate_serial_header(rows: Sequence[Sequence[Any]], filename: str) -> Tuple[int, int]:
+    for row_index, row in enumerate(rows[:20]):
+        normalized = [normalize_serial_column_name(cell) for cell in row]
+        for column_index, cell in enumerate(normalized):
+            if cell in SERIAL_HEADER_TOKENS:
+                return row_index, column_index
+    raise HTTPException(status_code=400, detail=f"{filename or '序列号文件'} 未识别到“序列号 / SN”表头")
+
+
+def extract_serial_preview_from_rows(rows: Sequence[Sequence[Any]], filename: str) -> Dict[str, Any]:
+    if not rows:
+        raise HTTPException(status_code=400, detail=f"{filename or '序列号文件'} 中没有可导入的数据")
+    header_row_index, serial_column_index = locate_serial_header(rows, filename)
+    serials: List[str] = []
+    missing_rows: List[int] = []
+    for row_number, row in enumerate(rows[header_row_index + 1 :], start=header_row_index + 2):
+        cells = [str(cell or "").strip() for cell in row]
+        if not any(cells):
+            continue
+        serial = cells[serial_column_index] if serial_column_index < len(cells) else ""
+        if not serial:
+            missing_rows.append(row_number)
+            continue
+        serials.append(serial)
+    if not serials and missing_rows:
+        raise HTTPException(status_code=400, detail=f"{filename or '序列号文件'} 中序列号列为空，请检查模板内容")
+
+    seen: set[str] = set()
+    duplicates: List[str] = []
+    unique_serials: List[str] = []
+    for serial in serials:
+        if serial in seen:
+            if serial not in duplicates:
+                duplicates.append(serial)
+            continue
+        seen.add(serial)
+        unique_serials.append(serial)
+
+    return {
+        "total_rows": len(serials),
+        "accepted_count": len(unique_serials),
+        "duplicate_count": len(duplicates),
+        "missing_count": len(missing_rows),
+        "duplicates": duplicates[:10],
+        "missing_rows": missing_rows[:10],
+        "sample_serials": unique_serials[:8],
+        "accepted_serials": unique_serials,
+    }
+
+
+def parse_procurement_serial_preview(upload_file: UploadFile, content: bytes) -> Dict[str, Any]:
+    filename = str(upload_file.filename or "serial-upload").strip()
+    lower_name = filename.lower()
+    if lower_name.endswith(".xlsx"):
+        try:
+            workbook = load_workbook(io.BytesIO(content), data_only=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Excel 文件无法解析，请上传 .xlsx 序列号明细") from exc
+        worksheet = workbook.active
+        rows = list(worksheet.iter_rows(values_only=True))
+        return extract_serial_preview_from_rows(rows, filename)
+    if lower_name.endswith(".csv"):
+        text_content = decode_procurement_serial_text(content)
+        sample = text_content[:2048]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        rows = list(csv.reader(io.StringIO(text_content), dialect))
+        return extract_serial_preview_from_rows(rows, filename)
+    raise HTTPException(status_code=400, detail="仅支持上传 .xlsx 或 .csv 序列号明细")
 
 
 def save_refurb_production_rows(current_engine, rows: Sequence[Dict[str, Any]], updated_by: str) -> int:
@@ -3457,6 +4387,36 @@ def serialize_inventory_flow_task_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return item
 
 
+def serialize_inventory_live_stock_row(
+    row: Dict[str, Any],
+    *,
+    status_lookup: Dict[str, str],
+    warehouse_lookup: Dict[str, str],
+    queried_at: datetime,
+) -> Dict[str, Any]:
+    item = {key: to_plain(value) for key, value in row.items()}
+    warehouse_code = str(item.get("warehouse_code") or item.get("warehouse_id") or "").strip()
+    stock_status_id = str(item.get("stock_status_id") or "").strip()
+    item["warehouse_code"] = warehouse_code
+    item["warehouse_name"] = warehouse_lookup.get(warehouse_code, str(item.get("warehouse_name") or warehouse_code))
+    item["stock_status_id"] = stock_status_id
+    raw_status_name = str(item.get("stock_status_name_raw") or "").strip()
+    item["stock_status_name"] = status_lookup.get(stock_status_id, raw_status_name or stock_status_id)
+    item["stock_org_name"] = str(item.get("stock_org_name") or "").strip()
+    item["material_code"] = str(item.get("material_code") or "").strip()
+    item["material_name"] = str(item.get("material_name") or "").strip()
+    item["sku_code"] = str(item.get("sku_code") or "").strip()
+    item["sku_name"] = str(item.get("sku_name") or "").strip()
+    item["batch_no"] = str(item.get("batch_no") or "").strip()
+    item["unit_name"] = str(item.get("unit_name") or "").strip()
+    item["current_qty"] = float(item.get("current_qty") or 0.0)
+    item["available_qty"] = float(item.get("available_qty") or 0.0)
+    item["plan_available_qty"] = float(item.get("plan_available_qty") or 0.0)
+    item["incoming_notice_qty"] = float(item.get("incoming_notice_qty") or 0.0)
+    item["queried_at"] = to_plain(queried_at)
+    return item
+
+
 def resolve_inventory_master_lookups(conn) -> tuple[Dict[str, str], Dict[str, str]]:
     status_lookup = {
         str(row["stock_status_id"] or "").strip(): str(row["stock_status_name"] or "").strip()
@@ -4792,7 +5752,7 @@ def ensure_master_data_seed(conn) -> None:
                 )
             )
 
-    if int(conn.execute(text("SELECT COUNT(*) FROM bi_channel_shop_master")).scalar() or 0) == 0 and table_exists(conn, "bi_material_sales_daily"):
+    if False and int(conn.execute(text("SELECT COUNT(*) FROM bi_channel_shop_master")).scalar() or 0) == 0 and table_exists(conn, "bi_material_sales_daily"):
         conn.execute(
             text(
                 """
@@ -4805,6 +5765,31 @@ def ensure_master_data_seed(conn) -> None:
                     COALESCE(NULLIF(sales_org_name, ''), '鏈綊绫绘笭閬?) AS channel_name,
                     COALESCE(NULLIF(customer_name, ''), '') AS shop_name,
                     '鐢ㄥ弸閿€鍞?,
+                    '',
+                    100,
+                    1,
+                    'system',
+                    'system'
+                FROM bi_material_sales_daily
+                WHERE COALESCE(NULLIF(sales_org_name, ''), NULLIF(customer_name, '')) IS NOT NULL
+                  AND COALESCE(NULLIF(sales_org_name, ''), NULLIF(customer_name, '')) <> ''
+                """
+            )
+        )
+
+    if int(conn.execute(text("SELECT COUNT(*) FROM bi_channel_shop_master")).scalar() or 0) == 0 and table_exists(conn, "bi_material_sales_daily"):
+        conn.execute(
+            text(
+                """
+                INSERT IGNORE INTO bi_channel_shop_master(
+                    channel_code, channel_name, shop_name, platform_name,
+                    owner_dept, sort_order, is_active, created_by, updated_by
+                )
+                SELECT DISTINCT
+                    CONCAT('ch_', SUBSTRING(MD5(COALESCE(NULLIF(sales_org_name, ''), 'unknown')), 1, 12)) AS channel_code,
+                    COALESCE(NULLIF(sales_org_name, ''), '默认销售渠道') AS channel_name,
+                    COALESCE(NULLIF(customer_name, ''), '') AS shop_name,
+                    '用友销售',
                     '',
                     100,
                     1,
@@ -5555,7 +6540,6 @@ def ensure_schema() -> None:
     current_engine = get_engine()
     ensure_sales_processing_schema(current_engine)
     ensure_inventory_processing_schema(current_engine)
-    ensure_forecast_alert_schema(current_engine)
     with current_engine.begin() as conn:
         conn.execute(
             text(
@@ -6060,6 +7044,9 @@ def ensure_schema() -> None:
             )
         ensure_preset_sales_view(conn)
         ensure_preset_inventory_view(conn)
+    # Forecast/profile seeding reads from bi_refurb_production_daily, so run it
+    # after the core dashboard source tables exist for a clean local bootstrap.
+    ensure_forecast_alert_schema(current_engine)
     schema_ready = True
 
 
@@ -6157,14 +7144,20 @@ def view_detail(conn, view_id: int) -> Dict[str, Any]:
 
 def latest_date(conn, dataset: str) -> date | None:
     if dataset == "inventory_turnover":
-        latest_sales = conn.execute(text("SELECT MAX(biz_date) FROM bi_material_sales_daily_cleaning")).scalar()
-        latest_inventory = conn.execute(text("SELECT MAX(snapshot_date) FROM bi_inventory_snapshot_daily_cleaning")).scalar()
+        latest_sales = None
+        latest_inventory = None
+        if table_exists(conn, "bi_material_sales_daily_cleaning"):
+            latest_sales = conn.execute(text("SELECT MAX(biz_date) FROM bi_material_sales_daily_cleaning")).scalar()
+        if table_exists(conn, "bi_inventory_snapshot_daily_cleaning"):
+            latest_inventory = conn.execute(text("SELECT MAX(snapshot_date) FROM bi_inventory_snapshot_daily_cleaning")).scalar()
         latest_candidates = [item for item in (latest_sales, latest_inventory) if item is not None]
         if not latest_candidates:
             return None
         latest_value = max(latest_candidates)
         return latest_value.replace(day=1)
     ds = DATASETS[dataset]
+    if not ds.get("table") or not table_exists(conn, ds["table"]):
+        return None
     return conn.execute(text(f"SELECT MAX(`{ds['date_col']}`) FROM `{ds['table']}`")).scalar()
 
 
@@ -7359,6 +8352,7 @@ async def bi_dashboard_logout_redirect() -> RedirectResponse:
 async def bi_dashboard(request: Request) -> Response:
     ensure_schema()
     username = current_dashboard_user(request)
+    embedded = dashboard_embedded_mode(request)
     if not username:
         current_path = request.url.path
         if request.url.query:
@@ -7374,9 +8368,14 @@ async def bi_dashboard(request: Request) -> Response:
                 "__BI_CURRENT_USER_JSON__": json.dumps(username, ensure_ascii=False),
                 "__BI_LOGIN_PATH_JSON__": json.dumps("/financial/bi-dashboard/login", ensure_ascii=False),
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
-                "__BI_EDITOR_PATH_JSON__": json.dumps(DASHBOARD_EDITOR_PATH, ensure_ascii=False),
+                "__BI_EDITOR_PATH_JSON__": json.dumps(
+                    f"{DASHBOARD_EDITOR_PATH}?embedded=1" if embedded else DASHBOARD_EDITOR_PATH,
+                    ensure_ascii=False,
+                ),
                 "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
                 "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
+                "__BI_EMBEDDED_CLASS__": "is-embedded" if embedded else "",
+                "__BI_SIDE_NAV__": "" if embedded else dashboard_sidebar_html("dashboard"),
                 },
             ),
         )
@@ -7387,6 +8386,7 @@ async def bi_dashboard(request: Request) -> Response:
 async def bi_dashboard_editor(request: Request) -> Response:
     ensure_schema()
     username = current_dashboard_user(request)
+    embedded = dashboard_embedded_mode(request)
     if not username:
         current_path = request.url.path
         if request.url.query:
@@ -7404,6 +8404,8 @@ async def bi_dashboard_editor(request: Request) -> Response:
                 "__BI_LOGOUT_PATH_JSON__": json.dumps("/financial/bi-dashboard/logout", ensure_ascii=False),
                 "__BI_LOGO_WORDMARK__": dashboard_logo_wordmark_svg(),
                 "__BI_LOGO_BADGE_SMALL__": dashboard_logo_badge_small_svg(),
+                "__BI_EMBEDDED_CLASS__": "is-embedded" if embedded else "",
+                "__BI_SIDE_NAV__": "" if embedded else dashboard_sidebar_html("editor"),
                 },
             ),
         )
@@ -8730,16 +9732,19 @@ async def list_master_data(_auth: str = Depends(require_auth)) -> JSONResponse:
                 """
             )
         ).mappings().all()
+        bom_rows = default_bom_master_rows()
         latest_cleaning = to_plain(latest_date(conn, "inventory_cleaning"))
         latest_sales = to_plain(latest_date(conn, "sales"))
     return JSONResponse(
         {
             "skus": [{key: to_plain(value) for key, value in row.items()} for row in sku_rows],
+            "boms": [{key: to_plain(value) for key, value in row.items()} for row in bom_rows],
             "warehouses": [{key: to_plain(value) for key, value in row.items()} for row in warehouse_rows],
             "statuses": [{key: to_plain(value) for key, value in row.items()} for row in status_rows],
             "channels": [{key: to_plain(value) for key, value in row.items()} for row in channel_rows],
             "summary": {
                 "sku_count": len(sku_rows),
+                "bom_count": len(bom_rows),
                 "warehouse_count": len(warehouse_rows),
                 "status_count": len(status_rows),
                 "channel_count": len(channel_rows),
@@ -9111,6 +10116,116 @@ async def list_audit_logs(
     )
 
 
+@router.get("/bi-dashboard/api/procurement-supply")
+async def procurement_supply_console(_auth: str = Depends(require_auth)) -> JSONResponse:
+    ensure_schema()
+    return JSONResponse(build_procurement_supply_console_payload())
+
+
+@router.post("/bi-dashboard/api/procurement-supply/serial-import-preview")
+async def procurement_supply_serial_import_preview(
+    material_code: str = Form(...),
+    file: UploadFile = File(...),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    material_key = str(material_code or "").strip()
+    if not material_key:
+        raise HTTPException(status_code=400, detail="请先选择物料，再导入序列号明细")
+    material_profile = procurement_supply_material_lookup().get(material_key)
+    if material_profile is None:
+        raise HTTPException(status_code=404, detail=f"未找到物料：{material_key}")
+    if not str(file.filename or "").strip():
+        raise HTTPException(status_code=400, detail="请上传序列号明细文件")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="上传文件为空，请检查后重试")
+
+    if not bool(material_profile.get("serial_managed")):
+        return JSONResponse(
+            {
+                "material": material_profile,
+                "upload_enabled": False,
+                "upload_required": False,
+                "message": "当前物料不是序列号管理，前端应关闭序列号导入入口。",
+                "preview": {
+                    "file_name": file.filename,
+                    "total_rows": 0,
+                    "accepted_count": 0,
+                    "duplicate_count": 0,
+                    "missing_count": 0,
+                    "duplicates": [],
+                    "missing_rows": [],
+                    "sample_serials": [],
+                },
+            }
+        )
+
+    preview = parse_procurement_serial_preview(file, content)
+    return JSONResponse(
+        {
+            "material": material_profile,
+            "upload_enabled": True,
+            "upload_required": True,
+            "message": "序列号明细预检完成，可作为工作流执行前校验结果。",
+            "preview": {
+                "file_name": file.filename,
+                **preview,
+            },
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/procurement-supply/documents/{document_key}/launch")
+async def procurement_supply_launch_document(
+    document_key: str,
+    payload: Dict[str, Any] = Body(...),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    module_lookup = {str(item["key"]): item for item in procurement_supply_document_modules()}
+    module_meta = module_lookup.get(str(document_key or "").strip())
+    if module_meta is None:
+        raise HTTPException(status_code=404, detail=f"未识别的单据类型：{document_key}")
+    try:
+        result = launch_procurement_document(str(document_key or "").strip(), dict(payload or {}))
+    except (ValueError, YonyouRequestError) as exc:
+        record_dashboard_audit(
+            module_key=module_meta["key"],
+            module_name=module_meta["title"],
+            action_key="standalone_launch",
+            action_name=f"单独向用友发起{module_meta['title']}",
+            target_type="yonyou_document",
+            result_status="failed",
+            detail_summary=str(exc),
+            detail={"payload": payload, "error": str(exc)},
+            triggered_by=_auth,
+            source_path=f"/bi-dashboard/api/procurement-supply/documents/{document_key}/launch",
+            source_method="POST",
+            affected_count=0,
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record_dashboard_audit(
+        module_key=module_meta["key"],
+        module_name=module_meta["title"],
+        action_key="standalone_launch",
+        action_name=f"单独向用友发起{module_meta['title']}",
+        target_type="yonyou_document",
+        target_id=result.get("document_id"),
+        target_name=result.get("document_code") or module_meta["title"],
+        result_status="success",
+        detail_summary=f"{module_meta['title']}创建成功：{result.get('document_code') or '--'}",
+        detail=result,
+        triggered_by=_auth,
+        source_path=f"/bi-dashboard/api/procurement-supply/documents/{document_key}/launch",
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse(result)
+
+
 @router.get("/bi-dashboard/api/procurement-arrivals")
 async def list_procurement_arrivals(
     status: str | None = Query(None),
@@ -9429,6 +10544,7 @@ async def list_inventory_flows(
         params["keyword"] = f"%{str(keyword).strip()}%"
     where_sql = " AND ".join(conditions)
     current_engine = get_engine()
+    sales_reference_date = datetime.now(scheduler_timezone()).date() - timedelta(days=1)
     with current_engine.connect() as conn:
         rule_rows = conn.execute(
             text(
@@ -9482,6 +10598,25 @@ async def list_inventory_flows(
                 """
             )
         ).mappings().all()
+        latest_sales_date = None
+        sales_summary_row = {"sales_qty": 0, "return_qty": 0}
+        if table_exists(conn, "bi_material_sales_daily_cleaning"):
+            latest_sales_date = conn.execute(text("SELECT MAX(biz_date) FROM bi_material_sales_daily_cleaning")).scalar()
+            sales_summary_row = (
+                conn.execute(
+                    text(
+                        """
+                        SELECT
+                            COALESCE(SUM(total_sales_qty), 0) AS sales_qty,
+                            COALESCE(SUM(total_return_qty), 0) AS return_qty
+                        FROM bi_material_sales_daily_cleaning
+                        WHERE biz_date = :biz_date
+                        """
+                    ),
+                    {"biz_date": sales_reference_date},
+                ).mappings().first()
+                or sales_summary_row
+            )
     rules = [serialize_inventory_flow_rule_row(row) for row in rule_rows]
     tasks = [serialize_inventory_flow_task_row(row) for row in task_rows]
     summary = {
@@ -9492,6 +10627,10 @@ async def list_inventory_flows(
         "enabled_rule_count": sum(1 for item in rules if item["is_enabled"]),
         "auto_rule_count": sum(1 for item in rules if item["is_enabled"] and item["auto_create_task"]),
         "transfer_count": sum(1 for item in tasks if item["action_type"] == "warehouse_transfer"),
+        "yesterday_sales_out_qty": round(float(sales_summary_row["sales_qty"] or 0), 2),
+        "yesterday_sales_return_qty": round(float(sales_summary_row["return_qty"] or 0), 2),
+        "yesterday_sales_date": to_plain(sales_reference_date),
+        "latest_sales_date": to_plain(latest_sales_date),
     }
     return JSONResponse(
         {
@@ -9512,6 +10651,308 @@ async def list_inventory_flows(
                 for row in warehouse_rows
                 if str(row["warehouse_code"] or "").strip()
             ],
+        }
+    )
+
+
+def build_inventory_live_stock_cache_key(runtime_config: AppConfig, filters: Dict[str, Any]) -> str:
+    signature = {
+        "path": runtime_config.yonyou.inventory.path,
+        "access_token_mode": runtime_config.yonyou.inventory.access_token_mode,
+        "result_list_paths": runtime_config.yonyou.inventory.result_list_paths,
+        "filters": filters,
+    }
+    return hashlib.sha1(
+        json.dumps(signature, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def build_inventory_live_stock_snapshot(force_refresh: bool = False) -> Dict[str, Any]:
+    runtime_config = copy.deepcopy(load_sync_base_config())
+    filters = copy.deepcopy(runtime_config.yonyou.inventory.filters)
+    cache_key = build_inventory_live_stock_cache_key(runtime_config, filters)
+    now_ts = time.time()
+
+    with inventory_live_stock_cache_lock:
+        cached_entry = inventory_live_stock_cache.get(cache_key)
+        if cached_entry and not force_refresh and float(cached_entry["expires_at"]) > now_ts:
+            return {
+                **cached_entry,
+                "cache_hit": True,
+                "cache_stale": False,
+                "cache_age_seconds": round(max(0.0, now_ts - float(cached_entry["cached_at"])), 2),
+            }
+
+    stale_entry = cached_entry
+    queried_at = datetime.now(scheduler_timezone())
+    try:
+        client = YonyouOpenApiClient(runtime_config.yonyou, app_logger)
+        payload = client.post_json(
+            runtime_config.yonyou.inventory.path,
+            filters,
+            access_token_mode=runtime_config.yonyou.inventory.access_token_mode,
+        )
+        raw_rows = runtime_config.yonyou.inventory.result_list_paths
+        inventory_rows = transform_inventory_rows(
+            client_rows := extract_items(payload, raw_rows),
+            snapshot_date=queried_at.date(),
+            captured_at=queried_at,
+        )
+    except Exception:
+        if stale_entry:
+            return {
+                **stale_entry,
+                "cache_hit": True,
+                "cache_stale": True,
+                "cache_age_seconds": round(max(0.0, now_ts - float(stale_entry["cached_at"])), 2),
+            }
+        raise
+
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        status_lookup, warehouse_lookup = resolve_inventory_master_lookups(conn)
+
+    serialized_rows = [
+        serialize_inventory_live_stock_row(
+            row,
+            status_lookup=status_lookup,
+            warehouse_lookup=warehouse_lookup,
+            queried_at=queried_at,
+        )
+        for row in inventory_rows
+    ]
+
+    material_option_map: Dict[str, Dict[str, str]] = {}
+    for item in serialized_rows:
+        material_code_value = str(item["material_code"] or "").strip()
+        if not material_code_value or material_code_value in material_option_map:
+            continue
+        material_name_value = str(item["material_name"] or "").strip()
+        material_option_map[material_code_value] = {
+            "material_code": material_code_value,
+            "material_name": material_name_value,
+            "label": (
+                f"{material_code_value} | {material_name_value}"
+                if material_name_value
+                else material_code_value
+            ),
+        }
+    material_options = sorted(material_option_map.values(), key=lambda item: item["material_code"])
+
+    snapshot = {
+        "items": serialized_rows,
+        "material_options": material_options,
+        "raw_row_count": len(client_rows),
+        "queried_at": queried_at,
+        "cached_at": now_ts,
+        "expires_at": now_ts + INVENTORY_LIVE_STOCK_CACHE_TTL_SECONDS,
+    }
+    with inventory_live_stock_cache_lock:
+        inventory_live_stock_cache[cache_key] = snapshot
+        expired_keys = [
+            key
+            for key, entry in inventory_live_stock_cache.items()
+            if float(entry.get("expires_at") or 0.0) <= now_ts
+        ]
+        for key in expired_keys:
+            inventory_live_stock_cache.pop(key, None)
+
+    return {
+        **snapshot,
+        "cache_hit": False,
+        "cache_stale": False,
+        "cache_age_seconds": 0.0,
+    }
+
+
+@router.get("/bi-dashboard/api/inventory-flows/live-stock")
+async def list_inventory_live_stock(
+    warehouse_code: str | None = Query(None),
+    material_code: str | None = Query(None),
+    material_name: str | None = Query(None),
+    stock_status_id: str | None = Query(None),
+    force_refresh: bool = Query(False),
+    limit: int = Query(200, ge=1, le=500),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    try:
+        snapshot = build_inventory_live_stock_snapshot(force_refresh=force_refresh)
+    except Exception as exc:
+        if isinstance(exc, YonyouApiError):
+            raise HTTPException(status_code=502, detail=f"实时现存量查询失败：{exc}") from exc
+        if isinstance(exc, HTTPException):
+            raise
+        if "load_sync_base_config" in repr(exc) or "yonyou" in repr(exc).lower():
+            raise HTTPException(status_code=503, detail=f"实时现存量查询未配置完成：{exc}") from exc
+        raise HTTPException(status_code=500, detail=f"实时现存量查询异常：{exc}") from exc
+
+    inventory_rows = snapshot["items"]
+    queried_at = snapshot["queried_at"]
+    material_options = snapshot["material_options"]
+    raw_row_count = int(snapshot["raw_row_count"])
+    cache_hit = bool(snapshot["cache_hit"])
+    cache_stale = bool(snapshot["cache_stale"])
+    cache_age_seconds = float(snapshot["cache_age_seconds"])
+
+    material_name_keyword = str(material_name or "").strip().lower()
+    material_code_keyword = str(material_code or "").strip().lower()
+    warehouse_keyword = str(warehouse_code or "").strip()
+    stock_status_keyword = str(stock_status_id or "").strip()
+    items: List[Dict[str, Any]] = []
+    for serialized in inventory_rows:
+        if warehouse_keyword and serialized["warehouse_code"] != warehouse_keyword:
+            continue
+        if stock_status_keyword and serialized["stock_status_id"] != stock_status_keyword:
+            continue
+        if material_code_keyword and material_code_keyword not in serialized["material_code"].lower():
+            continue
+        if material_name_keyword and material_name_keyword not in serialized["material_name"].lower():
+            continue
+        items.append(serialized)
+
+    items.sort(
+        key=lambda item: (
+            item["warehouse_name"],
+            -item["available_qty"],
+            -item["current_qty"],
+            item["material_code"],
+        )
+    )
+
+    matched_count = len(items)
+    display_items = items[: int(limit)]
+    summary = {
+        "matched_count": matched_count,
+        "returned_count": len(display_items),
+        "has_more": matched_count > int(limit),
+        "total_current_qty": round(sum(float(item["current_qty"]) for item in items), 4),
+        "total_available_qty": round(sum(float(item["available_qty"]) for item in items), 4),
+        "total_plan_available_qty": round(sum(float(item["plan_available_qty"]) for item in items), 4),
+        "total_incoming_notice_qty": round(sum(float(item["incoming_notice_qty"]) for item in items), 4),
+        "queried_at": to_plain(queried_at),
+        "raw_row_count": raw_row_count,
+        "cache_hit": cache_hit,
+        "cache_stale": cache_stale,
+        "cache_age_seconds": round(cache_age_seconds, 2),
+        "cache_ttl_seconds": INVENTORY_LIVE_STOCK_CACHE_TTL_SECONDS,
+    }
+    return JSONResponse(
+        {
+            "items": display_items,
+            "summary": summary,
+            "filters": {
+                "warehouse_code": str(warehouse_code or "").strip(),
+                "material_code": str(material_code or "").strip(),
+                "material_name": str(material_name or "").strip(),
+                "stock_status_id": str(stock_status_id or "").strip(),
+                "material_options": material_options,
+            },
+        },
+        headers={
+            "Cache-Control": f"private, max-age=10, stale-while-revalidate={INVENTORY_LIVE_STOCK_CACHE_TTL_SECONDS}",
+        },
+    )
+
+    try:
+        runtime_config = copy.deepcopy(load_sync_base_config())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"实时现存量查询未配置完成：{exc}") from exc
+
+    filters = copy.deepcopy(runtime_config.yonyou.inventory.filters)
+
+    queried_at = datetime.now(scheduler_timezone())
+    try:
+        client = YonyouOpenApiClient(runtime_config.yonyou, app_logger)
+        payload = client.post_json(
+            runtime_config.yonyou.inventory.path,
+            filters,
+            access_token_mode=runtime_config.yonyou.inventory.access_token_mode,
+        )
+        raw_rows = runtime_config.yonyou.inventory.result_list_paths
+        inventory_rows = transform_inventory_rows(
+            client_rows := extract_items(payload, raw_rows),
+            snapshot_date=queried_at.date(),
+            captured_at=queried_at,
+        )
+    except YonyouApiError as exc:
+        raise HTTPException(status_code=502, detail=f"用友实时现存量查询失败：{exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"实时现存量查询失败：{exc}") from exc
+
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        status_lookup, warehouse_lookup = resolve_inventory_master_lookups(conn)
+
+    material_name_keyword = str(material_name or "").strip().lower()
+    material_code_keyword = str(material_code or "").strip().lower()
+    warehouse_keyword = str(warehouse_code or "").strip()
+    stock_status_keyword = str(stock_status_id or "").strip()
+    candidate_items: List[Dict[str, Any]] = []
+    items: List[Dict[str, Any]] = []
+    for row in inventory_rows:
+        serialized = serialize_inventory_live_stock_row(
+            row,
+            status_lookup=status_lookup,
+            warehouse_lookup=warehouse_lookup,
+            queried_at=queried_at,
+        )
+        if warehouse_keyword and serialized["warehouse_code"] != warehouse_keyword:
+            continue
+        if stock_status_keyword and serialized["stock_status_id"] != stock_status_keyword:
+            continue
+        candidate_items.append(serialized)
+        if material_code_keyword and material_code_keyword not in serialized["material_code"].lower():
+            continue
+        if material_name_keyword and material_name_keyword not in serialized["material_name"].lower():
+            continue
+        items.append(serialized)
+
+    items.sort(
+        key=lambda item: (
+            item["warehouse_name"],
+            -item["available_qty"],
+            -item["current_qty"],
+            item["material_code"],
+        )
+    )
+
+    matched_count = len(items)
+    display_items = items[: int(limit)]
+    material_option_map: Dict[str, Dict[str, str]] = {}
+    for item in candidate_items:
+        material_code_value = str(item["material_code"] or "").strip()
+        if not material_code_value or material_code_value in material_option_map:
+            continue
+        material_name_value = str(item["material_name"] or "").strip()
+        material_option_map[material_code_value] = {
+            "material_code": material_code_value,
+            "material_name": material_name_value,
+            "label": f"{material_code_value} | {material_name_value}" if material_name_value else material_code_value,
+        }
+    material_options = sorted(material_option_map.values(), key=lambda item: item["material_code"])
+    summary = {
+        "matched_count": matched_count,
+        "returned_count": len(display_items),
+        "has_more": matched_count > int(limit),
+        "total_current_qty": round(sum(float(item["current_qty"]) for item in items), 4),
+        "total_available_qty": round(sum(float(item["available_qty"]) for item in items), 4),
+        "total_plan_available_qty": round(sum(float(item["plan_available_qty"]) for item in items), 4),
+        "total_incoming_notice_qty": round(sum(float(item["incoming_notice_qty"]) for item in items), 4),
+        "queried_at": to_plain(queried_at),
+        "raw_row_count": len(client_rows),
+    }
+    return JSONResponse(
+        {
+            "items": display_items,
+            "summary": summary,
+            "filters": {
+                "warehouse_code": str(warehouse_code or "").strip(),
+                "material_code": str(material_code or "").strip(),
+                "material_name": str(material_name or "").strip(),
+                "stock_status_id": str(stock_status_id or "").strip(),
+                "material_options": material_options,
+            },
         }
     )
 

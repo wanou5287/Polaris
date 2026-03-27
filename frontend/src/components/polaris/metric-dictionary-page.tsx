@@ -1,11 +1,9 @@
 "use client";
 
 import { useDeferredValue, useEffect, useState } from "react";
-import { BookCheck, RefreshCcw, Save } from "lucide-react";
+import { BookCheck } from "lucide-react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/polaris/page-header";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
@@ -145,27 +143,6 @@ export function MetricDictionaryPage() {
 
   return (
     <div className="space-y-6">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Governance"
-          title="指标口径中心"
-          description="围绕经营指标的定义、来源、维度和责任人建立统一的治理台账。新的界面不再复刻旧报表页面，而是把编辑动作变成清晰的产品流程。"
-          badge={data ? `${formatNumber(data.summary.total_count)} 条指标` : "加载中"}
-          actions={
-            <>
-              <Button variant="outline" className="rounded-full" onClick={() => void loadMetrics()}>
-                <RefreshCcw className="size-4" />
-                刷新
-              </Button>
-              <Button className="cta-button rounded-full" onClick={saveAll} disabled={saving || !data}>
-                <Save className={saving ? "size-4 animate-pulse" : "size-4"} />
-                保存全部
-              </Button>
-            </>
-          }
-        />
-      </div>
-
       <div className="grid gap-5 md:grid-cols-3 xl:grid-cols-4">
         <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
           <CardHeader className="pb-2">

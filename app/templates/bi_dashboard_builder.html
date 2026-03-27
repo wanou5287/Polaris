@@ -1351,6 +1351,15 @@
     .share-form .helper {
       line-height: 1.7;
     }
+    .polaris-app-shell.is-embedded {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+      padding: 0;
+      min-height: auto;
+    }
+    .polaris-app-shell.is-embedded .polaris-side-panel {
+      display: none;
+    }
     @media (max-width: 1180px) {
       .app-shell { grid-template-columns: 1fr; }
       .nav-rail {
@@ -1390,7 +1399,7 @@
 </head>
 <body>
   __BI_TRANSITION_OVERLAY__
-  <div class="polaris-app-shell">
+  <div class="polaris-app-shell __BI_EMBEDDED_CLASS__">
     __BI_SIDE_NAV__
     <main class="polaris-app-main">
   <div class="shell app-shell">

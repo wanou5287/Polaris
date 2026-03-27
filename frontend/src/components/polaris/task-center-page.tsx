@@ -6,14 +6,11 @@ import {
   CalendarClock,
   CheckCheck,
   ListTodo,
-  RefreshCcw,
-  Save,
   Search,
   Workflow,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/polaris/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -156,27 +153,6 @@ export function TaskCenterPage() {
 
   return (
     <div className="space-y-6" data-page="task-center">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Operations"
-          title="任务中心与异常待办"
-          description="把采购到货跟进、库存执行任务和阻塞异常拉到同一块操作面板里，先统一节奏，再逐步补审批与补偿闭环。"
-          badge={data ? `${formatNumber(data.summary.total_count)} 个统一待办` : "加载中"}
-          actions={
-            <>
-              <Button variant="outline" className="rounded-full" onClick={() => void loadTaskCenter(selectedId)}>
-                <RefreshCcw className="size-4" />
-                刷新待办
-              </Button>
-              <Button className="cta-button rounded-full" onClick={() => void saveTaskItem()} disabled={saving || !draft}>
-                <Save className="size-4" />
-                保存跟进
-              </Button>
-            </>
-          }
-        />
-      </div>
-
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-6">
         <SummaryCard title="待处理" value={formatNumber(data?.summary.open_count ?? 0)} hint="尚未开工或等待领取" icon={<ListTodo className="size-4" />} />
         <SummaryCard title="处理中" value={formatNumber(data?.summary.in_progress_count ?? 0)} hint="已进入执行节奏" icon={<Workflow className="size-4" />} />

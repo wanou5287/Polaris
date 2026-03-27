@@ -1,10 +1,9 @@
 "use client";
 
-import { startTransition, type ReactNode, useDeferredValue, useEffect, useState } from "react";
-import { Plus, RefreshCcw, Save, Search, Waypoints } from "lucide-react";
+import { startTransition, type ReactNode, useDeferredValue, useEffect, useId, useState } from "react";
+import { Plus, Save, Search, Waypoints } from "lucide-react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/polaris/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,11 +12,24 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { apiFetch, cn, formatDate, formatNumber } from "@/lib/polaris-client";
-import type { InventoryFlowResponse, InventoryFlowRule, InventoryFlowTask, Option } from "@/lib/polaris-types";
+import { apiFetch, cn, formatDate, formatDateTime, formatNumber } from "@/lib/polaris-client";
+import type {
+  InventoryFlowResponse,
+  InventoryFlowRule,
+  InventoryFlowTask,
+  InventoryLiveStockResponse,
+  Option,
+} from "@/lib/polaris-types";
 
 type SelectedKey = number | "new";
+type LiveStockFilterState = {
+  warehouseCode: string;
+  stockStatusId: string;
+  materialCode: string;
+  materialName: string;
+};
 
 const conditionOptions: Option[] = [
   { value: "manual", label: "人工" },
@@ -117,18 +129,54 @@ async function requestInventoryFlows(params: URLSearchParams) {
   return apiFetch<InventoryFlowResponse>(`/api/backend/inventory-flows?${params.toString()}`);
 }
 
+async function requestInventoryLiveStock(params: URLSearchParams) {
+  const query = params.toString();
+  return apiFetch<InventoryLiveStockResponse>(
+    `/api/backend/inventory-flows/live-stock${query ? `?${query}` : ""}`,
+  );
+}
+
+function findMaterialOptionByCode(
+  options: InventoryLiveStockResponse["filters"]["material_options"],
+  value: string,
+) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  return options.find((item) => item.material_code.trim().toLowerCase() === normalized) ?? null;
+}
+
+function findMaterialOptionByName(
+  options: InventoryLiveStockResponse["filters"]["material_options"],
+  value: string,
+) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  return options.find((item) => item.material_name.trim().toLowerCase() === normalized) ?? null;
+}
+
 export function InventoryFlowsPage() {
   const [data, setData] = useState<InventoryFlowResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingTask, setSavingTask] = useState(false);
   const [savingRules, setSavingRules] = useState(false);
+  const [liveStockLoading, setLiveStockLoading] = useState(true);
+  const [liveStockData, setLiveStockData] = useState<InventoryLiveStockResponse | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<SelectedKey>("new");
   const [taskDraft, setTaskDraft] = useState<InventoryFlowTask>(createTaskDraft());
   const [rulesDraft, setRulesDraft] = useState<InventoryFlowRule[]>([]);
   const [keyword, setKeyword] = useState("");
   const [taskStatusFilter, setTaskStatusFilter] = useState("all");
   const [actionTypeFilter, setActionTypeFilter] = useState("all");
+  const [liveStockFilters, setLiveStockFilters] = useState<LiveStockFilterState>({
+    warehouseCode: "",
+    stockStatusId: "",
+    materialCode: "",
+    materialName: "",
+  });
   const deferredKeyword = useDeferredValue(keyword);
+  const salesSummaryHint = data?.summary.yesterday_sales_date
+    ? `按 ${data.summary.yesterday_sales_date} 汇总`
+    : "按昨天汇总";
 
   async function loadFlows(nextSelectedKey?: SelectedKey) {
     setLoading(true);
@@ -168,6 +216,52 @@ export function InventoryFlowsPage() {
     void loadFlows();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskStatusFilter, actionTypeFilter, deferredKeyword]);
+
+  async function loadLiveStock(nextFilters: LiveStockFilterState = liveStockFilters) {
+    setLiveStockLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (nextFilters.warehouseCode) params.set("warehouse_code", nextFilters.warehouseCode);
+      if (nextFilters.stockStatusId) params.set("stock_status_id", nextFilters.stockStatusId);
+      if (nextFilters.materialCode.trim()) params.set("material_code", nextFilters.materialCode.trim());
+      if (nextFilters.materialName.trim()) params.set("material_name", nextFilters.materialName.trim());
+      const response = await requestInventoryLiveStock(params);
+      setLiveStockData(response);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "实时现存量加载失败");
+    } finally {
+      setLiveStockLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadLiveStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function updateLiveStockFilter<K extends keyof LiveStockFilterState>(key: K, value: LiveStockFilterState[K]) {
+    setLiveStockFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateMaterialCodeFilter(value: string) {
+    const materialOptions = liveStockData?.filters.material_options ?? [];
+    const matched = findMaterialOptionByCode(materialOptions, value);
+    setLiveStockFilters((current) => ({
+      ...current,
+      materialCode: value,
+      materialName: matched ? matched.material_name : "",
+    }));
+  }
+
+  function updateMaterialNameFilter(value: string) {
+    const materialOptions = liveStockData?.filters.material_options ?? [];
+    const matched = findMaterialOptionByName(materialOptions, value);
+    setLiveStockFilters((current) => ({
+      ...current,
+      materialCode: matched ? matched.material_code : "",
+      materialName: value,
+    }));
+  }
 
   function updateTask<K extends keyof InventoryFlowTask>(key: K, value: InventoryFlowTask[K]) {
     setTaskDraft((current) => ({ ...current, [key]: value }));
@@ -252,43 +346,159 @@ export function InventoryFlowsPage() {
   const requestQty = Number(taskDraft.request_qty || 0);
   const confirmedQty = Math.min(Number(taskDraft.confirmed_qty || 0), Math.max(requestQty, 0));
   const completionRate = requestQty > 0 ? confirmedQty / requestQty : 0;
-  const enabledRules = rulesDraft.filter((item) => item.is_enabled).length;
-  const autoRules = rulesDraft.filter((item) => item.is_enabled && item.auto_create_task).length;
+  const liveStockWarehouseOptions = Array.from(
+    new Map(
+      [
+        ...(data?.warehouse_options ?? []),
+        ...(liveStockData?.items.map((item) => ({
+          value: item.warehouse_code,
+          label: item.warehouse_name || item.warehouse_code,
+        })) ?? []),
+      ].map((item) => [item.value, item]),
+    ).values(),
+  ).filter((item) => item.value);
+  const liveStockStatusOptions = Array.from(
+    new Map(
+      [
+        ...(data?.status_options ?? []),
+        ...(liveStockData?.items.map((item) => ({
+          value: item.stock_status_id,
+          label: item.stock_status_name || item.stock_status_id,
+        })) ?? []),
+      ].map((item) => [item.value, item]),
+    ).values(),
+  ).filter((item) => item.value);
 
   return (
     <div className="space-y-6" data-page="inventory-flows">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Operations"
-          title="库存流转与调拨触发"
-          description="把采购到货、质检异常、翻新回库和人工调拨统一收进一个任务台，先看状态流转，再看规则自动触发与执行闭环。"
-          badge={data ? `${formatNumber(data.summary.task_count)} 个任务` : "加载中"}
-          actions={
-            <>
-              <Button variant="outline" className="rounded-full" onClick={() => void loadFlows(selectedTaskKey)}>
-                <RefreshCcw className="size-4" />
-                刷新任务
-              </Button>
-              <Button variant="outline" className="rounded-full" onClick={startNewTask}>
-                <Plus className="size-4" />
-                新建任务
-              </Button>
-              <Button className="cta-button rounded-full" onClick={() => void saveTask()} disabled={savingTask}>
-                <Save className="size-4" />
-                保存任务
-              </Button>
-            </>
-          }
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard
+          title="销售出库"
+          value={formatNumber(data?.summary.yesterday_sales_out_qty ?? 0)}
+          hint={salesSummaryHint}
         />
-      </div>
-
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard title="待执行" value={formatNumber(data?.summary.pending_count ?? 0)} hint="需要推进的动作任务" />
-        <SummaryCard title="阻塞任务" value={formatNumber(data?.summary.blocked_count ?? 0)} hint="等待补料、确认或审批" />
+        <SummaryCard
+          title="销售退货"
+          value={formatNumber(data?.summary.yesterday_sales_return_qty ?? 0)}
+          hint={salesSummaryHint}
+        />
         <SummaryCard title="已完成" value={formatNumber(data?.summary.completed_count ?? 0)} hint="已执行并完成闭环" />
-        <SummaryCard title="启用规则" value={formatNumber(enabledRules)} hint={`自动触发 ${formatNumber(autoRules)} 条`} />
         <SummaryCard title="仓间调拨" value={formatNumber(data?.summary.transfer_count ?? 0)} hint="跨仓库流转动作" />
       </div>
+
+      <Card className="rounded-[28px] border-border/80 shadow-[var(--shadow-panel)]">
+        <CardHeader className="space-y-4">
+          <div>
+            <CardTitle className="text-lg">实时现存量</CardTitle>
+            <p className="mt-2 text-sm text-muted-foreground">
+              直连用友查询当前库存，支持按仓库、物料编码、物料名称和库存状态筛选。
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))] xl:items-stretch [&>*]:min-w-0">
+            <FilterSelect
+              value={liveStockFilters.warehouseCode || "all"}
+              onValueChange={(value) => updateLiveStockFilter("warehouseCode", value === "all" ? "" : value)}
+              placeholder="选择仓库"
+              options={liveStockWarehouseOptions}
+              allLabel="全部仓库"
+            />
+            <FilterSelect
+              value={liveStockFilters.stockStatusId || "all"}
+              onValueChange={(value) => updateLiveStockFilter("stockStatusId", value === "all" ? "" : value)}
+              placeholder="选择库存状态"
+              options={liveStockStatusOptions}
+              allLabel="全部库存状态"
+            />
+            <MaterialSuggestInput
+              value={liveStockFilters.materialCode}
+              onValueChange={updateMaterialCodeFilter}
+              placeholder="搜索或选择物料编码"
+              options={liveStockData?.filters.material_options ?? []}
+              mode="code"
+            />
+            <MaterialSuggestInput
+              value={liveStockFilters.materialName}
+              onValueChange={updateMaterialNameFilter}
+              placeholder="搜索或选择物料名称"
+              options={liveStockData?.filters.material_options ?? []}
+              mode="name"
+            />
+            <div className="w-full">
+              <Button className="cta-button h-11 w-full rounded-2xl px-5" onClick={() => void loadLiveStock()} disabled={liveStockLoading}>
+                查询现存量
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <LiveStockMetric label="匹配行数" value={formatNumber(liveStockData?.summary.matched_count ?? 0)} />
+            <LiveStockMetric label="现存量合计" value={formatNumber(liveStockData?.summary.total_current_qty ?? 0)} />
+            <LiveStockMetric label="可用量合计" value={formatNumber(liveStockData?.summary.total_available_qty ?? 0)} />
+            <LiveStockMetric label="计划可用合计" value={formatNumber(liveStockData?.summary.total_plan_available_qty ?? 0)} />
+            <LiveStockMetric
+              label="查询时间"
+              value={liveStockData?.summary.queried_at ? formatDateTime(liveStockData.summary.queried_at) : "--"}
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {liveStockData?.summary.has_more ? (
+            <div className="rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              当前仅展示前 {formatNumber(liveStockData.summary.returned_count)} 条结果，请继续收窄查询条件。
+            </div>
+          ) : null}
+
+          {liveStockLoading && !liveStockData ? (
+            <div className="h-[420px] rounded-[22px] border border-border/70 bg-muted/30" />
+          ) : liveStockData?.items.length ? (
+            <div className="surface-table overflow-hidden">
+              <ScrollArea className="h-[420px]">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/40">
+                      <TableHead>仓库</TableHead>
+                      <TableHead>物料编码</TableHead>
+                      <TableHead>物料名称</TableHead>
+                      <TableHead>库存状态</TableHead>
+                      <TableHead className="text-right">现存量</TableHead>
+                      <TableHead className="text-right">可用量</TableHead>
+                      <TableHead className="text-right">计划可用</TableHead>
+                      <TableHead className="text-right">在途通知</TableHead>
+                      <TableHead>单位</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {liveStockData.items.map((item, index) => (
+                      <TableRow key={`${item.warehouse_code}-${item.material_code}-${item.stock_status_id}-${index}`}>
+                        <TableCell>{item.warehouse_name || item.warehouse_code || "--"}</TableCell>
+                        <TableCell className="font-mono text-xs">{item.material_code || "--"}</TableCell>
+                        <TableCell>{item.material_name || "--"}</TableCell>
+                        <TableCell>{item.stock_status_name || "--"}</TableCell>
+                        <TableCell className="text-right">{formatNumber(item.current_qty)}</TableCell>
+                        <TableCell className="text-right">{formatNumber(item.available_qty)}</TableCell>
+                        <TableCell className="text-right">{formatNumber(item.plan_available_qty)}</TableCell>
+                        <TableCell className="text-right">{formatNumber(item.incoming_notice_qty)}</TableCell>
+                        <TableCell>{item.unit_name || "--"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            </div>
+          ) : (
+            <Empty className="border-border/70">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Waypoints className="size-4" />
+                </EmptyMedia>
+                <EmptyTitle>当前筛选下没有现存量结果</EmptyTitle>
+                <EmptyDescription>调整仓库、物料或库存状态条件后重新查询。</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="rounded-[28px] border-border/80 shadow-[var(--shadow-panel)]">
         <CardHeader>
@@ -728,6 +938,15 @@ function SummaryCard({ title, value, hint }: { title: string; value: string; hin
   );
 }
 
+function LiveStockMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[20px] border border-border/80 bg-muted/20 px-4 py-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-2 text-lg font-semibold tracking-tight text-foreground">{value}</p>
+    </div>
+  );
+}
+
 function MiniMetric({ label, value, active }: { label: string; value: string; active: boolean }) {
   return (
     <div className={cn("rounded-2xl border px-3 py-3", active ? "border-white/20 bg-white/10" : "border-border/70 bg-muted/35")}>
@@ -798,6 +1017,43 @@ function FilterSelect({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+function MaterialSuggestInput({
+  value,
+  onValueChange,
+  placeholder,
+  options,
+  mode,
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+  placeholder: string;
+  options: InventoryLiveStockResponse["filters"]["material_options"];
+  mode: "code" | "name";
+}) {
+  const datalistId = useId();
+
+  return (
+    <div className="w-full">
+      <Input
+        list={datalistId}
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+        placeholder={placeholder}
+        className="h-11 w-full rounded-2xl border-border/80 bg-white"
+      />
+      <datalist id={datalistId}>
+        {options.map((option) => (
+          <option
+            key={`${mode}-${option.material_code}`}
+            value={mode === "code" ? option.material_code : option.material_name}
+            label={mode === "code" ? option.material_name : option.material_code}
+          />
+        ))}
+      </datalist>
+    </div>
   );
 }
 

@@ -5,7 +5,6 @@ import { ArrowUpRight, Bot, RefreshCcw, ShieldCheck } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis } from "recharts";
 
 import { overviewQuickLinks } from "@/components/polaris/nav-config";
-import { PageHeader } from "@/components/polaris/page-header";
 import { TransitionLink } from "@/components/polaris/transition-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,11 +36,6 @@ async function requestOverviewData() {
 function OverviewSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="surface-panel p-6">
-        <Skeleton className="h-4 w-24 rounded-full" />
-        <Skeleton className="mt-4 h-10 w-72 rounded-2xl" />
-        <Skeleton className="mt-3 h-5 w-96 max-w-full rounded-full" />
-      </div>
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <Card key={index} className="rounded-[22px] border-border/80 shadow-[var(--shadow-card)]">
@@ -147,39 +141,11 @@ export function OverviewPage() {
 
   return (
     <div className="space-y-6">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Workspace"
-          title="北极星总览"
-          description="这个工作台只保留底层能力的产品化入口。你可以在这里快速感知治理进度、运营风险以及 DataAgent 的可用状态。"
-          badge="新前端首屏"
-          actions={
-            <>
-              <Button
-                variant="outline"
-                className="rounded-full"
-                onClick={() => void loadOverview(true)}
-                disabled={refreshing}
-              >
-                <RefreshCcw className={refreshing ? "size-4 animate-spin" : "size-4"} />
-                刷新数据
-              </Button>
-              <TransitionLink href="/analysis/data-agent">
-                <Button className="cta-button rounded-full">
-                  <Bot className="size-4" />
-                  进入 DataAgent
-                </Button>
-              </TransitionLink>
-            </>
-          }
-        />
-      </div>
-
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-6">
         <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              指标口径
+              BI看板
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -194,7 +160,7 @@ export function OverviewPage() {
         <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              主数据对象
+              基础数据
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -258,7 +224,7 @@ export function OverviewPage() {
         <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              DataAgent 状态
+              智能助手状态
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -278,7 +244,7 @@ export function OverviewPage() {
           <CardHeader className="space-y-2">
             <CardTitle className="text-lg">报表生成节奏</CardTitle>
             <p className="text-sm text-muted-foreground">
-              以 DataAgent 已生成的周报 / 月报为基线，观察运营分析输出频率。
+              以小北-数据分析Agent 已生成的周报 / 月报为基线，观察运营分析输出频率。
             </p>
           </CardHeader>
           <CardContent>
@@ -479,7 +445,7 @@ export function OverviewPage() {
             <CardHeader className="space-y-2">
               <CardTitle className="text-lg">分析代理状态</CardTitle>
               <p className="text-sm text-muted-foreground">
-                DataAgent 的仓库接入、API 在线情况和最近报表输出。
+                小北-数据分析Agent 的仓库接入、API 在线情况和最近报表输出。
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -505,7 +471,7 @@ export function OverviewPage() {
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   {latestReport
                     ? `最近一份 ${latestReport.report_type === "weekly" ? "周报" : "月报"} 创建于 ${formatDateTime(latestReport.created_at)}。`
-                    : "当前还没有可展示的 DataAgent 报表。"}
+                    : "当前还没有可展示的智能分析报表。"}
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">

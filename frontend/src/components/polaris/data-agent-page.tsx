@@ -3,14 +3,12 @@
 import { useEffect, useState } from "react";
 import {
   Loader2,
-  RefreshCcw,
   SendHorizonal,
   Sparkles,
   WandSparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/polaris/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -58,7 +56,7 @@ export function DataAgentPage() {
       setStatus(statusPayload);
       setReports(reportsPayload.items);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "DataAgent 数据加载失败");
+      toast.error(error instanceof Error ? error.message : "小北-数据分析Agent 数据加载失败");
     }
   }
 
@@ -77,7 +75,7 @@ export function DataAgentPage() {
         }
       } catch (error) {
         if (!cancelled) {
-          toast.error(error instanceof Error ? error.message : "DataAgent 数据加载失败");
+          toast.error(error instanceof Error ? error.message : "小北-数据分析Agent 数据加载失败");
         }
       }
     }
@@ -157,27 +155,6 @@ export function DataAgentPage() {
 
   return (
     <div className="space-y-6">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Analysis"
-          title="DataAgent 工作台"
-          description="新的分析入口把代理状态、问答和自动报表统一到一屏里。团队无需再切旧壳层和外部说明页，直接围绕能力本身工作。"
-          badge={status?.api_online ? "API 在线" : "API 待启动"}
-          actions={
-            <>
-              <Button variant="outline" className="rounded-full" onClick={() => void loadAgentData()}>
-                <RefreshCcw className="size-4" />
-                刷新状态
-              </Button>
-              <Button className="cta-button rounded-full" onClick={() => generateReport("weekly")} disabled={reportSubmitting !== null}>
-                <Sparkles className="size-4" />
-                生成周报
-              </Button>
-            </>
-          }
-        />
-      </div>
-
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
         <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
           <CardHeader className="pb-2">
@@ -225,7 +202,7 @@ export function DataAgentPage() {
             <CardContent className="space-y-4">
               <div className="rounded-[22px] border border-border/70 bg-white px-4 py-4">
                 <p className="text-sm font-medium text-foreground">
-                  {status?.display_name || "DataAgent"}
+                  {status?.display_name || "小北-数据分析Agent"}
                 </p>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   {status?.integration_note || "状态加载中"}
@@ -360,7 +337,7 @@ export function DataAgentPage() {
           <CardHeader className="space-y-2">
             <CardTitle className="text-lg">分析对话</CardTitle>
             <p className="text-sm text-muted-foreground">
-              围绕经营异常、库存风险和报表摘要直接向 DataAgent 提问。
+              围绕经营异常、库存风险和报表摘要直接向小北-数据分析Agent 提问。
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -395,7 +372,7 @@ export function DataAgentPage() {
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 className="min-h-[120px] rounded-[20px] border-border/80 bg-white"
-                placeholder="输入你想让 DataAgent 分析的问题..."
+                placeholder="输入你想让小北-数据分析Agent 分析的问题..."
               />
               <div className="mt-4 flex items-center justify-between gap-4">
                 <p className="text-xs text-muted-foreground">
