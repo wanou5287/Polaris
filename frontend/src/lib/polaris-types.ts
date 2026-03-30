@@ -96,17 +96,31 @@ export type ChannelItem = {
 
 export type MasterDataResponse = {
   skus: SkuItem[];
+  boms: BomItem[];
   warehouses: WarehouseItem[];
   statuses: StatusItem[];
   channels: ChannelItem[];
   summary: {
     sku_count: number;
+    bom_count: number;
     warehouse_count: number;
     status_count: number;
     channel_count: number;
     latest_inventory_cleaning_date: string | null;
     latest_sales_date: string | null;
   };
+};
+
+export type BomItem = {
+  id: number;
+  bom_code: string;
+  bom_name: string;
+  material_code: string;
+  material_name: string;
+  version_tag: string;
+  component_count: number;
+  status: string;
+  updated_at: string | null;
 };
 
 export type AuditLogItem = {
@@ -188,6 +202,153 @@ export type ProcurementArrivalResponse = {
   supplier_options: Option[];
 };
 
+export type ProcurementSupplyInterface = {
+  label: string;
+  path: string;
+};
+
+export type ProcurementSupplyDocumentStatus = "draft" | "pending" | "approved" | "completed";
+
+export type ProcurementSupplyDocumentDetailColumn = {
+  key: string;
+  label: string;
+};
+
+export type ProcurementSupplyDocumentDetailRow = {
+  id: string;
+  status: ProcurementSupplyDocumentStatus;
+  values: Record<string, string | number>;
+};
+
+export type ProcurementSupplyDocumentModule = {
+  key: string;
+  title: string;
+  description: string;
+  stage_label: string;
+  supports_standalone: boolean;
+  supports_workflow: boolean;
+  serial_policy: "none" | "material_based" | string;
+  required_fields: string[];
+  recommended_fields: string[];
+  yonyou_interfaces: ProcurementSupplyInterface[];
+  status_summary: {
+    draft: number;
+    pending: number;
+    approved: number;
+    completed: number;
+  };
+  detail_columns?: ProcurementSupplyDocumentDetailColumn[];
+  detail_rows?: ProcurementSupplyDocumentDetailRow[];
+};
+
+export type ProcurementSupplyWorkflowStep = {
+  key: string;
+  title: string;
+  description: string;
+};
+
+export type ProcurementSupplyWorkflowStatus = "published" | "unpublished" | "draft" | "disabled";
+
+export type ProcurementSupplyBomLine = {
+  line_type: string;
+  material_code: string;
+  material_name: string;
+  qty: number;
+};
+
+export type ProcurementSupplyWorkflowTemplate = {
+  key: string;
+  title: string;
+  description: string;
+  workflow_code: string;
+  version: string;
+  bom_code: string;
+  status: ProcurementSupplyWorkflowStatus;
+  purchase_order_required: boolean;
+  serial_upload_policy: string;
+  serial_upload_label: string;
+  serial_upload_note: string;
+  default_material_code: string;
+  default_purchase_order_placeholder: string;
+  steps: ProcurementSupplyWorkflowStep[];
+  required_inputs: string[];
+  bom_preview: ProcurementSupplyBomLine[];
+};
+
+export type ProcurementSupplyMaterialProfile = {
+  material_code: string;
+  material_name: string;
+  material_type: string;
+  serial_managed: boolean;
+  default_unit: string;
+  recommended_workflow: string;
+  description: string;
+};
+
+export type ProcurementSupplyBomProfile = {
+  bom_code: string;
+  bom_name: string;
+  material_code: string;
+  material_name: string;
+  version_tag: string;
+  status: string;
+  component_count: number;
+  description: string;
+  lines: ProcurementSupplyBomLine[];
+};
+
+export type ProcurementSupplyConsoleResponse = {
+  module_intro: {
+    title: string;
+    summary: string;
+    highlights: string[];
+  };
+  summary: {
+    document_module_count: number;
+    workflow_template_count: number;
+    standalone_launch_count: number;
+    serial_managed_material_count: number;
+    workflow_step_count: number;
+  };
+  document_modules: ProcurementSupplyDocumentModule[];
+  workflow_templates: ProcurementSupplyWorkflowTemplate[];
+  material_profiles: ProcurementSupplyMaterialProfile[];
+  bom_profiles: ProcurementSupplyBomProfile[];
+  serial_import_template: {
+    accepted_extensions: string[];
+    required_headers: string[];
+    optional_headers: string[];
+    tips: string[];
+  };
+};
+
+export type ProcurementSerialImportPreviewResponse = {
+  material: ProcurementSupplyMaterialProfile;
+  upload_enabled: boolean;
+  upload_required: boolean;
+  message: string;
+  preview: {
+    file_name: string;
+    total_rows: number;
+    accepted_count: number;
+    duplicate_count: number;
+    missing_count: number;
+    duplicates: string[];
+    missing_rows: number[];
+    sample_serials: string[];
+    accepted_serials: string[];
+  };
+};
+
+export type ProcurementSupplyLaunchResponse = {
+  document_key: string;
+  document_id: string;
+  document_code: string;
+  summary: Record<string, string | number | null | undefined>;
+  request_payload: Record<string, unknown>;
+  response: Record<string, unknown>;
+};
+
 export type InventoryFlowRule = {
   id: number;
   rule_name: string;
@@ -246,6 +407,51 @@ export type InventoryFlowTask = {
   sort_order: number;
 };
 
+export type InventoryLiveStockItem = {
+  stock_org_name: string;
+  warehouse_code: string;
+  warehouse_name: string;
+  material_code: string;
+  material_name: string;
+  sku_code: string;
+  sku_name: string;
+  stock_status_id: string;
+  stock_status_name: string;
+  batch_no: string;
+  unit_name: string;
+  current_qty: number;
+  available_qty: number;
+  plan_available_qty: number;
+  incoming_notice_qty: number;
+  queried_at: string;
+};
+
+export type InventoryLiveStockResponse = {
+  items: InventoryLiveStockItem[];
+  summary: {
+    matched_count: number;
+    returned_count: number;
+    has_more: boolean;
+    total_current_qty: number;
+    total_available_qty: number;
+    total_plan_available_qty: number;
+    total_incoming_notice_qty: number;
+    queried_at: string | null;
+    raw_row_count: number;
+  };
+  filters: {
+    warehouse_code: string;
+    material_code: string;
+    material_name: string;
+    stock_status_id: string;
+    material_options: Array<{
+      material_code: string;
+      material_name: string;
+      label: string;
+    }>;
+  };
+};
+
 export type InventoryFlowResponse = {
   rules: InventoryFlowRule[];
   tasks: InventoryFlowTask[];
@@ -257,6 +463,10 @@ export type InventoryFlowResponse = {
     enabled_rule_count: number;
     auto_rule_count: number;
     transfer_count: number;
+    yesterday_sales_out_qty: number;
+    yesterday_sales_return_qty: number;
+    yesterday_sales_date: string | null;
+    latest_sales_date: string | null;
   };
   action_options: Option[];
   task_status_options: Option[];
@@ -482,179 +692,134 @@ export type RefurbCollaborationResponse = {
   risk_options: Option[];
 };
 
-export type ReturnUnpackAttendanceSummary = {
-  biz_date: string | null;
-  attendance_count: number;
-  sales_return_warehouse: number;
-  total_return_qty: number;
-  total_sales_qty: number;
-  return_unpack_efficiency: number;
+export type BiDashboardMetaField = {
+  label: string;
+  type: string;
+  groupable?: boolean;
+  filterable?: boolean;
+  sortable?: boolean;
+  numeric?: boolean;
 };
 
-export type AfterSalesCase = {
-  id: number;
-  case_no: string;
-  order_no: string;
-  reverse_type: string;
-  reverse_type_label: string;
-  status: string;
-  status_label: string;
-  severity: string;
-  severity_label: string;
-  channel_code: string;
-  channel_name: string;
-  shop_name: string;
-  sku_code: string;
-  sku_name: string;
-  request_qty: number;
-  received_qty: number;
-  pending_receive_qty: number;
-  receive_rate: number;
-  refund_amount: number;
-  issue_category: string;
-  reverse_warehouse_code: string;
-  reverse_warehouse_name: string;
-  intake_date: string | null;
-  promised_finish_date: string | null;
-  owner_name: string;
-  owner_role: string;
-  customer_reason: string;
-  diagnosis_result: string;
-  action_plan: string;
-  note: string;
-  sort_order: number;
-  created_by: string | null;
-  updated_by: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  aging_days: number;
-  is_overdue: boolean;
+export type BiDashboardMetaResponse = {
+  widget_types: Array<{ key: string; label: string }>;
+  widget_type_map: Record<string, string>;
+  datasets: Array<{ key: string; label: string }>;
+  dataset_map: Record<string, string>;
+  dataset_fields: Record<string, Record<string, BiDashboardMetaField>>;
+  aggregation_options?: Array<{ key: string; label: string }>;
+  layout_heights?: string[];
+  latest_by_dataset?: Record<string, string | null>;
+  latest_overall?: string | null;
 };
 
-export type AfterSalesWorkbenchResponse = {
-  summary: {
-    total_count: number;
-    submitted_count: number;
-    received_count: number;
-    diagnosing_count: number;
-    refurbishing_count: number;
-    refund_pending_count: number;
-    closed_count: number;
-    blocked_count: number;
-    overdue_count: number;
-    high_severity_count: number;
-    total_request_qty: number;
-    total_received_qty: number;
-    total_refund_amount: number;
-    reverse_warehouse_count: number;
-    latest_intake_date: string | null;
-    latest_attendance_date: string | null;
-    latest_attendance_count: number;
-    latest_return_qty: number;
-  };
-  items: AfterSalesCase[];
-  attendance: ReturnUnpackAttendanceSummary[];
-  date_range: {
+export type BiDashboardSortRule = {
+  field: string;
+  direction: string;
+};
+
+export type BiDashboardFilterRule = {
+  field: string;
+  op: string;
+  value?: string | number | boolean | null;
+  start?: string | number | null;
+  end?: string | number | null;
+};
+
+export type BiDashboardMetricConfig = {
+  field: string;
+  agg: string;
+  label: string;
+};
+
+export type BiDashboardWidgetConfig = {
+  dataset: string;
+  dimensions: string[];
+  series_field: string;
+  metrics: BiDashboardMetricConfig[];
+  chart_palette?: string;
+  date_filter: {
+    mode: string;
+    date: string;
     start_date: string;
     end_date: string;
+    date_col: string;
   };
-  status_options: Option[];
-  type_options: Option[];
-  severity_options: Option[];
-  warehouse_options: Option[];
-  channel_options: Option[];
+  filters: BiDashboardFilterRule[];
+  sort: BiDashboardSortRule[];
+  limit: number;
+  text_content: string;
 };
 
-export type ReplenishmentAlertSnapshot = {
+export type BiDashboardWidgetLayout = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  span: number;
+  height: string;
+};
+
+export type BiDashboardWidget = {
   id: number;
-  snapshot_date: string | null;
-  material_name: string;
-  demand_type: string;
-  material_role: string;
-  current_stock_qty: number;
-  forecast_14d_qty: number;
-  coverage_days: number;
-  threshold_days: number;
-  alert_level: string;
-  pushed_to_dingtalk: boolean | number;
-  push_result: string;
-  message: string;
-  created_at: string | null;
-  updated_at: string | null;
-};
-
-export type ReplenishmentForecastSnapshot = {
-  material_name: string;
-  demand_type: string;
-  material_role: string;
-  forecast_14d_qty: number;
-  latest_forecast_date: string | null;
-  threshold_days: number;
-};
-
-export type ReplenishmentPlanItem = {
-  id: number;
-  suggestion_no: string;
-  plan_date: string | null;
-  material_name: string;
-  demand_type: string;
-  material_role: string;
-  current_stock_qty: number;
-  forecast_14d_qty: number;
-  coverage_days: number;
-  threshold_days: number;
-  target_stock_qty: number;
-  suggested_qty: number;
-  supply_mode: string;
-  supply_mode_label: string;
-  plan_status: string;
-  plan_status_label: string;
-  priority: string;
-  priority_label: string;
-  owner_name: string;
-  owner_role: string;
-  expected_ready_date: string | null;
-  supplier_name: string;
-  linked_refurb_category: string;
-  note: string;
-  source_snapshot: Record<string, unknown> | null;
+  view_id: number;
+  title: string;
+  widget_type: string;
+  dataset: string;
+  config: BiDashboardWidgetConfig;
+  layout: BiDashboardWidgetLayout;
   sort_order: number;
-  created_by: string | null;
-  updated_by: string | null;
+  analysis_text: string;
   created_at: string | null;
   updated_at: string | null;
-  is_overdue: boolean;
 };
 
-export type ReplenishmentWorkbenchResponse = {
-  summary: {
-    total_count: number;
-    draft_count: number;
-    reviewing_count: number;
-    confirmed_count: number;
-    executing_count: number;
-    blocked_count: number;
-    closed_count: number;
-    overdue_count: number;
-    high_priority_count: number;
-    purchase_count: number;
-    refurb_count: number;
-    transfer_count: number;
-    watch_count: number;
-    total_suggested_qty: number;
-    total_target_stock_qty: number;
-    material_count: number;
-    alert_count: number;
-    latest_plan_date: string | null;
-    latest_alert_date: string | null;
-  };
-  items: ReplenishmentPlanItem[];
-  alerts: ReplenishmentAlertSnapshot[];
-  forecasts: ReplenishmentForecastSnapshot[];
-  plan_status_options: Option[];
-  supply_mode_options: Option[];
-  priority_options: Option[];
-  demand_type_options: Option[];
+export type BiDashboardViewSummary = {
+  id: number;
+  name: string;
+  description: string;
+  global_filters: unknown[];
+  widget_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type BiDashboardViewsResponse = {
+  views: BiDashboardViewSummary[];
+};
+
+export type BiDashboardViewDetail = Omit<BiDashboardViewSummary, "widget_count"> & {
+  widgets: BiDashboardWidget[];
+};
+
+export type BiDashboardWidgetDataMetric = {
+  alias: string;
+  field: string;
+  agg: string;
+  label: string;
+};
+
+export type BiDashboardWidgetDataRow = Record<string, string | number | null>;
+
+export type BiDashboardWidgetDataItem = {
+  target_date: string | null;
+  applied_target_date: string | null;
+  dimensions: string[];
+  series_field: string;
+  series_groups: string[];
+  metrics: BiDashboardWidgetDataMetric[];
+  rows: BiDashboardWidgetDataRow[];
+  config: BiDashboardWidgetConfig;
+  date_filter_scope: string;
+  widget_id: number;
+  widget_type: string;
+  title: string;
+};
+
+export type BiDashboardWidgetDataResponse = {
+  view_id: number;
+  biz_date: string | null;
+  items: BiDashboardWidgetDataItem[];
 };
 
 export type DataAgentStatus = {

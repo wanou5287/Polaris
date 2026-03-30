@@ -6,7 +6,6 @@ import {
   Factory,
   Gauge,
   PackageCheck,
-  RefreshCcw,
   Save,
   Search,
   Wrench,
@@ -14,7 +13,6 @@ import {
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/polaris/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -410,27 +408,6 @@ export function RefurbCollaborationPage() {
 
   return (
     <div className="space-y-6" data-page="refurb-collaboration">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Operations"
-          title="翻新协同工作台"
-          description="把翻新产能、每日排产、阻塞原因和近期实际收进同一块工作台里。先看节拍和缺口，再分配负责人，把排产项同步进统一任务中心。"
-          badge={data ? `${formatNumber(data.summary.schedule_count)} 个排产项` : "加载中"}
-          actions={
-            <>
-              <Button variant="outline" className="rounded-full" onClick={() => void loadWorkbench(selectedScheduleId, selectedCapacityId)}>
-                <RefreshCcw className="size-4" />
-                刷新工作台
-              </Button>
-              <Button className="cta-button rounded-full" onClick={() => void saveSchedule()} disabled={savingSchedule}>
-                <Save className="size-4" />
-                保存排产
-              </Button>
-            </>
-          }
-        />
-      </div>
-
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-6">
         <SummaryCard title="排产总数" value={formatNumber(data?.summary.schedule_count ?? 0)} hint={`活跃类别 ${formatNumber(data?.summary.active_category_count ?? 0)}`} icon={<Factory className="size-4" />} />
         <SummaryCard title="高风险" value={formatNumber(data?.summary.high_risk_count ?? 0)} hint={`阻塞 ${formatNumber(data?.summary.blocked_count ?? 0)}`} icon={<AlertTriangle className="size-4" />} />

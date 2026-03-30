@@ -14,12 +14,14 @@ import { ApiError, apiFetch } from "@/lib/polaris-client";
 export function LoginForm({ nextPath }: { nextPath: string }) {
   const router = useRouter();
   const [username, setUsername] = useState("bi_admin");
-  const [password, setPassword] = useState("FinvisBI@2026!");
+  const [password, setPassword] = useState("ChangeMe123!");
   const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setErrorMessage("");
     setSubmitting(true);
 
     try {
@@ -43,10 +45,22 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
       });
     } catch (error) {
       const message =
-        error instanceof ApiError ? error.message : "登录失败，请检查账号和密码";
+        error instanceof ApiError
+          ? error.status === 401
+            ? "用户名或密码错误，请重新输入。"
+            : error.message
+          : "登录失败，请检查账号和密码。";
+
+      setErrorMessage(message);
       toast.error(message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function clearError() {
+    if (errorMessage) {
+      setErrorMessage("");
     }
   }
 
@@ -61,7 +75,10 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           <Input
             id="username"
             value={username}
-            onChange={(event) => setUsername(event.target.value)}
+            onChange={(event) => {
+              setUsername(event.target.value);
+              clearError();
+            }}
             className="h-12 rounded-2xl border-border/80 bg-white pl-11 shadow-none"
             autoComplete="username"
           />
@@ -78,12 +95,25 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
             id="password"
             type="password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              clearError();
+            }}
             className="h-12 rounded-2xl border-border/80 bg-white pl-11 shadow-none"
             autoComplete="current-password"
           />
         </div>
       </div>
+
+      {errorMessage ? (
+        <div
+          className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          role="alert"
+          aria-live="polite"
+        >
+          {errorMessage}
+        </div>
+      ) : null}
 
       <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-white/70 px-4 py-3">
         <label className="flex items-center gap-3 text-sm text-muted-foreground">

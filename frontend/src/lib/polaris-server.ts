@@ -56,6 +56,13 @@ async function getCurrentSessionValue(request?: NextRequest) {
   return cookieStore.get(POLARIS_SESSION_COOKIE)?.value ?? null;
 }
 
+function readProxyBody(request: NextRequest) {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return Promise.resolve<BodyInit | undefined>(undefined);
+  }
+  return request.text();
+}
+
 export async function getCurrentUsername() {
   const cookieStore = await cookies();
   return cookieStore.get(POLARIS_USERNAME_COOKIE)?.value ?? "BI 用户";
@@ -157,6 +164,66 @@ export async function proxyBackendJson(
     : { message: await response.text() };
 
   return createProxyResponse(payload, response.status);
+}
+
+export async function proxyBackendResponse(
+  request: NextRequest,
+  path: string,
+) {
+  const session = await getCurrentSessionValue(request);
+  const body = await readProxyBody(request);
+
+  const response = await fetch(
+    buildBackendUrl(path, request.nextUrl.searchParams),
+    {
+      method: request.method,
+      cache: "no-store",
+      redirect: "manual",
+      headers: {
+        Accept: request.headers.get("accept") ?? "*/*",
+        ...(body
+          ? {
+              "Content-Type":
+                request.headers.get("content-type") ?? "application/json",
+            }
+          : {}),
+        ...(session ? { Cookie: `${POLARIS_SESSION_COOKIE}=${session}` } : {}),
+      },
+      body,
+    },
+  );
+
+  const headers = new Headers();
+  const contentType = response.headers.get("content-type");
+  const contentDisposition = response.headers.get("content-disposition");
+  const location = response.headers.get("location");
+
+  if (contentType) {
+    headers.set("content-type", contentType);
+  }
+  if (contentDisposition) {
+    headers.set("content-disposition", contentDisposition);
+  }
+  if (location) {
+    headers.set("location", location);
+  }
+
+  for (const setCookie of readSetCookie(response)) {
+    headers.append("set-cookie", setCookie);
+  }
+
+  if (request.method === "HEAD") {
+    return new NextResponse(null, {
+      status: response.status,
+      headers,
+    });
+  }
+
+  const buffer = await response.arrayBuffer();
+  return new NextResponse(buffer, {
+    status: response.status,
+    headers,
+  });
 }
 
 export async function postLoginToPolaris(payload: {

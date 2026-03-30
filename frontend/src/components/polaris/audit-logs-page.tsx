@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, RefreshCcw } from "lucide-react";
+import { Activity } from "lucide-react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/polaris/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -103,21 +102,6 @@ export function AuditLogsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Governance"
-          title="审计日志中心"
-          description="统一查看变更动作、接口来源、触发人和执行结果。新的布局把筛选、列表与明细拆开，排查问题时更直接。"
-          badge={data ? `${formatNumber(data.items.length)} 条结果` : "加载中"}
-          actions={
-            <Button variant="outline" className="rounded-full" onClick={() => void loadLogs()}>
-              <RefreshCcw className="size-4" />
-              立即刷新
-            </Button>
-          }
-        />
-      </div>
-
       <div className="grid gap-5 md:grid-cols-3">
         <Card className="rounded-[24px] border-border/80 shadow-[var(--shadow-card)]">
           <CardHeader className="pb-2">

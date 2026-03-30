@@ -4,8 +4,6 @@ import { startTransition, type ReactNode, useDeferredValue, useEffect, useState 
 import {
   AlertTriangle,
   BadgeCheck,
-  RefreshCcw,
-  Save,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -13,7 +11,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/polaris/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -172,27 +169,6 @@ export function ReconciliationCenterPage() {
 
   return (
     <div className="space-y-6" data-page="reconciliation-center">
-      <div className="surface-panel p-6 sm:p-8">
-        <PageHeader
-          eyebrow="Operations"
-          title="数据对账与失败补偿"
-          description="先把单据回写异常、自动任务缺失、流转阻塞和逾期任务拉到统一补偿台里，做到发现差异后能直接执行动作。"
-          badge={data ? `${formatNumber(data.summary.total_count)} 个对账案例` : "加载中"}
-          actions={
-            <>
-              <Button variant="outline" className="rounded-full" onClick={() => void loadCases(selectedId)}>
-                <RefreshCcw className="size-4" />
-                刷新案例
-              </Button>
-              <Button className="cta-button rounded-full" onClick={() => void saveCase()} disabled={saving || !draft}>
-                <Save className="size-4" />
-                {compensationAction === "none" ? "保存编排" : "执行补偿"}
-              </Button>
-            </>
-          }
-        />
-      </div>
-
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-6">
         <SummaryCard title="待处理" value={formatNumber(data?.summary.open_count ?? 0)} hint="尚未开始补偿" icon={<ShieldAlert className="size-4" />} />
         <SummaryCard title="补偿中" value={formatNumber(data?.summary.compensating_count ?? 0)} hint="已推进但仍需复查" icon={<Sparkles className="size-4" />} />
