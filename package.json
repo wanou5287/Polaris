@@ -1,0 +1,25 @@
+{
+  "name": "toc-after-sales-warranty-system",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:api dev:web",
+    "dev:api": "npm run dev --workspace @warranty/api",
+    "dev:web": "npm run dev --workspace @warranty/web",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed/index.ts"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5",
+    "prisma": "^6.6.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
+  }
+}

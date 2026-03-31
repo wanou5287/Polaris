@@ -1,218 +1,107 @@
-# 北极星 - 供应链运营协同平台
+# 平板 TOC 售后保修查询系统
 
-一个基于FastAPI的财务报表自动化生成系统，支持从用友接口拉取数据、数据清洗、Excel模板填充和文件加密压缩。支持一次性下载链接与OSS上传，日志支持文件持久化。
+当前目录用于存放该系统的设计文档和实现代码，所有项目产物均保存在 `E:\售后查询系统`。
 
-## 系统架构
+## 当前版本重点
 
-### 核心流程
-1. **数据拉取**: 调用用友API获取凭证数据
-2. **数据清洗**: 按科目代码过滤，数据标准化
-3. **数据入库**: 存储到SQLite/阿里云RDS
-4. **模板填充**: 将数据填入Excel模板
-5. **文件处理**: 加密压缩生成最终报表
+本版已经按最新变更完成以下调整：
 
-### 项目结构
+- 查询输入由单一 `SN` 改为 `SN + 订单号`
+- 标准保修仍按 `SN + 激活时间` 计算
+- 延保权益必须按 `SN + 订单号` 匹配成功后才叠加
+- 若提供渠道，可继续按 `SN + 订单号 + 渠道` 收紧匹配
+- 未匹配到延保时，默认只显示标准保修 365 天
+- 若同一 `SN + 订单号` 存在多条有效延保记录，返回待人工审核
 
-```
-北极星/
-├── main.py                          # 主入口
-├── app/
-│   ├── core/                        # 核心配置
-│   │   ├── config.py               # 配置管理
-│   │   ├── database.py             # 数据库连接
-│   │   └── logger.py               # 日志管理
-│   ├── models/                      # 数据模型
-│   │   ├── base.py                 # 基础模型
-│   │   └── voucher.py              # 凭证数据模型
-│   ├── routes/                      # API路由
-│   │   └── financial_report.py     # 报表路由（仅保留生成与一次性下载）
-│   └── services/                    # 业务服务
-│       ├── yonyou_client.py        # 用友API客户端
-│       ├── data_fetch_service.py   # 数据拉取服务
-│       ├── data_process_service.py # 数据处理服务
-│       ├── excel_export_service.py # Excel导出服务
-│       ├── report_generate_service.py # 报表生成服务
-│       ├── oss_service.py          # OSS存储服务
-│       └── notification_service.py # 钉钉通知服务
-├── templates/
-│   └── report_template.xlsx        # Excel模板
-├── output/                         # 统一输出目录
-│   ├── excel/                      # Excel文件目录
-│   └── zip/                        # ZIP压缩包目录
-├── tests/                          # 测试文件
-│   └── test_e2e_api.py            # 端到端接口测试（GET触发）
-└── requirements.txt                # 依赖配置
+## 文档目录
+
+- [系统设计](./docs/01-system-design.md)
+- [数据与接口设计](./docs/02-data-and-api-design.md)
+- [实施计划](./docs/03-implementation-plan.md)
+
+## 当前工程结构
+
+```text
+E:\售后查询系统
+├─ apps
+│  ├─ api
+│  └─ web
+├─ docs
+├─ mock
+├─ packages
+│  └─ shared
+├─ prisma
+└─ README.md
 ```
 
-## 快速开始
+## 已实现能力
 
-### 1. 安装依赖
+- `GET /api/warranty/query?sn={sn}&sourceOrderNo={orderNo}`
+- `GET /api/sale-cycles/{saleCycleId}`
+- `POST /api/entitlements/import`
+- `ACTIVATION_MODE=mock | real` 配置切换
+- SQLite 本地数据库
+- mock 激活查询和 real 激活查询共用统一抽象
+
+## 本地启动
+
+1. 安装依赖
 
 ```bash
-pip install -r requirements.txt
+npm install
 ```
 
-### 2. 配置环境变量
-
-创建 `.env` 文件：
-
-```env
-# 用友API配置
-YONYOU_APP_KEY=your_app_key
-YONYOU_APP_SECRET=your_app_secret
-YONYOU_BASE_URL=https://c3.yonyoucloud.com
-
-# 公司配置
-COMPANY_ACCOUNT_CODES=0004,BVIO1,HK01,0002,KY01,0001,0003,000202,000201,000101,000102
-SUBJECT_CODES=1001,1002,1012
-
-# 数据库配置（建议MySQL或SQLite，生产使用MySQL）
-# MySQL: mysql+pymysql://user:password@host:3306/database
-
-# OSS配置
-OSS_BUCKET_NAME=zstt-prod
-OSS_REGION=oss-cn-hangzhou
-OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
-OSS_ACCESS_KEY_ID=your_access_key_id
-OSS_ACCESS_KEY_SECRET=your_access_secret
-OSS_PREFIX=financial-reports/
-# 若需公网直链，设为 True；私有桶建议 False
-OSS_PUBLIC_READ=False
-
-# 钉钉通知配置（可选）
-DINGTALK_WEBHOOK_URL=your_webhook_url
-DINGTALK_SECRET=your_secret
-```
-
-### 3. 运行应用（本地）
+2. 初始化数据库
 
 ```bash
-python main.py
+npx prisma generate
+npx prisma db push
+npm run db:seed
 ```
 
-### 4. 访问应用
-
-- 应用地址: http://{你的局域网IP}:8888
-- API文档: http://{你的局域网IP}:8888/docs
-- 健康检查: http://{你的局域网IP}:8888/health
-
-## API接口
-
-### 核心接口
-
-#### 一键生成财务报表（GET）
-```http
-GET /financial/generate-report?makeTimeStart=2025-09-01&makeTimeEnd=2025-09-30
-```
-
-**响应示例:**
-```json
-{
-    "code": 200,
-    "message": "财务报表生成任务已启动",
-    "data": {
-        "makeTimeStart": "2025-09-01",
-        "makeTimeEnd": "2025-09-30",
-        "status": "started",
-        "message": "财务报表生成任务已在后台启动，请稍后在钉钉群机器人接收通知"
-    }
-}
-```
-
-#### 一次性下载链接
-生成完成后，系统会推送钉钉消息，包含一次性下载链接：
-`http://{你的局域网IP}:8888/financial/one-time-download/{token}`
-- 首次访问：302 跳转至 OSS 签名URL并可下载
-- 二次访问：提示“链接已失效或不存在”；并自动删除对应 OSS 对象
-
-## 统一返回结构
-
-所有API统一返回：
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": { }
-}
-```
-错误时：
-```json
-{
-  "code": 500,
-  "message": "错误信息",
-  "data": {}
-}
-```
-
-## 测试
-
-### 运行核心集成测试
+3. 启动前后端
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8888 --reload
+npm run dev
 ```
 
-### 运行用友API测试
+4. 访问地址
 
-```bash
-python tests/test_e2e_api.py
-```
+- 前端：`http://localhost:5173`
+- 后端：`http://localhost:3210`
 
-### 运行数据拉取测试
+## 查询逻辑
 
-```bash
-curl "http://{你的局域网IP}:8888/financial/generate-report?makeTimeStart=2025-09-01&makeTimeEnd=2025-09-30"
-```
+1. 用户输入 `SN + 订单号`
+2. 系统根据 `SN` 查询激活时间
+3. 若已激活，则先计算标准保修 `365` 天
+4. 系统再根据 `SN + 订单号` 匹配权益台账
+5. 若匹配成功，则叠加延保天数
+6. 若未匹配，则只显示标准保修，并提示“未匹配到延保权益”
+7. 若匹配冲突或关键字段异常，则返回待人工审核
 
-## 技术栈
+## mock 测试样例
 
-- **FastAPI** - Web框架
-- **SQLAlchemy** - ORM数据库操作
-- **Pandas** - 数据处理和Excel操作
-- **openpyxl** - Excel文件读写
-- **pyzipper** - 文件加密压缩
-- **requests** - HTTP客户端
-- **Pydantic** - 数据验证
-- **Uvicorn** - ASGI服务器
+当前可直接在页面里测试以下场景：
 
-## 部署说明
+- `SN001 + ORDER001`
+  匹配成功，延保 180 天
+- `SN001 + ORDER002`
+  同一 SN 另一订单无延保，只显示标准保修
+- `SN003 + ORDER021`
+  历史周期已关闭，当前周期正常计算
+- `SN009 + ORDER_CONFLICT`
+  同一 `SN + 订单号` 存在两条有效延保记录，返回待人工审核
 
-### 本地部署
-1. 安装Python 3.8+
-2. 安装依赖: `pip install -r requirements.txt`
-3. 配置环境变量
-4. 运行: `python main.py`
+相关文件：
 
-### 生产部署
-1. 使用阿里云RDS作为数据库（建议VPC内网）
-2. 使用阿里云OSS存储文件（私有桶，签名URL）
-3. 配置钉钉通知（Webhook + Secret）
-4. 使用Docker或进程守护部署（supervisor/systemd）
-5. 日志写入 `logs/app.log`，建议配置日志轮转
+- mock 激活数据：`mock/activation-data.json`
+- Excel 导入模板：`apps/web/public/entitlements-sample.csv`
 
-## 开发说明
+## 设计原则
 
-1. **服务层设计**: 各服务类相互独立，可单独测试和复用
-2. **数据模型**: 使用SQLAlchemy ORM，支持多种数据库
-3. **错误处理**: 统一的异常处理和日志记录
-4. **配置管理**: 使用环境变量，支持不同环境配置
-5. **测试覆盖**: 核心功能有完整的测试用例
-
-## 文件存储规则
-
-### 目录结构
-- `output/excel/` - 存储Excel文件
-- `output/zip/` - 存储加密压缩包
-
-### 文件命名规则
-- Excel文件：`月度财务报表_{期间}.xlsx`（如：月度财务报表_2025-09.xlsx）
-- ZIP文件：`月度财务报表_{期间}.zip`（如：月度财务报表_2025-09.zip）
-- 同月份文件会被覆盖，确保每个月份只有一份数据
-
-## 注意事项
-
-1. 用友API有调用频率限制，建议控制并发数
-2. 大量数据处理时建议使用后台任务
-3. 文件加密使用AES-256，密码随机生成
-4. 支持阿里云RDS和OSS，需要配置相应权限
-5. 文件按月份存储，同月份文件会被覆盖
+- 标准保修和延保匹配必须分开处理
+- 激活查询必须统一经过 `ActivationQueryService`
+- `mock` 与 `real` 模式通过配置切换，不改业务代码
+- 页面层只负责输入与展示，不直接读取 mock 数据
+- 延保权益不允许再按 SN 单独叠加，必须至少按 `SN + 订单号`
