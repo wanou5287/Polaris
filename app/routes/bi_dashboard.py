@@ -7,11 +7,13 @@ import hmac
 import io
 import json
 import os
+import re
 import secrets
 import socket
 import threading
 import time
-from base64 import b64decode, urlsafe_b64decode, urlsafe_b64encode
+from base64 import b64decode, b64encode, urlsafe_b64decode, urlsafe_b64encode
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -25,12 +27,14 @@ import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from openpyxl import load_workbook
 from sqlalchemy import create_engine, text
 
+from app.core.config import settings
 from app.core.logger import logger as app_logger
 from app.services.dashboard_share_service import share_dashboard_widget
+from app.services.oss_service import OSSService
 from app.services.forecast_alert_service import (
     ensure_forecast_alert_schema,
     list_ai_forecasts,
@@ -42,11 +46,17 @@ from app.services.forecast_alert_service import (
     save_manual_forecast,
     save_promotion_events,
 )
+from app.services.yonyou_procurement_cache_service import (
+    ensure_procurement_cache_schema,
+    load_procurement_document_cache,
+    procurement_document_cache_needs_refresh,
+    sync_procurement_document_cache,
+)
 from app.services.yonyou_procurement_service import (
     YonyouRequestError,
     is_procurement_yonyou_configured,
+    load_scrap_reference_options,
     launch_procurement_document,
-    query_procurement_document_rows,
 )
 from scripts.yonyou_inventory_sync import (
     AppConfig,
@@ -70,12 +80,16 @@ from scripts.yonyou_inventory_sync import (
 router = APIRouter()
 engine = None
 schema_ready = False
+dashboard_user_schema_ready = False
 project_root = Path(__file__).resolve().parents[2]
 yonyou_sync_config_path = project_root / "config" / "yonyou_inventory_sync.yaml"
 dashboard_users_config_path = project_root / "config" / "bi_dashboard_users.local.yaml"
 DASHBOARD_SESSION_COOKIE = "polaris_session"
 DASHBOARD_SESSION_MAX_AGE = 60 * 60 * 24 * 14
 DASHBOARD_DEFAULT_PATH = "/financial/bi-dashboard"
+DASHBOARD_SESSION_ME_API_PATH = "/financial/bi-dashboard/api/session/me"
+DASHBOARD_USER_MANAGEMENT_API_PATH = "/financial/bi-dashboard/api/user-management"
+DASHBOARD_REGISTER_API_PATH = "/financial/bi-dashboard/register"
 DASHBOARD_EDITOR_PATH = "/financial/bi-dashboard/editor"
 AUDIT_LOG_ENTRY_PATH = "/financial/bi-dashboard/audit-logs"
 AUDIT_LOG_API_PATH = "/financial/bi-dashboard/api/audit-logs"
@@ -86,12 +100,15 @@ METRIC_DICTIONARY_API_PATH = "/financial/bi-dashboard/api/metric-dictionary"
 PROCUREMENT_ARRIVAL_ENTRY_PATH = "/financial/bi-dashboard/procurement-arrivals"
 PROCUREMENT_ARRIVAL_API_PATH = "/financial/bi-dashboard/api/procurement-arrivals"
 PROCUREMENT_SUPPLY_API_PATH = "/financial/bi-dashboard/api/procurement-supply"
+PROCUREMENT_SUPPLY_SYNC_API_PATH = "/financial/bi-dashboard/api/procurement-supply/sync"
 PROCUREMENT_SUPPLY_SERIAL_IMPORT_API_PATH = "/financial/bi-dashboard/api/procurement-supply/serial-import-preview"
 INVENTORY_FLOW_ENTRY_PATH = "/financial/bi-dashboard/inventory-flows"
 INVENTORY_FLOW_API_PATH = "/financial/bi-dashboard/api/inventory-flows"
 INVENTORY_FLOW_LIVE_STOCK_API_PATH = "/financial/bi-dashboard/api/inventory-flows/live-stock"
 INVENTORY_FLOW_RULE_API_PATH = "/financial/bi-dashboard/api/inventory-flows/rules"
 INVENTORY_FLOW_TASK_API_PATH = "/financial/bi-dashboard/api/inventory-flows/tasks"
+INVENTORY_FLOW_SCHEDULE_API_PATH = "/financial/bi-dashboard/api/inventory-flows/schedules"
+INVENTORY_FLOW_REPORT_PUBLIC_PATH = "/financial/bi-dashboard/public/report-assets"
 TASK_CENTER_API_PATH = "/financial/bi-dashboard/api/task-center"
 TASK_CENTER_ITEM_API_PATH = "/financial/bi-dashboard/api/task-center/items"
 RECONCILIATION_CENTER_API_PATH = "/financial/bi-dashboard/api/reconciliation-center"
@@ -106,15 +123,26 @@ DATA_AGENT_REPORTS_API_PATH = "/financial/bi-dashboard/api/data-agent/reports"
 DATA_AGENT_REPORT_GENERATE_API_PATH = "/financial/bi-dashboard/api/data-agent/reports/generate"
 SYNC_SCHEDULE_KEY = "raw_yonyou_sync_default"
 SYNC_SCHEDULE_JOB_ID = "bi_raw_yonyou_sync"
+PROCUREMENT_DOCUMENT_SYNC_JOB_ID = "bi_yonyou_procurement_document_sync"
+PROCUREMENT_DOCUMENT_SYNC_INTERVAL_MINUTES = 5
 DATA_AGENT_WEEKLY_JOB_ID = "bi_data_agent_weekly_report"
 DATA_AGENT_MONTHLY_JOB_ID = "bi_data_agent_monthly_report"
+INVENTORY_FLOW_SCHEDULE_JOB_PREFIX = "bi_inventory_flow_schedule_"
 SYNC_SCHEDULER_TIMEZONE = "Asia/Shanghai"
 sync_scheduler: BackgroundScheduler | None = None
 sync_scheduler_lock = threading.RLock()
 sync_run_lock = threading.Lock()
+procurement_document_sync_lock = threading.Lock()
+inventory_flow_schedule_run_lock = threading.Lock()
 inventory_live_stock_cache_lock = threading.RLock()
 inventory_live_stock_cache: Dict[str, Dict[str, Any]] = {}
 INVENTORY_LIVE_STOCK_CACHE_TTL_SECONDS = 90
+INVENTORY_FLOW_SCHEDULE_EXPORT_DIR = project_root / "reports" / "inventory_flow_schedule"
+INVENTORY_FLOW_SCHEDULE_DEFAULT_WEBHOOK = (
+    "https://oapi.dingtalk.com/robot/send?access_token=1b3ee9eca654ae48c53cb02d71c624b72a6fe2f20f53f916d614409dadd86c19"
+)
+INVENTORY_FLOW_SCHEDULE_DEFAULT_SECRET = "SECcfbbb189846bb46f8486f9e0964cdffc24e4fb489a9d29745ca3cb04be29159f"
+INVENTORY_FLOW_SCHEDULE_REPORT_URL_EXPIRE_SECONDS = 600
 PREFERRED_SALES_VIEW_NAME = "销售/退货看板"
 PREFERRED_SALES_VIEW_DESCRIPTION = "基于销售清洗表预置的销售与退货经营看板"
 PREFERRED_INVENTORY_VIEW_NAME = "库存清洗看板"
@@ -126,6 +154,36 @@ DATA_AGENT_API_PORT = 18080
 DATA_AGENT_UI_PORT = 18501
 DATA_AGENT_API_URL = f"http://127.0.0.1:{DATA_AGENT_API_PORT}"
 DATA_AGENT_UI_URL = f"http://127.0.0.1:{DATA_AGENT_UI_PORT}"
+
+DASHBOARD_ROLE_NAMES: Tuple[str, ...] = (
+    "管理员",
+    "公司高管",
+    "运维",
+    "采购主管",
+    "采购专员",
+    "仓储主管",
+    "仓储专员",
+    "财务",
+    "售后退货专员",
+    "生产主管",
+    "生产专员",
+)
+
+DASHBOARD_MODULE_OPTIONS: Tuple[Dict[str, str], ...] = (
+    {"value": "metrics", "label": "BI看板", "default_path": "/workspace"},
+    {"value": "procurement-arrivals", "label": "采购供应", "default_path": "/operations/procurement-arrivals"},
+    {"value": "after-sales-repair", "label": "售后维修", "default_path": "/operations/after-sales-repair"},
+    {"value": "inventory-flows", "label": "库存流转", "default_path": "/operations/inventory-flows"},
+    {"value": "master-data", "label": "基础数据", "default_path": "/governance/master-data"},
+    {"value": "task-center", "label": "任务中心", "default_path": "/operations/task-center"},
+    {"value": "reconciliation-center", "label": "对账补偿", "default_path": "/operations/reconciliation-center"},
+    {"value": "refurb-production", "label": "翻新协同", "default_path": "/operations/refurb-production"},
+    {"value": "data-agent", "label": "数据分析 Agent", "default_path": "/analysis/data-agent"},
+)
+
+DASHBOARD_MODULE_OPTION_MAP: Dict[str, Dict[str, str]] = {
+    item["value"]: item for item in DASHBOARD_MODULE_OPTIONS
+}
 
 WIDGET_TYPES: Dict[str, str] = {
     "metric": "指标卡",
@@ -353,6 +411,411 @@ def load_dashboard_users() -> Dict[str, str]:
     return users or fallback
 
 
+def normalize_dashboard_role_name(value: Any, *, fallback: str = "运维") -> str:
+    candidate = str(value or "").strip()
+    if candidate in DASHBOARD_ROLE_NAMES:
+        return candidate
+    lowered = candidate.lower()
+    if lowered in {"admin", "administrator", "super_admin", "superadmin"}:
+        return "管理员"
+    return fallback if fallback in DASHBOARD_ROLE_NAMES else "运维"
+
+
+def default_dashboard_role_name(username: str, index: int | None = None) -> str:
+    lowered = username.lower()
+    if lowered == "bi_admin" or lowered.startswith("admin") or lowered.endswith("admin"):
+        return "管理员"
+    if index == 0:
+        return "管理员"
+    return "运维"
+
+
+def normalize_dashboard_module_permissions(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    raw = value
+    if isinstance(value, str):
+        text_value = value.strip()
+        if not text_value:
+            return []
+        try:
+            raw = json.loads(text_value)
+        except Exception:
+            raw = [item.strip() for item in text_value.split(",")]
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+    allowed_values = set(DASHBOARD_MODULE_OPTION_MAP.keys())
+    normalized: List[str] = []
+    for item in raw:
+        candidate = str(item or "").strip()
+        if not candidate or candidate not in allowed_values or candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return normalized
+
+
+def resolve_dashboard_default_home_path(
+    value: Any,
+    module_permissions: Sequence[str] | None = None,
+) -> str:
+    permissions = [item for item in (module_permissions or []) if item in DASHBOARD_MODULE_OPTION_MAP]
+    candidate = str(value or "").strip()
+    if permissions:
+        if candidate.startswith("/"):
+            for permission_key in permissions:
+                if DASHBOARD_MODULE_OPTION_MAP[permission_key]["default_path"] == candidate:
+                    return candidate
+        for option in DASHBOARD_MODULE_OPTIONS:
+            if option["value"] in permissions:
+                return option["default_path"]
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    return "/workspace"
+
+
+def serialize_dashboard_module_permissions(module_permissions: Sequence[str]) -> str | None:
+    normalized = normalize_dashboard_module_permissions(list(module_permissions))
+    if not normalized:
+        return None
+    return json.dumps(normalized, ensure_ascii=False)
+
+
+def load_dashboard_bootstrap_users() -> List[Dict[str, Any]]:
+    raw = load_dashboard_auth_config()
+    raw_users = raw.get("users") if isinstance(raw.get("users"), list) else []
+    candidates: List[Dict[str, Any]] = []
+    if raw_users:
+        for index, item in enumerate(raw_users):
+            if not isinstance(item, dict):
+                continue
+            username = str(item.get("username") or "").strip()
+            password = str(item.get("password") or "")
+            if not username or not password:
+                continue
+            role_name = normalize_dashboard_role_name(
+                item.get("role_name") or item.get("role"),
+                fallback=default_dashboard_role_name(username, index),
+            )
+            is_admin = bool(item.get("is_admin")) or role_name == "管理员"
+            candidates.append(
+                {
+                    "username": username,
+                    "password": password,
+                    "display_name": str(item.get("display_name") or item.get("name") or username).strip() or username,
+                    "role_name": "管理员" if is_admin else role_name,
+                    "is_admin": is_admin,
+                    "note": str(item.get("note") or "bootstrap from yaml").strip(),
+                }
+            )
+    if candidates:
+        return candidates
+    fallback_users = load_dashboard_users()
+    items: List[Dict[str, Any]] = []
+    for index, (username, password) in enumerate(fallback_users.items()):
+        role_name = default_dashboard_role_name(username, index)
+        items.append(
+            {
+                "username": username,
+                "password": password,
+                "display_name": "系统管理员" if role_name == "管理员" else username,
+                "role_name": role_name,
+                "is_admin": role_name == "管理员",
+                "note": "bootstrap fallback",
+            }
+        )
+    return items
+
+
+def hash_dashboard_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    iterations = 390000
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        str(password or "").encode("utf-8"),
+        salt.encode("utf-8"),
+        iterations,
+    )
+    digest_text = urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return f"pbkdf2_sha256${iterations}${salt}${digest_text}"
+
+
+def verify_dashboard_password(password: str, stored_value: str) -> bool:
+    raw_stored = str(stored_value or "")
+    if raw_stored.startswith("pbkdf2_sha256$"):
+        try:
+            _, iterations_text, salt, digest_text = raw_stored.split("$", 3)
+            iterations = int(iterations_text)
+            expected = hashlib.pbkdf2_hmac(
+                "sha256",
+                str(password or "").encode("utf-8"),
+                salt.encode("utf-8"),
+                iterations,
+            )
+            encoded_expected = urlsafe_b64encode(expected).decode("ascii").rstrip("=")
+            return secrets.compare_digest(encoded_expected, digest_text)
+        except Exception:
+            return False
+    return secrets.compare_digest(str(password or ""), raw_stored)
+
+
+def ensure_dashboard_user_schema() -> None:
+    global dashboard_user_schema_ready
+    if dashboard_user_schema_ready:
+        return
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_dashboard_user_account (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    username VARCHAR(64) NOT NULL,
+                    email VARCHAR(160) NULL,
+                    display_name VARCHAR(128) NOT NULL DEFAULT '',
+                    password_hash VARCHAR(255) NOT NULL,
+                    role_name VARCHAR(64) NOT NULL DEFAULT '运维',
+                    is_admin TINYINT(1) NOT NULL DEFAULT 0,
+                    is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    access_granted TINYINT(1) NOT NULL DEFAULT 1,
+                    module_permissions_json TEXT NULL,
+                    default_home_path VARCHAR(255) NULL,
+                    must_change_password TINYINT(1) NOT NULL DEFAULT 0,
+                    note TEXT NULL,
+                    source_type VARCHAR(16) NOT NULL DEFAULT 'manual',
+                    last_login_at DATETIME NULL,
+                    password_updated_at DATETIME NULL,
+                    registered_at DATETIME NULL,
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_dashboard_user_account_username (username),
+                    INDEX idx_bi_dashboard_user_account_enabled (is_enabled, is_admin),
+                    INDEX idx_bi_dashboard_user_account_role (role_name, is_enabled)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        column_names = {
+            str(value or "").strip()
+            for value in conn.execute(
+                text(
+                    """
+                    SELECT COLUMN_NAME
+                    FROM information_schema.columns
+                    WHERE table_schema = DATABASE()
+                      AND table_name = 'bi_dashboard_user_account'
+                    """
+                )
+            ).scalars().all()
+        }
+        if "email" not in column_names:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE bi_dashboard_user_account
+                    ADD COLUMN email VARCHAR(160) NULL AFTER username
+                    """
+                )
+            )
+        if "access_granted" not in column_names:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE bi_dashboard_user_account
+                    ADD COLUMN access_granted TINYINT(1) NOT NULL DEFAULT 1 AFTER is_enabled
+                    """
+                )
+            )
+        if "module_permissions_json" not in column_names:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE bi_dashboard_user_account
+                    ADD COLUMN module_permissions_json TEXT NULL AFTER access_granted
+                    """
+                )
+            )
+        if "default_home_path" not in column_names:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE bi_dashboard_user_account
+                    ADD COLUMN default_home_path VARCHAR(255) NULL AFTER module_permissions_json
+                    """
+                )
+            )
+        if "must_change_password" not in column_names:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE bi_dashboard_user_account
+                    ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0 AFTER default_home_path
+                    """
+                )
+            )
+        if "registered_at" not in column_names:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE bi_dashboard_user_account
+                    ADD COLUMN registered_at DATETIME NULL AFTER password_updated_at
+                    """
+                )
+            )
+        index_names = {
+            str(row.get("Key_name") or "").strip()
+            for row in conn.execute(text("SHOW INDEX FROM bi_dashboard_user_account")).mappings().all()
+            if row.get("Key_name")
+        }
+        if "uk_bi_dashboard_user_account_email" not in index_names:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE bi_dashboard_user_account
+                    ADD UNIQUE KEY uk_bi_dashboard_user_account_email (email)
+                    """
+                )
+            )
+        existing_usernames = {
+            str(value or "").strip()
+            for value in conn.execute(text("SELECT username FROM bi_dashboard_user_account")).scalars().all()
+        }
+        for seed_user in load_dashboard_bootstrap_users():
+            username = str(seed_user.get("username") or "").strip()
+            if not username or username in existing_usernames:
+                continue
+            role_name = normalize_dashboard_role_name(
+                seed_user.get("role_name"),
+                fallback=default_dashboard_role_name(username),
+            )
+            is_admin = bool(seed_user.get("is_admin")) or role_name == "管理员"
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO bi_dashboard_user_account(
+                        username, email, display_name, password_hash, role_name,
+                        is_admin, is_enabled, access_granted, note, source_type,
+                        password_updated_at, registered_at, created_by, updated_by
+                    ) VALUES (
+                        :username, :email, :display_name, :password_hash, :role_name,
+                        :is_admin, 1, 1, :note, 'bootstrap',
+                        :password_updated_at, NULL, 'bootstrap', 'bootstrap'
+                    )
+                    """
+                ),
+                {
+                    "username": username[:64],
+                    "email": None,
+                    "display_name": str(seed_user.get("display_name") or username).strip()[:128] or username,
+                    "password_hash": hash_dashboard_password(str(seed_user.get("password") or "")),
+                    "role_name": "管理员" if is_admin else role_name,
+                    "is_admin": 1 if is_admin else 0,
+                    "note": (str(seed_user.get("note") or "").strip() or None),
+                    "password_updated_at": datetime.now(),
+                },
+            )
+            existing_usernames.add(username)
+    dashboard_user_schema_ready = True
+
+
+def fetch_dashboard_user_row(
+    *,
+    username: str | None = None,
+    user_id: int | None = None,
+    enabled_only: bool = False,
+) -> Dict[str, Any] | None:
+    ensure_dashboard_user_schema()
+    if not username and user_id is None:
+        return None
+    where_clause = "username = :username" if username else "id = :user_id"
+    params: Dict[str, Any] = {"username": username, "user_id": user_id}
+    if enabled_only:
+        where_clause += " AND is_enabled = 1"
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                SELECT id, username, email, display_name, password_hash, role_name, is_admin, is_enabled,
+                       access_granted, module_permissions_json, default_home_path, must_change_password,
+                       note, source_type, last_login_at, password_updated_at,
+                       registered_at,
+                       created_by, updated_by, created_at, updated_at
+                FROM bi_dashboard_user_account
+                WHERE {where_clause}
+                LIMIT 1
+                """
+            ),
+            params,
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def build_dashboard_user_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+    username = str(row.get("username") or "").strip()
+    access_granted = bool(row.get("access_granted", True))
+    module_permissions = normalize_dashboard_module_permissions(row.get("module_permissions_json"))
+    default_home_path = resolve_dashboard_default_home_path(
+        row.get("default_home_path"),
+        module_permissions,
+    )
+    raw_role_name = str(row.get("role_name") or "").strip()
+    role_name = (
+        normalize_dashboard_role_name(
+            raw_role_name,
+            fallback=default_dashboard_role_name(username),
+        )
+        if raw_role_name
+        else ("" if not access_granted else default_dashboard_role_name(username))
+    )
+    is_admin = bool(row.get("is_admin")) or role_name == "管理员"
+    return {
+        "id": int(row.get("id") or 0),
+        "username": username,
+        "email": str(row.get("email") or "").strip(),
+        "display_name": str(row.get("display_name") or username).strip() or username,
+        "role_name": "管理员" if is_admin else role_name,
+        "is_admin": is_admin,
+        "is_enabled": bool(row.get("is_enabled")),
+        "access_granted": access_granted,
+        "module_permissions": module_permissions,
+        "default_home_path": default_home_path,
+        "must_change_password": bool(row.get("must_change_password")),
+        "note": str(row.get("note") or ""),
+        "source_type": str(row.get("source_type") or "manual"),
+        "last_login_at": to_plain(row.get("last_login_at")),
+        "password_updated_at": to_plain(row.get("password_updated_at")),
+        "registered_at": to_plain(row.get("registered_at")),
+        "created_by": str(row.get("created_by") or ""),
+        "updated_by": str(row.get("updated_by") or ""),
+        "created_at": to_plain(row.get("created_at")),
+        "updated_at": to_plain(row.get("updated_at")),
+    }
+
+
+def get_dashboard_user_profile(username: str) -> Dict[str, Any] | None:
+    row = fetch_dashboard_user_row(username=username)
+    if not row:
+        return None
+    return build_dashboard_user_payload(row)
+
+
+def touch_dashboard_user_last_login(username: str) -> None:
+    ensure_dashboard_user_schema()
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE bi_dashboard_user_account
+                SET last_login_at = :last_login_at,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE username = :username
+                """
+            ),
+            {"username": username, "last_login_at": datetime.now()},
+        )
+
+
 def dashboard_session_secret() -> str:
     raw = load_dashboard_auth_config()
     configured = str(((raw.get("settings") or {}).get("session_secret")) or os.getenv("BI_DASH_SESSION_SECRET") or "").strip()
@@ -363,8 +826,30 @@ def dashboard_session_secret() -> str:
 
 
 def authenticate_dashboard_user(username: str, password: str) -> str | None:
+    try:
+        login_identity = str(username or "").strip()
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, username, email, display_name, password_hash, role_name, is_admin, is_enabled,
+                           access_granted, note, source_type, last_login_at, password_updated_at,
+                           registered_at, created_by, updated_by, created_at, updated_at
+                    FROM bi_dashboard_user_account
+                    WHERE is_enabled = 1
+                      AND (username = :identity OR email = :identity)
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """
+                ),
+                {"identity": login_identity},
+            ).mappings().first()
+        if row and verify_dashboard_password(password, str(row.get("password_hash") or "")):
+            return str(row.get("username") or "").strip() or login_identity
+    except Exception as exc:
+        app_logger.warning("Dashboard user auth via DB failed, fallback to yaml: %s", exc)
     expected = load_dashboard_users().get(username)
-    if expected and secrets.compare_digest(password, expected):
+    if expected and verify_dashboard_password(password, expected):
         return username
     return None
 
@@ -401,9 +886,15 @@ def parse_dashboard_session(token: str | None) -> str | None:
         return None
     if expires_at < int(time.time()):
         return None
-    if username not in load_dashboard_users():
-        return None
-    return username
+    try:
+        row = fetch_dashboard_user_row(username=username, enabled_only=True)
+        if row:
+            return username
+    except Exception as exc:
+        app_logger.warning("Dashboard session validation via DB failed, fallback to yaml: %s", exc)
+    if username in load_dashboard_users():
+        return username
+    return None
 
 
 def parse_basic_auth(request: Request) -> str | None:
@@ -434,6 +925,14 @@ def require_auth(request: Request) -> str:
         detail="未登录或会话已失效",
         headers={"WWW-Authenticate": "Basic"},
     )
+
+
+def require_admin_auth(request: Request) -> str:
+    username = require_auth(request)
+    profile = get_dashboard_user_profile(username)
+    if profile and profile.get("is_admin") and profile.get("access_granted", True):
+        return username
+    raise HTTPException(status_code=403, detail="仅管理员可访问该功能")
 
 
 def sanitize_next_path(raw_value: str | None) -> str:
@@ -1250,6 +1749,115 @@ def to_number(value: Any) -> float | None:
         return None
 
 
+def validate_dashboard_username(username: str) -> str:
+    normalized = str(username or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="用户名不能为空")
+    if len(normalized) < 3 or len(normalized) > 64:
+        raise HTTPException(status_code=400, detail="用户名长度需在 3 到 64 个字符之间")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+    if any(char not in allowed for char in normalized):
+        raise HTTPException(status_code=400, detail="用户名仅支持字母、数字、点、下划线和短横线")
+    return normalized
+
+
+def validate_dashboard_email(email: Any, *, required: bool) -> str:
+    normalized = str(email or "").strip().lower()
+    if not normalized:
+        if required:
+            raise HTTPException(status_code=400, detail="请输入邮箱地址")
+        return ""
+    if len(normalized) > 160:
+        raise HTTPException(status_code=400, detail="邮箱长度不能超过 160 个字符")
+    if not re.fullmatch(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$", normalized):
+        raise HTTPException(status_code=400, detail="邮箱格式不正确")
+    return normalized
+
+
+def validate_dashboard_password(password: str, *, required: bool) -> str:
+    normalized = str(password or "")
+    if not normalized:
+        if required:
+            raise HTTPException(status_code=400, detail="密码不能为空")
+        return ""
+    if len(normalized) < 8:
+        raise HTTPException(status_code=400, detail="密码长度至少为 8 位")
+    return normalized
+
+
+def normalize_dashboard_user_note(value: Any) -> str:
+    return str(value or "").strip()[:1000]
+
+
+def generate_dashboard_username_for_email(conn: Any, email: str) -> str:
+    local_part = str(email or "").split("@", 1)[0].strip().lower()
+    slug = re.sub(r"[^a-z0-9._-]+", ".", local_part).strip(".-_")
+    slug = slug or "user"
+    base = f"user.{slug}"[:54].rstrip(".-_") or "user"
+
+    for attempt in range(100):
+        candidate = base if attempt == 0 else f"{base[:54]}-{attempt}"
+        exists = conn.execute(
+            text("SELECT id FROM bi_dashboard_user_account WHERE username = :username LIMIT 1"),
+            {"username": candidate},
+        ).scalar()
+        if not exists:
+            return candidate
+
+    raise HTTPException(status_code=500, detail="自动生成账号失败，请稍后重试")
+
+
+def count_enabled_admin_users(*, exclude_user_id: int | None = None) -> int:
+    ensure_dashboard_user_schema()
+    sql = """
+        SELECT COUNT(*)
+        FROM bi_dashboard_user_account
+        WHERE is_admin = 1 AND is_enabled = 1 AND access_granted = 1
+    """
+    params: Dict[str, Any] = {}
+    if exclude_user_id is not None:
+        sql += " AND id <> :exclude_user_id"
+        params["exclude_user_id"] = int(exclude_user_id)
+    with get_engine().connect() as conn:
+        return int(conn.execute(text(sql), params).scalar() or 0)
+
+
+def list_dashboard_user_accounts() -> List[Dict[str, Any]]:
+    ensure_dashboard_user_schema()
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, username, email, display_name, role_name, is_admin, is_enabled,
+                       access_granted, module_permissions_json, default_home_path, must_change_password,
+                       note, source_type, last_login_at, password_updated_at,
+                       registered_at,
+                       created_by, updated_by, created_at, updated_at
+                FROM bi_dashboard_user_account
+                ORDER BY access_granted ASC, is_admin DESC, is_enabled DESC, updated_at DESC, id DESC
+                """
+            )
+        ).mappings().all()
+    return [build_dashboard_user_payload(dict(row)) for row in rows]
+
+
+def build_dashboard_user_management_response(*, current_username: str) -> Dict[str, Any]:
+    items = list_dashboard_user_accounts()
+    return {
+        "current_user": get_dashboard_user_profile(current_username),
+        "items": items,
+        "role_options": [{"value": role_name, "label": role_name} for role_name in DASHBOARD_ROLE_NAMES],
+        "module_options": list(DASHBOARD_MODULE_OPTIONS),
+        "summary": {
+            "total_count": len(items),
+            "enabled_count": sum(1 for item in items if item.get("is_enabled")),
+            "admin_count": sum(1 for item in items if item.get("is_admin")),
+            "pending_count": sum(1 for item in items if not item.get("access_granted")),
+            "role_count": len({str(item.get("role_name") or "") for item in items if str(item.get("role_name") or "").strip()}),
+        },
+    }
+
+
 def parse_date_or_none(raw_value: str | None) -> date | None:
     if not raw_value:
         return None
@@ -1565,12 +2173,14 @@ def get_sync_scheduler() -> BackgroundScheduler:
 def sync_scheduler_snapshot() -> Dict[str, Any]:
     scheduler = sync_scheduler
     job = scheduler.get_job(SYNC_SCHEDULE_JOB_ID) if scheduler and scheduler.running else None
+    procurement_job = scheduler.get_job(PROCUREMENT_DOCUMENT_SYNC_JOB_ID) if scheduler and scheduler.running else None
     weekly_job = scheduler.get_job(DATA_AGENT_WEEKLY_JOB_ID) if scheduler and scheduler.running else None
     monthly_job = scheduler.get_job(DATA_AGENT_MONTHLY_JOB_ID) if scheduler and scheduler.running else None
     return {
         "scheduler_running": bool(scheduler and scheduler.running),
         "is_running": sync_run_lock.locked(),
         "next_run_at": to_plain(job.next_run_time) if job and job.next_run_time else None,
+        "procurement_sync_next_run_at": to_plain(procurement_job.next_run_time) if procurement_job and procurement_job.next_run_time else None,
         "weekly_report_next_run_at": to_plain(weekly_job.next_run_time) if weekly_job and weekly_job.next_run_time else None,
         "monthly_report_next_run_at": to_plain(monthly_job.next_run_time) if monthly_job and monthly_job.next_run_time else None,
         "timezone": SYNC_SCHEDULER_TIMEZONE,
@@ -1582,6 +2192,7 @@ def refresh_sync_scheduler() -> Dict[str, Any]:
     current_engine = get_engine()
     with current_engine.connect() as conn:
         schedule = load_sync_schedule(conn)
+        inventory_flow_schedule_tasks = load_inventory_flow_schedule_tasks(conn)
 
     scheduler = get_sync_scheduler()
     with sync_scheduler_lock:
@@ -1590,12 +2201,27 @@ def refresh_sync_scheduler() -> Dict[str, Any]:
         existing_job = scheduler.get_job(SYNC_SCHEDULE_JOB_ID)
         if existing_job is not None:
             scheduler.remove_job(SYNC_SCHEDULE_JOB_ID)
+        procurement_job = scheduler.get_job(PROCUREMENT_DOCUMENT_SYNC_JOB_ID)
+        if procurement_job is not None:
+            scheduler.remove_job(PROCUREMENT_DOCUMENT_SYNC_JOB_ID)
+        for job in scheduler.get_jobs():
+            if str(job.id).startswith(INVENTORY_FLOW_SCHEDULE_JOB_PREFIX):
+                scheduler.remove_job(job.id)
         if schedule["is_enabled"]:
             trigger = CronTrigger.from_crontab(schedule["cron_expr"], timezone=scheduler_timezone())
             scheduler.add_job(
                 lambda: execute_raw_sync("scheduled"),
                 trigger=trigger,
                 id=SYNC_SCHEDULE_JOB_ID,
+                replace_existing=True,
+            )
+        if is_procurement_yonyou_configured():
+            scheduler.add_job(
+                lambda: execute_procurement_document_sync("scheduled"),
+                trigger="interval",
+                minutes=PROCUREMENT_DOCUMENT_SYNC_INTERVAL_MINUTES,
+                next_run_time=datetime.now() + timedelta(seconds=15),
+                id=PROCUREMENT_DOCUMENT_SYNC_JOB_ID,
                 replace_existing=True,
             )
         for job_id in (DATA_AGENT_WEEKLY_JOB_ID, DATA_AGENT_MONTHLY_JOB_ID):
@@ -1613,6 +2239,15 @@ def refresh_sync_scheduler() -> Dict[str, Any]:
             id=DATA_AGENT_MONTHLY_JOB_ID,
             replace_existing=True,
         )
+        for task in inventory_flow_schedule_tasks:
+            if not task["is_enabled"]:
+                continue
+            scheduler.add_job(
+                lambda key=task["task_key"]: execute_inventory_flow_schedule_task(key, "scheduled"),
+                trigger=CronTrigger.from_crontab(task["cron_expr"], timezone=scheduler_timezone()),
+                id=inventory_flow_schedule_job_id(task["task_key"]),
+                replace_existing=True,
+            )
     runtime = sync_scheduler_snapshot()
     return {**schedule, **runtime}
 
@@ -1640,6 +2275,66 @@ def stop_sync_scheduler() -> None:
 
 def serialize_sync_schedule(schedule: Dict[str, Any]) -> Dict[str, Any]:
     return {**schedule, **sync_scheduler_snapshot()}
+
+
+def execute_procurement_document_sync(
+    trigger: str = "manual",
+    *,
+    limit: int = 200,
+    mode: str = "incremental",
+    page_size: int | None = None,
+    max_pages: int | None = None,
+) -> Dict[str, Any]:
+    ensure_schema()
+    if not is_procurement_yonyou_configured():
+        return {
+            "status": "skipped",
+            "message": "Yonyou procurement config missing",
+            "synced_at": None,
+            "modules": {},
+        }
+    if not procurement_document_sync_lock.acquire(blocking=False):
+        return {
+            "status": "busy",
+            "message": "Procurement document sync already running",
+            "synced_at": None,
+            "modules": {},
+        }
+    try:
+        result = sync_procurement_document_cache(
+            get_engine(),
+            limit=limit,
+            trigger=trigger,
+            mode=mode,
+            page_size=page_size,
+            max_pages=max_pages,
+        )
+        app_logger.info("Procurement document sync completed. trigger=%s result=%s", trigger, result)
+        return result
+    finally:
+        procurement_document_sync_lock.release()
+
+
+def load_procurement_supply_rows_from_db(*, limit: int = 20, auto_refresh: bool = True) -> Dict[str, Any]:
+    ensure_schema()
+    current_engine = get_engine()
+    cache_snapshot = load_procurement_document_cache(current_engine, limit=limit)
+    sync_summary = cache_snapshot.get("sync_summary") or {}
+    should_refresh = bool(
+        auto_refresh
+        and sync_summary.get("is_configured")
+        and procurement_document_cache_needs_refresh(current_engine)
+    )
+    if should_refresh:
+        try:
+            execute_procurement_document_sync("page_load", limit=max(limit * 4, 80))
+            cache_snapshot = load_procurement_document_cache(current_engine, limit=limit)
+        except Exception as exc:
+            app_logger.warning("Procurement document cache refresh failed during page load: %s", exc)
+            sync_summary = dict(sync_summary)
+            sync_summary["last_error"] = str(exc)
+            cache_snapshot["sync_summary"] = sync_summary
+    return cache_snapshot
 
 
 def validate_sync_schedule_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2537,13 +3232,871 @@ def procurement_supply_workflow_templates() -> List[Dict[str, Any]]:
     return [normalize_procurement_supply_workflow_template(item) for item in templates]
 
 
-def build_procurement_supply_console_payload() -> Dict[str, Any]:
-    live_rows_by_module: Dict[str, List[Dict[str, Any]]] = {}
-    if is_procurement_yonyou_configured():
+def build_procurement_workflow_instance_no(workflow_key: str) -> str:
+    timestamp = datetime.now(scheduler_timezone()).strftime("%Y%m%d%H%M%S")
+    suffix = secrets.token_hex(2).upper()
+    compact_key = re.sub(r"[^A-Z0-9]", "", str(workflow_key or "").upper())[:8] or "FLOW"
+    return f"PSF-{compact_key}-{timestamp}-{suffix}"
+
+
+def find_first_nested_text_value(payload: Any, candidate_keys: Sequence[str]) -> str:
+    if payload in (None, "", []):
+        return ""
+    queue: List[Any] = [payload]
+    visited: set[int] = set()
+    normalized_keys = tuple(str(item or "").strip() for item in candidate_keys if str(item or "").strip())
+    while queue:
+        current = queue.pop(0)
+        current_id = id(current)
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        if isinstance(current, dict):
+            for key in normalized_keys:
+                value = current.get(key)
+                if value not in (None, "", [], {}):
+                    normalized = str(value).strip()
+                    if normalized:
+                        return normalized
+            for value in current.values():
+                if isinstance(value, (dict, list, tuple)):
+                    queue.append(value)
+        elif isinstance(current, (list, tuple)):
+            for item in current:
+                if isinstance(item, (dict, list, tuple)):
+                    queue.append(item)
+    return ""
+
+
+def normalize_procurement_workflow_document_status(document_key: str, summary: Dict[str, Any] | None) -> str:
+    item = summary if isinstance(summary, dict) else {}
+    status_text = str(item.get("status") or "").strip()
+    verifystate_text = str(item.get("verifystate") or "").strip()
+    completed_flag = str(item.get("completed") or "").strip().lower() in {"1", "true", "yes", "done"}
+    if completed_flag:
+        return "completed"
+    if document_key in {"storeout", "storein"} and (status_text == "3" or verifystate_text == "1"):
+        return "completed"
+    if verifystate_text == "2" or status_text == "1":
+        return "approved"
+    if verifystate_text == "1" or status_text == "3":
+        return "pending"
+    return "draft"
+
+
+def procurement_workflow_document_status_label(status: str) -> str:
+    return {
+        "completed": "已完成",
+        "approved": "已审批",
+        "pending": "审批中",
+        "draft": "草稿",
+        "failed": "执行失败",
+    }.get(str(status or "").strip(), str(status or "").strip() or "--")
+
+
+def procurement_workflow_instance_status_label(status: str) -> str:
+    return {
+        "running": "进行中",
+        "completed": "已完结",
+        "failed": "执行失败",
+    }.get(str(status or "").strip(), str(status or "").strip() or "--")
+
+
+def extract_procurement_workflow_pending_approver(result: Dict[str, Any] | None) -> str:
+    item = result if isinstance(result, dict) else {}
+    return find_first_nested_text_value(
+        [item.get("summary") or {}, item.get("response") or {}, item],
+        (
+            "currentApproverName",
+            "currentApprover",
+            "currentApproveName",
+            "currentApproveUserName",
+            "pendingApproverName",
+            "pendingApprover",
+            "approveUserName",
+            "approverName",
+            "approver",
+            "auditor_name",
+            "auditorName",
+            "auditor",
+        ),
+    )
+
+
+def serialize_procurement_workflow_instance_row(row: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = row if isinstance(row, dict) else {}
+    return {
+        "id": int(item.get("id") or 0),
+        "instance_no": str(item.get("instance_no") or "").strip(),
+        "workflow_key": str(item.get("workflow_key") or "").strip(),
+        "workflow_title": str(item.get("workflow_title") or "").strip(),
+        "material_code": str(item.get("material_code") or "").strip(),
+        "quantity": to_plain(item.get("quantity")),
+        "purchase_order_code": str(item.get("purchase_order_code") or "").strip(),
+        "warehouse_code": str(item.get("warehouse_code") or "").strip(),
+        "inwarehouse_code": str(item.get("inwarehouse_code") or "").strip(),
+        "bom_code": str(item.get("bom_code") or "").strip(),
+        "current_step_key": str(item.get("current_step_key") or "").strip(),
+        "current_step_title": str(item.get("current_step_title") or "").strip() or "--",
+        "current_document_key": str(item.get("current_document_key") or "").strip(),
+        "current_document_id": str(item.get("current_document_id") or "").strip(),
+        "current_document_code": str(item.get("current_document_code") or "").strip() or "--",
+        "current_document_status": str(item.get("current_document_status") or "").strip(),
+        "current_document_status_label": str(item.get("current_document_status_label") or "").strip() or "--",
+        "current_pending_approver": str(item.get("current_pending_approver") or "").strip() or "--",
+        "instance_status": str(item.get("instance_status") or "").strip(),
+        "instance_status_label": procurement_workflow_instance_status_label(item.get("instance_status")),
+        "error_message": str(item.get("error_message") or "").strip(),
+        "step_count": int(item.get("step_count") or 0),
+        "completed_step_count": int(item.get("completed_step_count") or 0),
+        "launched_by": str(item.get("launched_by") or "").strip(),
+        "launched_at": to_plain(item.get("launched_at")),
+        "updated_at": to_plain(item.get("updated_at")),
+    }
+
+
+def load_procurement_workflow_instance_snapshot(limit: int = 50) -> Dict[str, Any]:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        total_unfinished = int(
+            conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM bi_procurement_workflow_instance
+                    WHERE instance_status <> 'completed'
+                    """
+                )
+            ).scalar()
+            or 0
+        )
+        rows = conn.execute(
+            text(
+                """
+                SELECT *
+                FROM bi_procurement_workflow_instance
+                WHERE instance_status <> 'completed'
+                ORDER BY updated_at DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": max(1, min(int(limit or 50), 200))},
+        ).mappings().all()
+    items = [serialize_procurement_workflow_instance_row(dict(row)) for row in rows]
+    return {
+        "unfinished_count": total_unfinished,
+        "items": items,
+    }
+
+
+def inventory_flow_workflow_templates() -> List[Dict[str, Any]]:
+    templates = [
+        {
+            "key": "inventory_transfer_restock",
+            "title": "库存补货闭环",
+            "description": "引用采购入库单后，自动串联调拨订单、调出单和调入单，完成库存补货流转。",
+            "workflow_code": "IVF-RESTOCK-001",
+            "version": "v1.0",
+            "status": "published",
+            "default_material_code": "yscs061601",
+            "default_purchase_inbound_placeholder": "例如：CGRK202603260001",
+            "default_transfer_order_placeholder": "例如：DBDD202603260001",
+            "default_warehouse_code": "000003",
+            "default_inwarehouse_code": "15532921",
+            "bom_code": "",
+            "required_inputs": ["采购入库单号", "调入仓", "单据日期"],
+            "steps": [
+                {
+                    "key": "transfer_order",
+                    "title": "调拨订单",
+                    "description": "基于采购入库单生成调拨订单，作为库存跨仓流转起点。",
+                },
+                {
+                    "key": "storeout",
+                    "title": "调出单",
+                    "description": "根据调拨订单下推出库单据，进入执行环节。",
+                },
+                {
+                    "key": "storein",
+                    "title": "调入单",
+                    "description": "依据调出单自动下推调入单，完成库存流转闭环。",
+                },
+            ],
+        },
+        {
+            "key": "inventory_morphology_transfer",
+            "title": "形态转换后调拨",
+            "description": "先做形态转换，再自动走调拨订单、调出单和调入单，适合翻新半成品转成品后的库存流转。",
+            "workflow_code": "IVF-MORPH-001",
+            "version": "v1.0",
+            "status": "published",
+            "default_material_code": "yscs061601",
+            "default_purchase_inbound_placeholder": "例如：CGRK202603260001",
+            "default_transfer_order_placeholder": "例如：DBDD202603260001",
+            "default_warehouse_code": "000003",
+            "default_inwarehouse_code": "15532921",
+            "bom_code": "BOM20260301",
+            "required_inputs": ["采购入库单号", "形态转换 BOM", "计划数量", "调入仓", "单据日期"],
+            "steps": [
+                {
+                    "key": "morphology_conversion",
+                    "title": "形态转换",
+                    "description": "依据采购入库单和 BOM 完成形态转换。",
+                },
+                {
+                    "key": "transfer_order",
+                    "title": "调拨订单",
+                    "description": "形态转换完成后，继续生成调拨订单。",
+                },
+                {
+                    "key": "storeout",
+                    "title": "调出单",
+                    "description": "按调拨订单生成调出单。",
+                },
+                {
+                    "key": "storein",
+                    "title": "调入单",
+                    "description": "依据调出单自动下推调入单。",
+                },
+            ],
+        },
+        {
+            "key": "inventory_transfer_execution",
+            "title": "调拨执行闭环",
+            "description": "对已存在的调拨订单继续执行调出单和调入单，适合补单或继续推进未完结流转。",
+            "workflow_code": "IVF-TRANSFER-001",
+            "version": "v1.0",
+            "status": "published",
+            "default_material_code": "yscs061601",
+            "default_purchase_inbound_placeholder": "",
+            "default_transfer_order_placeholder": "例如：DBDD202603260001",
+            "default_warehouse_code": "",
+            "default_inwarehouse_code": "",
+            "bom_code": "",
+            "required_inputs": ["调拨订单单号", "单据日期"],
+            "steps": [
+                {
+                    "key": "storeout",
+                    "title": "调出单",
+                    "description": "按调拨订单直接执行调出。",
+                },
+                {
+                    "key": "storein",
+                    "title": "调入单",
+                    "description": "依据调出单继续生成调入单。",
+                },
+            ],
+        },
+        {
+            "key": "inventory_scrap_disposal",
+            "title": "其他出库提交流转",
+            "description": "针对已经创建好的其他出库草稿单，继续完成提交流程并纳入库存流转追踪。",
+            "workflow_code": "IVF-SCRAP-001",
+            "version": "v1.0",
+            "status": "published",
+            "default_material_code": "",
+            "default_purchase_inbound_placeholder": "",
+            "default_transfer_order_placeholder": "",
+            "default_other_outbound_placeholder": "例如：QTCK000020260402000001",
+            "default_warehouse_code": "",
+            "default_inwarehouse_code": "",
+            "bom_code": "",
+            "required_inputs": ["其他出库单号"],
+            "steps": [
+                {
+                    "key": "other_outbound_submit",
+                    "title": "其他出库提交",
+                    "description": "按其他出库单号继续提交流程，便于统一纳入库存流转执行与审批跟踪。",
+                },
+            ],
+        },
+    ]
+    for item in templates:
+        if str(item.get("key") or "").strip() != "inventory_scrap_disposal":
+            continue
+        item.update(
+            {
+                "title": "报废处理流转",
+                "description": "围绕报废场景完成报废单新增和提交，纳入库存流转统一跟踪执行进度。",
+                "default_scrap_org": "2180205793702313990",
+                "default_scrap_bustype": "2315469303289741317",
+                "default_scrap_warehouse": "2300470624660750338",
+                "default_scrap_stock_status": "2180202022719455297",
+                "required_inputs": ["物料", "报废数量", "库存组织", "交易类型", "报废仓库", "报废库存状态", "单据日期"],
+                "steps": [
+                    {
+                        "key": "scrap_create",
+                        "title": "新增报废单",
+                        "description": "根据库存组织、交易类型、仓库和库存状态生成报废单草稿。",
+                    },
+                    {
+                        "key": "scrap_submit",
+                        "title": "提交报废单",
+                        "description": "继续提交刚创建的报废单，纳入库存流转执行与审批跟踪。",
+                    },
+                ],
+            }
+        )
+        item.pop("default_other_outbound_placeholder", None)
+    return templates
+
+
+def build_inventory_workflow_instance_no(workflow_key: str) -> str:
+    timestamp = datetime.now(scheduler_timezone()).strftime("%Y%m%d%H%M%S")
+    suffix = secrets.token_hex(2).upper()
+    compact_key = re.sub(r"[^A-Z0-9]", "", str(workflow_key or "").upper())[:8] or "FLOW"
+    return f"IVF-{compact_key}-{timestamp}-{suffix}"
+
+
+def inventory_workflow_instance_status_label(status: str) -> str:
+    return {
+        "running": "进行中",
+        "completed": "已完结",
+        "failed": "执行失败",
+    }.get(str(status or "").strip(), str(status or "").strip() or "--")
+
+
+def serialize_inventory_workflow_instance_row(row: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = row if isinstance(row, dict) else {}
+    return {
+        "id": int(item.get("id") or 0),
+        "instance_no": str(item.get("instance_no") or "").strip(),
+        "workflow_key": str(item.get("workflow_key") or "").strip(),
+        "workflow_title": str(item.get("workflow_title") or "").strip(),
+        "material_code": str(item.get("material_code") or "").strip(),
+        "quantity": to_plain(item.get("quantity")),
+        "purchase_inbound_code": str(item.get("purchase_inbound_code") or "").strip(),
+        "transfer_order_code": str(item.get("transfer_order_code") or "").strip(),
+        "warehouse_code": str(item.get("warehouse_code") or "").strip(),
+        "inwarehouse_code": str(item.get("inwarehouse_code") or "").strip(),
+        "bom_code": str(item.get("bom_code") or "").strip(),
+        "current_step_key": str(item.get("current_step_key") or "").strip(),
+        "current_step_title": str(item.get("current_step_title") or "").strip() or "--",
+        "current_document_key": str(item.get("current_document_key") or "").strip(),
+        "current_document_id": str(item.get("current_document_id") or "").strip(),
+        "current_document_code": str(item.get("current_document_code") or "").strip() or "--",
+        "current_document_status": str(item.get("current_document_status") or "").strip(),
+        "current_document_status_label": str(item.get("current_document_status_label") or "").strip() or "--",
+        "current_pending_approver": str(item.get("current_pending_approver") or "").strip() or "--",
+        "instance_status": str(item.get("instance_status") or "").strip(),
+        "instance_status_label": inventory_workflow_instance_status_label(item.get("instance_status")),
+        "error_message": str(item.get("error_message") or "").strip(),
+        "step_count": int(item.get("step_count") or 0),
+        "completed_step_count": int(item.get("completed_step_count") or 0),
+        "launched_by": str(item.get("launched_by") or "").strip(),
+        "launched_at": to_plain(item.get("launched_at")),
+        "updated_at": to_plain(item.get("updated_at")),
+    }
+
+
+def load_inventory_workflow_instance_snapshot(limit: int = 50) -> Dict[str, Any]:
+    ensure_schema()
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        total_unfinished = int(
+            conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM bi_inventory_workflow_instance
+                    WHERE instance_status <> 'completed'
+                    """
+                )
+            ).scalar()
+            or 0
+        )
+        rows = conn.execute(
+            text(
+                """
+                SELECT *
+                FROM bi_inventory_workflow_instance
+                WHERE instance_status <> 'completed'
+                ORDER BY updated_at DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": max(1, min(int(limit or 50), 200))},
+        ).mappings().all()
+    items = [serialize_inventory_workflow_instance_row(dict(row)) for row in rows]
+    return {"unfinished_count": total_unfinished, "items": items}
+
+
+def create_inventory_workflow_instance(
+    conn: Any,
+    *,
+    workflow: Dict[str, Any],
+    payload: Dict[str, Any],
+    launched_by: str,
+) -> Dict[str, Any]:
+    instance_no = build_inventory_workflow_instance_no(str(workflow.get("key") or ""))
+    quantity = parse_numeric_or_zero(payload.get("quantity"))
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_inventory_workflow_instance(
+                instance_no,
+                workflow_key,
+                workflow_title,
+                material_code,
+                quantity,
+                purchase_inbound_code,
+                transfer_order_code,
+                warehouse_code,
+                inwarehouse_code,
+                bom_code,
+                current_step_key,
+                current_step_title,
+                current_document_key,
+                current_document_id,
+                current_document_code,
+                current_document_status,
+                current_document_status_label,
+                current_pending_approver,
+                instance_status,
+                error_message,
+                step_count,
+                completed_step_count,
+                launched_by,
+                launched_at
+            ) VALUES (
+                :instance_no,
+                :workflow_key,
+                :workflow_title,
+                :material_code,
+                :quantity,
+                :purchase_inbound_code,
+                :transfer_order_code,
+                :warehouse_code,
+                :inwarehouse_code,
+                :bom_code,
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                'running',
+                '',
+                :step_count,
+                0,
+                :launched_by,
+                :launched_at
+            )
+            """
+        ),
+        {
+            "instance_no": instance_no,
+            "workflow_key": str(workflow.get("key") or "").strip(),
+            "workflow_title": str(workflow.get("title") or "").strip(),
+            "material_code": str(payload.get("material_code") or workflow.get("default_material_code") or "").strip(),
+            "quantity": quantity,
+            "purchase_inbound_code": str(payload.get("purchase_inbound_code") or "").strip(),
+            "transfer_order_code": str(payload.get("transfer_order_code") or "").strip(),
+            "warehouse_code": str(payload.get("warehouse_code") or workflow.get("default_warehouse_code") or "").strip(),
+            "inwarehouse_code": str(payload.get("inwarehouse_code") or workflow.get("default_inwarehouse_code") or "").strip(),
+            "bom_code": str(payload.get("bom_code") or workflow.get("bom_code") or "").strip(),
+            "step_count": len(workflow.get("steps") or []),
+            "launched_by": str(launched_by or "").strip() or None,
+            "launched_at": datetime.now(scheduler_timezone()).replace(microsecond=0),
+        },
+    )
+    return {"id": int(result.lastrowid or 0), "instance_no": instance_no}
+
+
+def update_inventory_workflow_instance_runtime(
+    conn: Any,
+    *,
+    instance_id: int,
+    current_step_key: str,
+    current_step_title: str,
+    current_document_key: str,
+    current_document_id: str,
+    current_document_code: str,
+    current_document_status: str,
+    current_document_status_label: str,
+    current_pending_approver: str,
+    instance_status: str,
+    error_message: str,
+    completed_step_count: int,
+) -> None:
+    conn.execute(
+        text(
+            """
+            UPDATE bi_inventory_workflow_instance
+            SET current_step_key = :current_step_key,
+                current_step_title = :current_step_title,
+                current_document_key = :current_document_key,
+                current_document_id = :current_document_id,
+                current_document_code = :current_document_code,
+                current_document_status = :current_document_status,
+                current_document_status_label = :current_document_status_label,
+                current_pending_approver = :current_pending_approver,
+                instance_status = :instance_status,
+                error_message = :error_message,
+                completed_step_count = :completed_step_count,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :instance_id
+            """
+        ),
+        {
+            "instance_id": int(instance_id),
+            "current_step_key": str(current_step_key or "").strip(),
+            "current_step_title": str(current_step_title or "").strip(),
+            "current_document_key": str(current_document_key or "").strip(),
+            "current_document_id": str(current_document_id or "").strip(),
+            "current_document_code": str(current_document_code or "").strip(),
+            "current_document_status": str(current_document_status or "").strip(),
+            "current_document_status_label": str(current_document_status_label or "").strip(),
+            "current_pending_approver": str(current_pending_approver or "").strip(),
+            "instance_status": str(instance_status or "").strip() or "running",
+            "error_message": str(error_message or "").strip()[:250],
+            "completed_step_count": max(0, int(completed_step_count or 0)),
+        },
+    )
+
+
+def insert_inventory_workflow_instance_step(
+    conn: Any,
+    *,
+    instance_id: int,
+    step_order: int,
+    step_key: str,
+    step_title: str,
+    document_key: str,
+    document_id: str,
+    document_code: str,
+    document_status: str,
+    document_status_label: str,
+    pending_approver: str,
+    step_status: str,
+    detail: Dict[str, Any] | None,
+) -> None:
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_inventory_workflow_instance_step(
+                instance_id,
+                step_order,
+                step_key,
+                step_title,
+                document_key,
+                document_id,
+                document_code,
+                document_status,
+                document_status_label,
+                pending_approver,
+                step_status,
+                detail_json
+            ) VALUES (
+                :instance_id,
+                :step_order,
+                :step_key,
+                :step_title,
+                :document_key,
+                :document_id,
+                :document_code,
+                :document_status,
+                :document_status_label,
+                :pending_approver,
+                :step_status,
+                :detail_json
+            )
+            """
+        ),
+        {
+            "instance_id": int(instance_id),
+            "step_order": int(step_order),
+            "step_key": str(step_key or "").strip(),
+            "step_title": str(step_title or "").strip(),
+            "document_key": str(document_key or "").strip(),
+            "document_id": str(document_id or "").strip(),
+            "document_code": str(document_code or "").strip(),
+            "document_status": str(document_status or "").strip(),
+            "document_status_label": str(document_status_label or "").strip(),
+            "pending_approver": str(pending_approver or "").strip(),
+            "step_status": str(step_status or "").strip() or "running",
+            "detail_json": json_dumps(sanitize_audit_detail(detail or {})),
+        },
+    )
+
+
+def execute_inventory_flow_workflow_launch(
+    workflow_key: str,
+    payload: Dict[str, Any],
+    launched_by: str = "",
+) -> Dict[str, Any]:
+    workflow_lookup = {str(item["key"]): item for item in inventory_flow_workflow_templates()}
+    workflow = workflow_lookup.get(str(workflow_key or "").strip())
+    if workflow is None:
+        raise ValueError(f"未识别的库存业务流：{workflow_key}")
+    if str(workflow.get("status") or "").strip() != "published":
+        raise ValueError("仅支持发起已发布的库存业务流。")
+
+    steps = workflow.get("steps") or []
+    if not steps:
+        raise ValueError("当前库存业务流未配置执行步骤。")
+
+    material_code = str(payload.get("material_code") or workflow.get("default_material_code") or "").strip()
+    purchase_inbound_code = str(payload.get("purchase_inbound_code") or "").strip()
+    transfer_order_code = str(payload.get("transfer_order_code") or "").strip()
+    scrap_code = str(payload.get("scrap_code") or "").strip()
+    scrap_org = str(payload.get("scrap_org") or workflow.get("default_scrap_org") or "").strip()
+    scrap_bustype = str(payload.get("scrap_bustype") or workflow.get("default_scrap_bustype") or "").strip()
+    scrap_bustype_name = str(payload.get("scrap_bustype_name") or "").strip()
+    scrap_warehouse = str(payload.get("scrap_warehouse") or workflow.get("default_scrap_warehouse") or "").strip()
+    scrap_stock_status = str(payload.get("scrap_stock_status") or workflow.get("default_scrap_stock_status") or "").strip()
+    warehouse_code = str(payload.get("warehouse_code") or workflow.get("default_warehouse_code") or "").strip()
+    inwarehouse_code = str(payload.get("inwarehouse_code") or workflow.get("default_inwarehouse_code") or "").strip()
+    bom_code = str(payload.get("bom_code") or workflow.get("bom_code") or "").strip()
+    vouchdate = str(payload.get("vouchdate") or "").strip()
+    remark = str(payload.get("remark") or "").strip()
+    quantity_value = payload.get("quantity")
+    serials = [str(item).strip() for item in (payload.get("serials") or []) if str(item).strip()]
+
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        instance = create_inventory_workflow_instance(
+            conn,
+            workflow=workflow,
+            payload={
+                **payload,
+                "material_code": material_code,
+                "purchase_inbound_code": purchase_inbound_code,
+                "transfer_order_code": transfer_order_code,
+                "scrap_code": scrap_code,
+                "scrap_org": scrap_org,
+                "scrap_bustype": scrap_bustype,
+                "scrap_bustype_name": scrap_bustype_name,
+                "scrap_warehouse": scrap_warehouse,
+                "scrap_stock_status": scrap_stock_status,
+                "warehouse_code": warehouse_code,
+                "inwarehouse_code": inwarehouse_code,
+                "bom_code": bom_code,
+                "quantity": quantity_value,
+            },
+            launched_by=launched_by,
+        )
+    instance_id = int(instance["id"])
+    instance_no = str(instance["instance_no"])
+
+    context: Dict[str, str] = {
+        "purchase_inbound_code": purchase_inbound_code,
+        "transfer_order_code": transfer_order_code,
+        "scrap_code": scrap_code,
+    }
+    step_results: List[Dict[str, Any]] = []
+
+    for index, step in enumerate(steps, start=1):
+        step_key = str(step.get("key") or "").strip()
+        step_title = str(step.get("title") or step_key).strip() or step_key
+        if not step_key:
+            continue
+
+        if step_key == "morphology_conversion":
+            if not context.get("purchase_inbound_code"):
+                raise ValueError(f"第 {index} 步“{step_title}”缺少采购入库单号。")
+            if not bom_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少形态转换 BOM。")
+            if quantity_value in (None, "", 0, "0"):
+                raise ValueError(f"第 {index} 步“{step_title}”缺少计划数量。")
+            step_payload = {
+                "purchase_inbound_code": context["purchase_inbound_code"],
+                "bom_code": bom_code,
+                "quantity": quantity_value,
+                "remark": remark,
+                "vouchdate": vouchdate,
+                "serials": serials,
+            }
+        elif step_key == "transfer_order":
+            if not context.get("purchase_inbound_code"):
+                raise ValueError(f"第 {index} 步“{step_title}”缺少采购入库单号。")
+            if not inwarehouse_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少调入仓。")
+            step_payload = {
+                "purchase_inbound_code": context["purchase_inbound_code"],
+                "inwarehouse_code": inwarehouse_code,
+                "memo": remark,
+                "vouchdate": vouchdate,
+            }
+        elif step_key == "storeout":
+            source_transfer_order_code = context.get("transfer_order_code") or transfer_order_code
+            if not source_transfer_order_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少调拨订单单号。")
+            step_payload = {
+                "transfer_order_code": source_transfer_order_code,
+                "vouchdate": vouchdate,
+            }
+        elif step_key == "storein":
+            source_storeout_code = context.get("storeout_code") or str(payload.get("storeout_code") or "").strip()
+            if not source_storeout_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少调出单单号。")
+            step_payload = {
+                "storeout_code": source_storeout_code,
+                "vouchdate": vouchdate,
+            }
+        elif step_key == "scrap_create":
+            if not material_code:
+                raise ValueError("报废流转缺少物料。")
+            if quantity_value in (None, "", 0, "0"):
+                raise ValueError("报废流转缺少报废数量。")
+            if not scrap_org:
+                raise ValueError("报废流转缺少库存组织。")
+            if not scrap_bustype:
+                raise ValueError("报废流转缺少交易类型。")
+            if not scrap_warehouse:
+                raise ValueError("报废流转缺少报废仓库。")
+            if not scrap_stock_status:
+                raise ValueError("报废流转缺少报废库存状态。")
+            step_payload = {
+                "material_code": material_code,
+                "quantity": quantity_value,
+                "vouchdate": vouchdate,
+                "remark": remark,
+                "serials": serials,
+                "scrap_org": scrap_org,
+                "scrap_bustype": scrap_bustype,
+                "scrap_bustype_name": scrap_bustype_name,
+                "scrap_warehouse": scrap_warehouse,
+                "scrap_stock_status": scrap_stock_status,
+            }
+        elif step_key == "scrap_submit":
+            source_scrap_code = context.get("scrap_code") or str(payload.get("scrap_code") or "").strip()
+            if not source_scrap_code:
+                raise ValueError("报废单提交缺少报废单号。")
+            step_payload = {
+                "scrap_code": source_scrap_code,
+            }
+        else:
+            raise ValueError(f"库存流转暂不支持业务流步骤：{step_title}")
+
         try:
-            live_rows_by_module = query_procurement_document_rows(limit=20)
-        except Exception as exc:
-            app_logger.warning("Failed to query live procurement-supply rows from Yonyou: %s", exc)
+            result = launch_procurement_document(step_key, step_payload)
+        except (ValueError, YonyouRequestError) as exc:
+            error_message = f"第 {index} 步“{step_title}”执行失败：{exc}"
+            with current_engine.begin() as conn:
+                insert_inventory_workflow_instance_step(
+                    conn,
+                    instance_id=instance_id,
+                    step_order=index,
+                    step_key=step_key,
+                    step_title=step_title,
+                    document_key=step_key,
+                    document_id="",
+                    document_code="",
+                    document_status="failed",
+                    document_status_label="执行失败",
+                    pending_approver="",
+                    step_status="failed",
+                    detail={"error": str(exc), "payload": step_payload},
+                )
+                update_inventory_workflow_instance_runtime(
+                    conn,
+                    instance_id=instance_id,
+                    current_step_key=step_key,
+                    current_step_title=step_title,
+                    current_document_key=step_key,
+                    current_document_id="",
+                    current_document_code="",
+                    current_document_status="failed",
+                    current_document_status_label="执行失败",
+                    current_pending_approver="",
+                    instance_status="failed",
+                    error_message=error_message,
+                    completed_step_count=len(step_results),
+                )
+            raise ValueError(error_message) from exc
+
+        document_code = str(result.get("document_code") or "").strip()
+        document_id = str(result.get("document_id") or "").strip()
+        document_key = str(result.get("document_key") or step_key).strip() or step_key
+        summary = result.get("summary") or {}
+        document_status = normalize_procurement_workflow_document_status(step_key, summary)
+        document_status_label = procurement_workflow_document_status_label(document_status)
+        pending_approver = extract_procurement_workflow_pending_approver(result)
+
+        if step_key == "transfer_order" and document_code:
+            context["transfer_order_code"] = document_code
+        if step_key == "storeout" and document_code:
+            context["storeout_code"] = document_code
+        if step_key in {"scrap_create", "scrap_submit"} and document_code:
+            context["scrap_code"] = document_code
+        step_result = {
+            "step_key": step_key,
+            "step_title": step_title,
+            "document_key": document_key,
+            "document_id": document_id,
+            "document_code": document_code,
+            "document_status": document_status,
+            "document_status_label": document_status_label,
+            "pending_approver": pending_approver,
+            "summary": summary,
+        }
+        step_results.append(step_result)
+
+        is_last_step = index == len(steps)
+        instance_status = "completed" if is_last_step and document_status in {"completed", "approved"} else "running"
+        with current_engine.begin() as conn:
+            insert_inventory_workflow_instance_step(
+                conn,
+                instance_id=instance_id,
+                step_order=index,
+                step_key=step_key,
+                step_title=step_title,
+                document_key=document_key,
+                document_id=document_id,
+                document_code=document_code,
+                document_status=document_status,
+                document_status_label=document_status_label,
+                pending_approver=pending_approver,
+                step_status="completed" if document_status != "failed" else "failed",
+                detail={"summary": summary, "request_payload": result.get("request_payload") or {}},
+            )
+            update_inventory_workflow_instance_runtime(
+                conn,
+                instance_id=instance_id,
+                current_step_key=step_key,
+                current_step_title=step_title,
+                current_document_key=document_key,
+                current_document_id=document_id,
+                current_document_code=document_code,
+                current_document_status=document_status,
+                current_document_status_label=document_status_label,
+                current_pending_approver=pending_approver,
+                instance_status=instance_status,
+                error_message="",
+                completed_step_count=len(step_results),
+            )
+
+    final_step = step_results[-1] if step_results else {}
+    final_instance_status = "completed" if str(final_step.get("document_status") or "").strip() in {"completed", "approved"} else "running"
+    return {
+        "instance_id": instance_id,
+        "instance_no": instance_no,
+        "workflow_key": str(workflow.get("key") or "").strip(),
+        "workflow_title": str(workflow.get("title") or "").strip(),
+        "instance_status": final_instance_status,
+        "instance_status_label": inventory_workflow_instance_status_label(final_instance_status),
+        "current_step_key": str(final_step.get("step_key") or "").strip(),
+        "current_step_title": str(final_step.get("step_title") or "").strip(),
+        "current_document_code": str(final_step.get("document_code") or "").strip(),
+        "current_document_status": str(final_step.get("document_status") or "").strip(),
+        "current_document_status_label": str(final_step.get("document_status_label") or "").strip(),
+        "current_pending_approver": str(final_step.get("pending_approver") or "").strip(),
+        "launched_at": to_plain(datetime.now(scheduler_timezone()).replace(microsecond=0)),
+        "step_results": step_results,
+    }
+
+
+def build_procurement_supply_console_payload() -> Dict[str, Any]:
+    cache_snapshot = load_procurement_supply_rows_from_db(limit=20, auto_refresh=True)
+    cached_rows_by_module = cache_snapshot.get("rows_by_module") or {}
+    sync_summary = cache_snapshot.get("sync_summary") or {}
+    live_rows_by_module: Dict[str, List[Dict[str, Any]]] | None = None
+    if sync_summary.get("is_configured") or any(cached_rows_by_module.values()):
+        live_rows_by_module = cached_rows_by_module
     document_modules = attach_procurement_supply_document_details(
         procurement_supply_document_modules(),
         live_rows_by_module=live_rows_by_module,
@@ -2551,6 +4104,7 @@ def build_procurement_supply_console_payload() -> Dict[str, Any]:
     workflow_templates = procurement_supply_workflow_templates()
     material_profiles = procurement_supply_material_profiles()
     bom_profiles = procurement_supply_bom_profiles()
+    workflow_instance_snapshot = load_procurement_workflow_instance_snapshot(limit=50)
     return {
         "module_intro": {
             "title": "采购供应",
@@ -2572,6 +4126,8 @@ def build_procurement_supply_console_payload() -> Dict[str, Any]:
         "workflow_templates": workflow_templates,
         "material_profiles": material_profiles,
         "bom_profiles": bom_profiles,
+        "unfinished_workflow_instances": workflow_instance_snapshot,
+        "sync_summary": sync_summary,
         "serial_import_template": {
             "accepted_extensions": [".xlsx", ".csv"],
             "required_headers": ["序列号"],
@@ -4267,6 +5823,241 @@ def ensure_inventory_flow_seed(conn) -> None:
         ),
         default_inventory_flow_rules(conn),
     )
+
+
+INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS = ("良品", "未检", "不良品")
+
+
+def default_inventory_live_stock_report_config() -> Dict[str, Any]:
+    return {
+        "warehouse_codes": [],
+        "material_codes": [],
+        "status_buckets": list(INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS),
+        "max_families": 6,
+        "max_materials_per_section": 10,
+    }
+
+
+def normalize_inventory_live_stock_report_config(payload: Any) -> Dict[str, Any]:
+    fallback = default_inventory_live_stock_report_config()
+    raw = json_loads(payload, {}) if not isinstance(payload, dict) else payload
+    warehouse_codes: List[str] = []
+    seen_warehouse_codes: set[str] = set()
+    for item in (raw.get("warehouse_codes") if isinstance(raw, dict) else []) or []:
+        value = str(item or "").strip()
+        if not value or value in seen_warehouse_codes:
+            continue
+        seen_warehouse_codes.add(value)
+        warehouse_codes.append(value)
+
+    material_codes: List[str] = []
+    seen_material_codes: set[str] = set()
+    for item in (raw.get("material_codes") if isinstance(raw, dict) else []) or []:
+        value = str(item or "").strip()
+        if not value or value in seen_material_codes:
+            continue
+        seen_material_codes.add(value)
+        material_codes.append(value)
+
+    status_buckets: List[str] = []
+    seen_status_buckets: set[str] = set()
+    for item in (raw.get("status_buckets") if isinstance(raw, dict) else []) or []:
+        value = str(item or "").strip()
+        if value not in INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS or value in seen_status_buckets:
+            continue
+        seen_status_buckets.add(value)
+        status_buckets.append(value)
+
+    max_families = parse_int_or_default(raw.get("max_families") if isinstance(raw, dict) else None, fallback["max_families"])
+    max_materials_per_section = parse_int_or_default(
+        raw.get("max_materials_per_section") if isinstance(raw, dict) else None,
+        fallback["max_materials_per_section"],
+    )
+    return {
+        "warehouse_codes": warehouse_codes,
+        "material_codes": material_codes[:120],
+        "status_buckets": status_buckets or list(fallback["status_buckets"]),
+        "max_families": max(1, min(max_families, 12)),
+        "max_materials_per_section": max(1, min(max_materials_per_section, 30)),
+    }
+
+
+def default_inventory_flow_schedule_tasks() -> List[Dict[str, Any]]:
+    webhook_url = inventory_flow_schedule_dingtalk_webhook()
+    return [
+        {
+            "task_key": "inventory_live_stock_morning",
+            "task_name": "库存现存量",
+            "task_type": "inventory_live_stock",
+            "cron_expr": "30 9 * * *",
+            "report_title": "库存现存量",
+            "webhook_url": webhook_url,
+            "report_config_json": json_dumps(default_inventory_live_stock_report_config()),
+            "is_enabled": 1,
+            "sort_order": 10,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+        {
+            "task_key": "warehouse_daily_movement_evening",
+            "task_name": "每日仓库出入库",
+            "task_type": "warehouse_daily_movement",
+            "cron_expr": "30 18 * * *",
+            "report_title": "每日仓库出入库",
+            "webhook_url": webhook_url,
+            "report_config_json": None,
+            "is_enabled": 1,
+            "sort_order": 20,
+            "created_by": "system",
+            "updated_by": "system",
+        },
+    ]
+
+
+def inventory_flow_schedule_job_id(task_key: str) -> str:
+    return f"{INVENTORY_FLOW_SCHEDULE_JOB_PREFIX}{str(task_key or '').strip()}"
+
+
+def cron_expr_to_time_of_day(cron_expr: str) -> str:
+    parts = str(cron_expr or "").split()
+    if len(parts) != 5:
+        return ""
+    minute, hour, day, month, weekday = parts
+    if day == "*" and month == "*" and weekday == "*" and minute.isdigit() and hour.isdigit():
+        return f"{int(hour):02d}:{int(minute):02d}"
+    return ""
+
+
+def cron_expr_to_schedule_label(cron_expr: str) -> str:
+    time_of_day = cron_expr_to_time_of_day(cron_expr)
+    if time_of_day:
+        return f"每天 {time_of_day}"
+    return str(cron_expr or "").strip()
+
+
+def ensure_inventory_flow_schedule_seed(conn) -> None:
+    for item in default_inventory_flow_schedule_tasks():
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_inventory_flow_schedule_task
+                WHERE task_key = :task_key
+                LIMIT 1
+                """
+            ),
+            {"task_key": item["task_key"]},
+        ).first()
+        if existing:
+            continue
+        conn.execute(
+            text(
+                """
+                INSERT INTO bi_inventory_flow_schedule_task(
+                    task_key, task_name, task_type, cron_expr, report_title, webhook_url,
+                    report_config_json, is_enabled, sort_order, last_run_status, last_run_message, created_by, updated_by
+                ) VALUES (
+                    :task_key, :task_name, :task_type, :cron_expr, :report_title, :webhook_url,
+                    :report_config_json, :is_enabled, :sort_order, 'idle', '', :created_by, :updated_by
+                )
+                """
+            ),
+            item,
+        )
+
+
+def normalize_inventory_flow_schedule_row(row: Dict[str, Any] | None) -> Dict[str, Any]:
+    item = row or {}
+    cron_expr = str(item.get("cron_expr") or "").strip()
+    task_key = str(item.get("task_key") or "").strip()
+    job = None
+    scheduler = get_sync_scheduler()
+    if scheduler.running:
+        job = scheduler.get_job(inventory_flow_schedule_job_id(task_key))
+    return {
+        "id": parse_int_or_default(item.get("id"), 0),
+        "task_key": task_key,
+        "task_name": str(item.get("task_name") or "").strip(),
+        "task_type": str(item.get("task_type") or "").strip(),
+        "cron_expr": cron_expr,
+        "time_of_day": cron_expr_to_time_of_day(cron_expr),
+        "schedule_label": cron_expr_to_schedule_label(cron_expr),
+        "report_title": str(item.get("report_title") or "").strip(),
+        "report_config": normalize_inventory_live_stock_report_config(item.get("report_config_json"))
+        if str(item.get("task_type") or "").strip() == "inventory_live_stock"
+        else None,
+        "webhook_url": str(item.get("webhook_url") or "").strip(),
+        "is_enabled": parse_bool_or_default(item.get("is_enabled"), True),
+        "sort_order": max(0, parse_int_or_default(item.get("sort_order"), 100)),
+        "last_run_started_at": to_plain(item.get("last_run_started_at")),
+        "last_run_finished_at": to_plain(item.get("last_run_finished_at")),
+        "last_run_status": str(item.get("last_run_status") or "idle").strip() or "idle",
+        "last_run_message": str(item.get("last_run_message") or "").strip(),
+        "last_run_trigger": str(item.get("last_run_trigger") or "").strip(),
+        "last_report_path": str(item.get("last_report_path") or "").strip(),
+        "last_report_url": str(item.get("last_report_url") or "").strip(),
+        "next_run_at": to_plain(job.next_run_time) if job and job.next_run_time else None,
+        "created_by": str(item.get("created_by") or "").strip(),
+        "updated_by": str(item.get("updated_by") or "").strip(),
+        "created_at": to_plain(item.get("created_at")),
+        "updated_at": to_plain(item.get("updated_at")),
+    }
+
+
+def load_inventory_flow_schedule_tasks(conn) -> List[Dict[str, Any]]:
+    ensure_inventory_flow_schedule_seed(conn)
+    rows = conn.execute(
+        text(
+            """
+            SELECT
+                id, task_key, task_name, task_type, cron_expr, report_title, webhook_url,
+                report_config_json,
+                is_enabled, sort_order, last_run_started_at, last_run_finished_at,
+                last_run_status, last_run_message, last_run_trigger, last_report_path,
+                last_report_url, created_by, updated_by, created_at, updated_at
+            FROM bi_inventory_flow_schedule_task
+            ORDER BY sort_order, id
+            """
+        )
+    ).mappings().all()
+    return [normalize_inventory_flow_schedule_row(dict(row)) for row in rows]
+
+
+def normalize_inventory_flow_schedule_payload(payload: Dict[str, Any] | None) -> List[Dict[str, Any]]:
+    items = (payload or {}).get("tasks") if isinstance(payload, dict) else []
+    valid_task_map = {entry["task_key"]: entry for entry in default_inventory_flow_schedule_tasks()}
+    normalized: List[Dict[str, Any]] = []
+    for index, raw in enumerate(items or []):
+        if not isinstance(raw, dict):
+            continue
+        task_key = str(raw.get("task_key") or "").strip()
+        if task_key not in valid_task_map:
+            raise HTTPException(status_code=400, detail=f"第 {index + 1} 个定时任务标识无效")
+        cron_expr = validate_cron_expression(str(raw.get("cron_expr") or valid_task_map[task_key]["cron_expr"]).strip())
+        report_title = str(raw.get("report_title") or valid_task_map[task_key]["report_title"]).strip()
+        webhook_url = str(raw.get("webhook_url") or valid_task_map[task_key]["webhook_url"]).strip()
+        if not webhook_url.startswith("https://oapi.dingtalk.com/robot/send?"):
+            raise HTTPException(status_code=400, detail=f"{valid_task_map[task_key]['task_name']} 的钉钉机器人地址无效")
+        report_config_json = None
+        if str(valid_task_map[task_key].get("task_type") or "").strip() == "inventory_live_stock":
+            report_config_json = json_dumps(normalize_inventory_live_stock_report_config(raw.get("report_config")))
+        normalized.append(
+            {
+                "id": parse_int_or_default(raw.get("id"), 0),
+                "task_key": task_key,
+                "task_name": str(raw.get("task_name") or valid_task_map[task_key]["task_name"]).strip(),
+                "task_type": str(raw.get("task_type") or valid_task_map[task_key]["task_type"]).strip(),
+                "cron_expr": cron_expr,
+                "report_title": report_title or valid_task_map[task_key]["report_title"],
+                "webhook_url": webhook_url,
+                "report_config_json": report_config_json,
+                "is_enabled": 1 if parse_bool_or_default(raw.get("is_enabled"), True) else 0,
+                "sort_order": max(0, parse_int_or_default(raw.get("sort_order"), valid_task_map[task_key]["sort_order"])),
+            }
+        )
+    if not normalized:
+        raise HTTPException(status_code=400, detail="至少保留一条定时任务配置")
+    return normalized
 
 
 def normalize_inventory_flow_rule_payload(rows: Sequence[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
@@ -6538,8 +8329,10 @@ def ensure_schema() -> None:
     if schema_ready:
         return
     current_engine = get_engine()
+    ensure_dashboard_user_schema()
     ensure_sales_processing_schema(current_engine)
     ensure_inventory_processing_schema(current_engine)
+    ensure_procurement_cache_schema(current_engine)
     with current_engine.begin() as conn:
         conn.execute(
             text(
@@ -6801,6 +8594,135 @@ def ensure_schema() -> None:
         conn.execute(
             text(
                 """
+                CREATE TABLE IF NOT EXISTS bi_procurement_workflow_instance (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    instance_no VARCHAR(64) NOT NULL,
+                    workflow_key VARCHAR(64) NOT NULL,
+                    workflow_title VARCHAR(128) NOT NULL,
+                    material_code VARCHAR(64) NOT NULL DEFAULT '',
+                    quantity DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    purchase_order_code VARCHAR(64) NOT NULL DEFAULT '',
+                    warehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    inwarehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    bom_code VARCHAR(64) NOT NULL DEFAULT '',
+                    current_step_key VARCHAR(64) NOT NULL DEFAULT '',
+                    current_step_title VARCHAR(128) NOT NULL DEFAULT '',
+                    current_document_key VARCHAR(64) NOT NULL DEFAULT '',
+                    current_document_id VARCHAR(128) NOT NULL DEFAULT '',
+                    current_document_code VARCHAR(128) NOT NULL DEFAULT '',
+                    current_document_status VARCHAR(32) NOT NULL DEFAULT '',
+                    current_document_status_label VARCHAR(64) NOT NULL DEFAULT '',
+                    current_pending_approver VARCHAR(128) NOT NULL DEFAULT '',
+                    instance_status VARCHAR(32) NOT NULL DEFAULT 'running',
+                    error_message VARCHAR(255) NOT NULL DEFAULT '',
+                    step_count INT NOT NULL DEFAULT 0,
+                    completed_step_count INT NOT NULL DEFAULT 0,
+                    launched_by VARCHAR(64) NULL,
+                    launched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_procurement_workflow_instance_no (instance_no),
+                    INDEX idx_bi_procurement_workflow_instance_status (instance_status, updated_at, id),
+                    INDEX idx_bi_procurement_workflow_instance_workflow (workflow_key, launched_at, id),
+                    INDEX idx_bi_procurement_workflow_instance_document (current_document_key, current_document_code)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_procurement_workflow_instance_step (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    instance_id BIGINT NOT NULL,
+                    step_order INT NOT NULL DEFAULT 1,
+                    step_key VARCHAR(64) NOT NULL,
+                    step_title VARCHAR(128) NOT NULL DEFAULT '',
+                    document_key VARCHAR(64) NOT NULL DEFAULT '',
+                    document_id VARCHAR(128) NOT NULL DEFAULT '',
+                    document_code VARCHAR(128) NOT NULL DEFAULT '',
+                    document_status VARCHAR(32) NOT NULL DEFAULT '',
+                    document_status_label VARCHAR(64) NOT NULL DEFAULT '',
+                    pending_approver VARCHAR(128) NOT NULL DEFAULT '',
+                    step_status VARCHAR(32) NOT NULL DEFAULT 'running',
+                    detail_json LONGTEXT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_bi_procurement_workflow_step_instance (instance_id, step_order, id),
+                    INDEX idx_bi_procurement_workflow_step_document (document_key, document_code),
+                    CONSTRAINT fk_bi_procurement_workflow_step_instance FOREIGN KEY (instance_id)
+                        REFERENCES bi_procurement_workflow_instance(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_inventory_workflow_instance (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    instance_no VARCHAR(64) NOT NULL,
+                    workflow_key VARCHAR(64) NOT NULL,
+                    workflow_title VARCHAR(128) NOT NULL,
+                    material_code VARCHAR(64) NOT NULL DEFAULT '',
+                    quantity DECIMAL(18, 2) NOT NULL DEFAULT 0,
+                    purchase_inbound_code VARCHAR(64) NOT NULL DEFAULT '',
+                    transfer_order_code VARCHAR(64) NOT NULL DEFAULT '',
+                    warehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    inwarehouse_code VARCHAR(64) NOT NULL DEFAULT '',
+                    bom_code VARCHAR(64) NOT NULL DEFAULT '',
+                    current_step_key VARCHAR(64) NOT NULL DEFAULT '',
+                    current_step_title VARCHAR(128) NOT NULL DEFAULT '',
+                    current_document_key VARCHAR(64) NOT NULL DEFAULT '',
+                    current_document_id VARCHAR(128) NOT NULL DEFAULT '',
+                    current_document_code VARCHAR(128) NOT NULL DEFAULT '',
+                    current_document_status VARCHAR(32) NOT NULL DEFAULT '',
+                    current_document_status_label VARCHAR(64) NOT NULL DEFAULT '',
+                    current_pending_approver VARCHAR(128) NOT NULL DEFAULT '',
+                    instance_status VARCHAR(32) NOT NULL DEFAULT 'running',
+                    error_message VARCHAR(255) NOT NULL DEFAULT '',
+                    step_count INT NOT NULL DEFAULT 0,
+                    completed_step_count INT NOT NULL DEFAULT 0,
+                    launched_by VARCHAR(64) NULL,
+                    launched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_inventory_workflow_instance_no (instance_no),
+                    INDEX idx_bi_inventory_workflow_instance_status (instance_status, updated_at, id),
+                    INDEX idx_bi_inventory_workflow_instance_workflow (workflow_key, launched_at, id),
+                    INDEX idx_bi_inventory_workflow_instance_document (current_document_key, current_document_code)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_inventory_workflow_instance_step (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    instance_id BIGINT NOT NULL,
+                    step_order INT NOT NULL DEFAULT 1,
+                    step_key VARCHAR(64) NOT NULL,
+                    step_title VARCHAR(128) NOT NULL DEFAULT '',
+                    document_key VARCHAR(64) NOT NULL DEFAULT '',
+                    document_id VARCHAR(128) NOT NULL DEFAULT '',
+                    document_code VARCHAR(128) NOT NULL DEFAULT '',
+                    document_status VARCHAR(32) NOT NULL DEFAULT '',
+                    document_status_label VARCHAR(64) NOT NULL DEFAULT '',
+                    pending_approver VARCHAR(128) NOT NULL DEFAULT '',
+                    step_status VARCHAR(32) NOT NULL DEFAULT 'running',
+                    detail_json LONGTEXT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_bi_inventory_workflow_step_instance (instance_id, step_order, id),
+                    INDEX idx_bi_inventory_workflow_step_document (document_key, document_code),
+                    CONSTRAINT fk_bi_inventory_workflow_step_instance FOREIGN KEY (instance_id)
+                        REFERENCES bi_inventory_workflow_instance(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
                 CREATE TABLE IF NOT EXISTS bi_inventory_flow_rule (
                     id BIGINT PRIMARY KEY AUTO_INCREMENT,
                     rule_name VARCHAR(128) NOT NULL,
@@ -6871,6 +8793,44 @@ def ensure_schema() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS bi_inventory_flow_schedule_task (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    task_key VARCHAR(64) NOT NULL,
+                    task_name VARCHAR(128) NOT NULL,
+                    task_type VARCHAR(64) NOT NULL,
+                    cron_expr VARCHAR(64) NOT NULL DEFAULT '',
+                    report_title VARCHAR(128) NOT NULL DEFAULT '',
+                    report_config_json LONGTEXT NULL,
+                    webhook_url VARCHAR(512) NOT NULL DEFAULT '',
+                    is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    sort_order INT NOT NULL DEFAULT 100,
+                    last_run_started_at DATETIME NULL,
+                    last_run_finished_at DATETIME NULL,
+                    last_run_status VARCHAR(32) NOT NULL DEFAULT 'idle',
+                    last_run_message VARCHAR(255) NOT NULL DEFAULT '',
+                    last_run_trigger VARCHAR(32) NOT NULL DEFAULT '',
+                    last_report_path VARCHAR(255) NOT NULL DEFAULT '',
+                    last_report_url VARCHAR(512) NOT NULL DEFAULT '',
+                    created_by VARCHAR(64) NULL,
+                    updated_by VARCHAR(64) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_bi_inventory_flow_schedule_task_key (task_key),
+                    INDEX idx_bi_inventory_flow_schedule_enabled (is_enabled, sort_order, id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        ensure_table_columns(
+            conn,
+            "bi_inventory_flow_schedule_task",
+            {
+                "report_config_json": "LONGTEXT NULL AFTER report_title",
+            },
         )
         conn.execute(
             text(
@@ -7027,6 +8987,7 @@ def ensure_schema() -> None:
         ensure_master_data_seed(conn)
         ensure_procurement_arrival_seed(conn)
         ensure_inventory_flow_seed(conn)
+        ensure_inventory_flow_schedule_seed(conn)
         count = int(conn.execute(text("SELECT COUNT(*) FROM bi_dashboard_view")).scalar() or 0)
         if count == 0:
             conn.execute(
@@ -8315,17 +10276,131 @@ async def bi_dashboard_login(request: Request, next: str | None = Query(None)) -
 
 @router.post("/bi-dashboard/login")
 async def bi_dashboard_login_submit(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
-    username = str(payload.get("username") or "").strip()
+    login_identity = str(payload.get("username") or payload.get("email") or "").strip()
     password = str(payload.get("password") or "")
     remember = bool(payload.get("remember"))
     next_path = sanitize_next_path(payload.get("next"))
-    if not authenticate_dashboard_user(username, password):
-        raise HTTPException(status_code=401, detail="鐢ㄦ埛鍚嶆垨瀵嗙爜閿欒")
+    ensure_dashboard_user_schema()
+    authenticated_username = authenticate_dashboard_user(login_identity, password)
+    if not authenticated_username:
+        raise HTTPException(status_code=401, detail="账号、邮箱或密码错误")
+    touch_dashboard_user_last_login(authenticated_username)
+    current_user = get_dashboard_user_profile(authenticated_username) or {}
+    default_home_path = resolve_dashboard_default_home_path(
+        current_user.get("default_home_path"),
+        current_user.get("module_permissions") or [],
+    )
+    resolved_next_path = (
+        default_home_path
+        if next_path in {"/workspace", DASHBOARD_DEFAULT_PATH, "/financial/bi-dashboard"}
+        else next_path
+    )
 
-    response = JSONResponse({"ok": True, "redirect_to": next_path, "username": username})
+    response = JSONResponse(
+        {
+            "ok": True,
+            "redirect_to": resolved_next_path,
+            "username": authenticated_username,
+            "current_user": current_user,
+        }
+    )
     response.set_cookie(
         key=DASHBOARD_SESSION_COOKIE,
-        value=create_dashboard_session(username),
+        value=create_dashboard_session(authenticated_username),
+        max_age=DASHBOARD_SESSION_MAX_AGE if remember else None,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@router.post("/bi-dashboard/register")
+async def bi_dashboard_register_submit(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
+    ensure_dashboard_user_schema()
+    email = validate_dashboard_email(payload.get("email"), required=True)
+    password = validate_dashboard_password(str(payload.get("password") or ""), required=True)
+    remember = bool(payload.get("remember", True))
+    next_path = sanitize_next_path(payload.get("next"))
+    display_name = str(payload.get("display_name") or "").strip()[:128]
+
+    with get_engine().begin() as conn:
+        existing = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM bi_dashboard_user_account
+                WHERE email = :email OR username = :email
+                LIMIT 1
+                """
+            ),
+            {"email": email},
+        ).scalar()
+        if existing:
+            raise HTTPException(status_code=400, detail="该邮箱已注册，请直接登录或联系管理员")
+
+        username = generate_dashboard_username_for_email(conn, email)
+        resolved_display_name = display_name or email.split("@", 1)[0][:128] or username
+        now = datetime.now()
+        result = conn.execute(
+            text(
+                """
+                INSERT INTO bi_dashboard_user_account(
+                    username, email, display_name, password_hash, role_name,
+                    is_admin, is_enabled, access_granted, note, source_type,
+                    last_login_at, password_updated_at, registered_at, created_by, updated_by
+                ) VALUES (
+                    :username, :email, :display_name, :password_hash, '',
+                    0, 1, 0, :note, 'self_registered',
+                    :last_login_at, :password_updated_at, :registered_at, 'self_registered', 'self_registered'
+                )
+                """
+            ),
+            {
+                "username": username,
+                "email": email,
+                "display_name": resolved_display_name,
+                "password_hash": hash_dashboard_password(password),
+                "note": "self registered by email",
+                "last_login_at": now,
+                "password_updated_at": now,
+                "registered_at": now,
+            },
+        )
+        created_id = int(result.lastrowid or 0)
+
+    created = fetch_dashboard_user_row(user_id=created_id)
+    if not created:
+        raise HTTPException(status_code=500, detail="注册成功，但账号信息回读失败")
+
+    created_payload = build_dashboard_user_payload(created)
+    record_dashboard_audit(
+        module_key="governance",
+        module_name="用户管理",
+        action_key="dashboard_user.self_register",
+        action_name="用户自注册",
+        target_type="dashboard_user",
+        target_id=created_payload.get("id"),
+        target_name=created_payload.get("username"),
+        detail_summary=f"邮箱自注册 {created_payload.get('email') or created_payload.get('username')}",
+        detail={"user": created_payload},
+        triggered_by=created_payload.get("username") or "",
+        source_path=DASHBOARD_REGISTER_API_PATH,
+        source_method="POST",
+        affected_count=1,
+    )
+
+    response = JSONResponse(
+        {
+            "ok": True,
+            "redirect_to": next_path,
+            "username": created_payload.get("username"),
+            "current_user": created_payload,
+        }
+    )
+    response.set_cookie(
+        key=DASHBOARD_SESSION_COOKIE,
+        value=create_dashboard_session(str(created_payload.get("username") or "")),
         max_age=DASHBOARD_SESSION_MAX_AGE if remember else None,
         httponly=True,
         samesite="lax",
@@ -8346,6 +10421,315 @@ async def bi_dashboard_logout_redirect() -> RedirectResponse:
     response = RedirectResponse(url="/financial/bi-dashboard/login", status_code=303)
     response.delete_cookie(DASHBOARD_SESSION_COOKIE, path="/")
     return response
+
+
+@router.get("/bi-dashboard/api/session/me")
+async def bi_dashboard_session_me(username: str = Depends(require_auth)) -> JSONResponse:
+    ensure_dashboard_user_schema()
+    profile = get_dashboard_user_profile(username)
+    if not profile:
+        raise HTTPException(status_code=401, detail="当前登录人信息不存在或已失效")
+    return JSONResponse({"current_user": profile})
+
+
+@router.post("/bi-dashboard/api/session/password")
+async def bi_dashboard_session_password(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_dashboard_user_schema()
+    current_password = validate_dashboard_password(str(payload.get("current_password") or ""), required=True)
+    new_password = validate_dashboard_password(str(payload.get("new_password") or ""), required=True)
+    confirm_password = str(payload.get("confirm_password") or "").strip()
+    if confirm_password and confirm_password != new_password:
+        raise HTTPException(status_code=400, detail="两次输入的新密码不一致")
+    if authenticate_dashboard_user(username, current_password) != username:
+        raise HTTPException(status_code=401, detail="当前密码校验失败，请重新输入")
+    if authenticate_dashboard_user(username, new_password) == username:
+        raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
+
+    before_payload = get_dashboard_user_profile(username) or {}
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE bi_dashboard_user_account
+                SET password_hash = :password_hash,
+                    must_change_password = 0,
+                    password_updated_at = :password_updated_at,
+                    updated_by = :updated_by,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE username = :username
+                """
+            ),
+            {
+                "username": username,
+                "password_hash": hash_dashboard_password(new_password),
+                "password_updated_at": datetime.now(),
+                "updated_by": username,
+            },
+        )
+
+    after_payload = get_dashboard_user_profile(username)
+    record_dashboard_audit(
+        module_key="governance",
+        module_name="用户管理",
+        action_key="dashboard_user.reset_own_password",
+        action_name="首次登录修改密码",
+        target_type="dashboard_user",
+        target_id=after_payload.get("id") if after_payload else before_payload.get("id"),
+        target_name=username,
+        detail_summary=f"账号 {username} 已完成首次登录密码重置",
+        detail={"before": before_payload, "after": after_payload, "self_service": True},
+        triggered_by=username,
+        source_path="/bi-dashboard/api/session/password",
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"ok": True, "item": after_payload})
+
+
+@router.get("/bi-dashboard/api/user-management")
+async def get_dashboard_user_management(username: str = Depends(require_admin_auth)) -> JSONResponse:
+    ensure_schema()
+    return JSONResponse(build_dashboard_user_management_response(current_username=username))
+
+
+@router.post("/bi-dashboard/api/user-management")
+async def create_dashboard_user_management_user(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_admin_auth),
+) -> JSONResponse:
+    ensure_schema()
+    new_username = validate_dashboard_username(payload.get("username"))
+    email = validate_dashboard_email(payload.get("email"), required=False)
+    password = validate_dashboard_password(str(payload.get("password") or ""), required=True)
+    role_name = normalize_dashboard_role_name(payload.get("role_name"), fallback="运维")
+    is_admin = role_name == "管理员"
+    display_name = str(payload.get("display_name") or new_username).strip()[:128] or new_username
+    is_enabled = bool(payload.get("is_enabled", True))
+    access_granted = bool(payload.get("access_granted", True))
+    module_permissions = normalize_dashboard_module_permissions(payload.get("module_permissions"))
+    default_home_path = resolve_dashboard_default_home_path(
+        payload.get("default_home_path"),
+        module_permissions,
+    )
+    must_change_password = bool(payload.get("must_change_password", False))
+    note = normalize_dashboard_user_note(payload.get("note"))
+
+    with get_engine().begin() as conn:
+        existing = conn.execute(
+            text("SELECT id FROM bi_dashboard_user_account WHERE username = :username LIMIT 1"),
+            {"username": new_username},
+        ).scalar()
+        if existing:
+            raise HTTPException(status_code=400, detail="用户名已存在，请更换后再试")
+        if email:
+            existing_email = conn.execute(
+                text("SELECT id FROM bi_dashboard_user_account WHERE email = :email LIMIT 1"),
+                {"email": email},
+            ).scalar()
+            if existing_email:
+                raise HTTPException(status_code=400, detail="该邮箱已被占用，请更换后再试")
+        result = conn.execute(
+            text(
+                """
+                INSERT INTO bi_dashboard_user_account(
+                    username, email, display_name, password_hash, role_name,
+                    is_admin, is_enabled, access_granted, module_permissions_json,
+                    default_home_path, must_change_password, note, source_type,
+                    password_updated_at, registered_at, created_by, updated_by
+                ) VALUES (
+                    :username, :email, :display_name, :password_hash, :role_name,
+                    :is_admin, :is_enabled, :access_granted, :module_permissions_json,
+                    :default_home_path, :must_change_password, :note, 'manual',
+                    :password_updated_at, NULL, :created_by, :updated_by
+                )
+                """
+            ),
+            {
+                "username": new_username,
+                "email": email or None,
+                "display_name": display_name,
+                "password_hash": hash_dashboard_password(password),
+                "role_name": role_name,
+                "is_admin": 1 if is_admin else 0,
+                "is_enabled": 1 if is_enabled else 0,
+                "access_granted": 1 if access_granted else 0,
+                "module_permissions_json": serialize_dashboard_module_permissions(module_permissions),
+                "default_home_path": default_home_path,
+                "must_change_password": 1 if must_change_password else 0,
+                "note": note or None,
+                "password_updated_at": datetime.now(),
+                "created_by": username,
+                "updated_by": username,
+            },
+        )
+        created_id = int(result.lastrowid or 0)
+
+    created = fetch_dashboard_user_row(user_id=created_id)
+    if not created:
+        raise HTTPException(status_code=500, detail="用户创建成功，但回读信息失败")
+    created_payload = build_dashboard_user_payload(created)
+    record_dashboard_audit(
+        module_key="governance",
+        module_name="用户管理",
+        action_key="dashboard_user.create",
+        action_name="创建用户",
+        target_type="dashboard_user",
+        target_id=created_payload.get("id"),
+        target_name=created_payload.get("username"),
+        detail_summary=f"创建账号 {created_payload.get('username')} / {created_payload.get('role_name')}",
+        detail={"user": created_payload},
+        triggered_by=username,
+        source_path="/bi-dashboard/api/user-management",
+        source_method="POST",
+        affected_count=1,
+    )
+    return JSONResponse({"ok": True, "item": created_payload})
+
+
+@router.put("/bi-dashboard/api/user-management/{user_id}")
+async def update_dashboard_user_management_user(
+    user_id: int,
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_admin_auth),
+) -> JSONResponse:
+    ensure_schema()
+    existing = fetch_dashboard_user_row(user_id=user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+
+    existing_payload = build_dashboard_user_payload(existing)
+    next_display_name = str(payload.get("display_name") or existing_payload.get("display_name") or existing_payload.get("username") or "").strip()[:128]
+    if not next_display_name:
+        next_display_name = str(existing_payload.get("username") or "")
+    requested_role_name = str(
+        payload.get("role_name") if "role_name" in payload else existing_payload.get("role_name") or ""
+    ).strip()
+    next_role_name = (
+        normalize_dashboard_role_name(requested_role_name, fallback="运维")
+        if requested_role_name
+        else ""
+    )
+    next_is_admin = next_role_name == "管理员"
+    next_is_enabled = bool(payload.get("is_enabled", existing_payload.get("is_enabled")))
+    next_access_granted = bool(payload.get("access_granted", existing_payload.get("access_granted", True)))
+    next_module_permissions = normalize_dashboard_module_permissions(
+        payload.get("module_permissions")
+        if "module_permissions" in payload
+        else existing_payload.get("module_permissions")
+    )
+    next_default_home_path = resolve_dashboard_default_home_path(
+        payload.get("default_home_path")
+        if "default_home_path" in payload
+        else existing_payload.get("default_home_path"),
+        next_module_permissions,
+    )
+    next_must_change_password = bool(
+        payload.get("must_change_password", existing_payload.get("must_change_password", False))
+    )
+    next_email = validate_dashboard_email(
+        payload.get("email") if "email" in payload else existing_payload.get("email"),
+        required=False,
+    )
+    next_note = normalize_dashboard_user_note(payload.get("note") if "note" in payload else existing_payload.get("note"))
+    new_password = validate_dashboard_password(str(payload.get("password") or ""), required=False)
+
+    if next_access_granted and not next_role_name:
+        raise HTTPException(status_code=400, detail="授权前请先为账号选择角色")
+
+    if str(existing_payload.get("username") or "") == username and (not next_is_enabled or not next_is_admin or not next_access_granted):
+        raise HTTPException(status_code=400, detail="当前管理员不能停用自己，也不能撤销自己的管理员访问权限")
+
+    if bool(existing_payload.get("is_admin")) and (not next_is_enabled or not next_is_admin or not next_access_granted):
+        if count_enabled_admin_users(exclude_user_id=user_id) <= 0:
+            raise HTTPException(status_code=400, detail="系统至少需要保留一个启用中的管理员账号")
+
+    update_fields = [
+        "email = :email",
+        "display_name = :display_name",
+        "role_name = :role_name",
+        "is_admin = :is_admin",
+        "is_enabled = :is_enabled",
+        "access_granted = :access_granted",
+        "module_permissions_json = :module_permissions_json",
+        "default_home_path = :default_home_path",
+        "must_change_password = :must_change_password",
+        "note = :note",
+        "updated_by = :updated_by",
+        "updated_at = CURRENT_TIMESTAMP",
+    ]
+    params: Dict[str, Any] = {
+        "user_id": user_id,
+        "email": next_email or None,
+        "display_name": next_display_name,
+        "role_name": next_role_name,
+        "is_admin": 1 if next_is_admin else 0,
+        "is_enabled": 1 if next_is_enabled else 0,
+        "access_granted": 1 if next_access_granted else 0,
+        "module_permissions_json": serialize_dashboard_module_permissions(next_module_permissions),
+        "default_home_path": next_default_home_path,
+        "must_change_password": 1 if next_must_change_password else 0,
+        "note": next_note or None,
+        "updated_by": username,
+    }
+    if new_password:
+        update_fields.extend(
+            [
+                "password_hash = :password_hash",
+                "password_updated_at = :password_updated_at",
+            ]
+        )
+        params["password_hash"] = hash_dashboard_password(new_password)
+        params["password_updated_at"] = datetime.now()
+
+    with get_engine().begin() as conn:
+        if next_email:
+            duplicate_email = conn.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM bi_dashboard_user_account
+                    WHERE email = :email AND id <> :user_id
+                    LIMIT 1
+                    """
+                ),
+                {"email": next_email, "user_id": user_id},
+            ).scalar()
+            if duplicate_email:
+                raise HTTPException(status_code=400, detail="该邮箱已被其他账号占用")
+        conn.execute(
+            text(
+                f"""
+                UPDATE bi_dashboard_user_account
+                SET {", ".join(update_fields)}
+                WHERE id = :user_id
+                """
+            ),
+            params,
+        )
+
+    updated = fetch_dashboard_user_row(user_id=user_id)
+    if not updated:
+        raise HTTPException(status_code=500, detail="用户更新成功，但回读信息失败")
+    updated_payload = build_dashboard_user_payload(updated)
+    record_dashboard_audit(
+        module_key="governance",
+        module_name="用户管理",
+        action_key="dashboard_user.update",
+        action_name="更新用户",
+        target_type="dashboard_user",
+        target_id=updated_payload.get("id"),
+        target_name=updated_payload.get("username"),
+        detail_summary=f"更新账号 {updated_payload.get('username')} / {updated_payload.get('role_name')}",
+        detail={"before": existing_payload, "after": updated_payload, "password_changed": bool(new_password)},
+        triggered_by=username,
+        source_path=f"/bi-dashboard/api/user-management/{user_id}",
+        source_method="PUT",
+        affected_count=1,
+    )
+    return JSONResponse({"ok": True, "item": updated_payload})
 
 
 @router.get("/bi-dashboard", response_class=HTMLResponse)
@@ -8518,13 +10902,7 @@ async def bi_dashboard_master_data(request: Request) -> Response:
 @router.get("/bi-dashboard/audit-logs", response_class=HTMLResponse)
 async def bi_dashboard_audit_logs(request: Request) -> Response:
     ensure_schema()
-    username = current_dashboard_user(request)
-    if not username:
-        current_path = request.url.path
-        if request.url.query:
-            current_path = f"{current_path}?{request.url.query}"
-        login_url = f"/financial/bi-dashboard/login?next={quote(current_path, safe='')}"
-        return RedirectResponse(url=login_url, status_code=303)
+    username = require_admin_auth(request)
     return HTMLResponse(
         render_template(
             "bi_audit_log_center.html",
@@ -10005,6 +12383,10 @@ async def list_audit_logs(
     _auth: str = Depends(require_auth),
 ) -> JSONResponse:
     ensure_schema()
+    workflow_templates = inventory_flow_workflow_templates()
+    unfinished_workflow_instances = load_inventory_workflow_instance_snapshot(limit=50)
+    material_profiles = procurement_supply_material_profiles()
+    bom_profiles = procurement_supply_bom_profiles()
     conditions = ["1 = 1"]
     params: Dict[str, Any] = {}
     if module_key:
@@ -10122,6 +12504,69 @@ async def procurement_supply_console(_auth: str = Depends(require_auth)) -> JSON
     return JSONResponse(build_procurement_supply_console_payload())
 
 
+@router.post("/bi-dashboard/api/procurement-supply/sync")
+async def procurement_supply_sync(
+    payload: Dict[str, Any] | None = Body(None),
+    _auth: str = Depends(require_admin_auth),
+) -> JSONResponse:
+    ensure_schema()
+    sync_payload = payload or {}
+    page_size_value = (
+        max(20, min(200, parse_int_or_default(sync_payload.get("page_size"), 100)))
+        if sync_payload.get("page_size") not in (None, "")
+        else None
+    )
+    max_pages_value = (
+        max(1, min(5000, parse_int_or_default(sync_payload.get("max_pages"), 5)))
+        if sync_payload.get("max_pages") not in (None, "")
+        else None
+    )
+    try:
+        result = execute_procurement_document_sync(
+            "manual",
+            limit=max(1, min(1000, parse_int_or_default(sync_payload.get("limit"), 200))),
+            mode=str(sync_payload.get("mode") or "incremental").strip().lower() or "incremental",
+            page_size=page_size_value,
+            max_pages=max_pages_value,
+        )
+    except Exception as exc:
+        record_dashboard_audit(
+            module_key="procurement_supply",
+            module_name="采购供应",
+            action_key="sync_cache",
+            action_name="同步用友单据缓存",
+            target_type="yonyou_document_cache",
+            result_status="failed",
+            detail_summary=str(exc),
+            detail={"error": str(exc), "payload": sync_payload},
+            triggered_by=_auth,
+            source_path=PROCUREMENT_SUPPLY_SYNC_API_PATH,
+            source_method="POST",
+            affected_count=0,
+        )
+        raise HTTPException(status_code=500, detail=f"同步失败：{exc}") from exc
+
+    record_dashboard_audit(
+        module_key="procurement_supply",
+        module_name="采购供应",
+        action_key="sync_cache",
+        action_name="同步用友单据缓存",
+        target_type="yonyou_document_cache",
+        result_status="success" if result.get("status") == "success" else "pending",
+        detail_summary=str(result.get("message") or "缓存同步完成"),
+        detail={**result, "payload": sync_payload},
+        triggered_by=_auth,
+        source_path=PROCUREMENT_SUPPLY_SYNC_API_PATH,
+        source_method="POST",
+        affected_count=sum(
+            int((module_payload or {}).get("clean_row_count") or 0)
+            for module_payload in (result.get("modules") or {}).values()
+            if isinstance(module_payload, dict)
+        ),
+    )
+    return JSONResponse(result)
+
+
 @router.post("/bi-dashboard/api/procurement-supply/serial-import-preview")
 async def procurement_supply_serial_import_preview(
     material_code: str = Form(...),
@@ -10222,6 +12667,61 @@ async def procurement_supply_launch_document(
         source_path=f"/bi-dashboard/api/procurement-supply/documents/{document_key}/launch",
         source_method="POST",
         affected_count=1,
+    )
+    return JSONResponse(result)
+
+
+@router.post("/bi-dashboard/api/procurement-supply/workflows/{workflow_key}/launch")
+async def procurement_supply_launch_workflow(
+    workflow_key: str,
+    payload: Dict[str, Any] = Body(...),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    workflow_lookup = {str(item["key"]): item for item in procurement_supply_workflow_templates()}
+    workflow_meta = workflow_lookup.get(str(workflow_key or "").strip())
+    if workflow_meta is None:
+        raise HTTPException(status_code=404, detail=f"未识别的业务流：{workflow_key}")
+    try:
+        result = execute_procurement_supply_workflow_launch(
+            str(workflow_key or "").strip(),
+            dict(payload or {}),
+            launched_by=_auth,
+        )
+    except (ValueError, YonyouRequestError) as exc:
+        record_dashboard_audit(
+            module_key="procurement_supply_workflow",
+            module_name="采购供应业务流",
+            action_key="workflow_launch",
+            action_name=f"发起业务流单据 · {workflow_meta['title']}",
+            target_type="workflow_template",
+            target_id=workflow_meta.get("key"),
+            target_name=workflow_meta.get("title"),
+            result_status="failed",
+            detail_summary=str(exc),
+            detail={"payload": payload, "error": str(exc), "workflow_key": workflow_key},
+            triggered_by=_auth,
+            source_path=f"/bi-dashboard/api/procurement-supply/workflows/{workflow_key}/launch",
+            source_method="POST",
+            affected_count=0,
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record_dashboard_audit(
+        module_key="procurement_supply_workflow",
+        module_name="采购供应业务流",
+        action_key="workflow_launch",
+        action_name=f"发起业务流单据 · {workflow_meta['title']}",
+        target_type="workflow_template",
+        target_id=workflow_meta.get("key"),
+        target_name=workflow_meta.get("title"),
+        result_status="success",
+        detail_summary=f"{workflow_meta['title']} 自动下推完成，共执行 {len(result.get('step_results') or [])} 步",
+        detail=result,
+        triggered_by=_auth,
+        source_path=f"/bi-dashboard/api/procurement-supply/workflows/{workflow_key}/launch",
+        source_method="POST",
+        affected_count=len(result.get("step_results") or []),
     )
     return JSONResponse(result)
 
@@ -10520,6 +13020,61 @@ async def save_procurement_arrival(
     )
 
 
+@router.post("/bi-dashboard/api/inventory-flows/workflows/{workflow_key}/launch")
+async def inventory_flow_launch_workflow(
+    workflow_key: str,
+    payload: Dict[str, Any] = Body(...),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    workflow_lookup = {str(item["key"]): item for item in inventory_flow_workflow_templates()}
+    workflow_meta = workflow_lookup.get(str(workflow_key or "").strip())
+    if workflow_meta is None:
+        raise HTTPException(status_code=404, detail=f"未识别的库存业务流：{workflow_key}")
+    try:
+        result = execute_inventory_flow_workflow_launch(
+            str(workflow_key or "").strip(),
+            dict(payload or {}),
+            launched_by=_auth,
+        )
+    except (ValueError, YonyouRequestError) as exc:
+        record_dashboard_audit(
+            module_key="inventory_flow_workflow",
+            module_name="库存流转业务流",
+            action_key="workflow_launch",
+            action_name=f"发起库存业务流单据 / {workflow_meta['title']}",
+            target_type="workflow_template",
+            target_id=workflow_meta.get("key"),
+            target_name=workflow_meta.get("title"),
+            result_status="failed",
+            detail_summary=str(exc),
+            detail={"payload": payload, "error": str(exc), "workflow_key": workflow_key},
+            triggered_by=_auth,
+            source_path=f"/bi-dashboard/api/inventory-flows/workflows/{workflow_key}/launch",
+            source_method="POST",
+            affected_count=0,
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record_dashboard_audit(
+        module_key="inventory_flow_workflow",
+        module_name="库存流转业务流",
+        action_key="workflow_launch",
+        action_name=f"发起库存业务流单据 / {workflow_meta['title']}",
+        target_type="workflow_template",
+        target_id=workflow_meta.get("key"),
+        target_name=workflow_meta.get("title"),
+        result_status="success",
+        detail_summary=f"{workflow_meta['title']} 已自动下推，执行 {len(result.get('step_results') or [])} 个节点",
+        detail=result,
+        triggered_by=_auth,
+        source_path=f"/bi-dashboard/api/inventory-flows/workflows/{workflow_key}/launch",
+        source_method="POST",
+        affected_count=len(result.get("step_results") or []),
+    )
+    return JSONResponse(result)
+
+
 @router.get("/bi-dashboard/api/inventory-flows")
 async def list_inventory_flows(
     task_status: str | None = Query(None),
@@ -10529,6 +13084,10 @@ async def list_inventory_flows(
     _auth: str = Depends(require_auth),
 ) -> JSONResponse:
     ensure_schema()
+    workflow_templates = inventory_flow_workflow_templates()
+    unfinished_workflow_instances = load_inventory_workflow_instance_snapshot(limit=50)
+    material_profiles = procurement_supply_material_profiles()
+    bom_profiles = procurement_supply_bom_profiles()
     conditions = ["1 = 1"]
     params: Dict[str, Any] = {}
     if task_status:
@@ -10598,6 +13157,7 @@ async def list_inventory_flows(
                 """
             )
         ).mappings().all()
+        schedule_tasks = load_inventory_flow_schedule_tasks(conn)
         latest_sales_date = None
         sales_summary_row = {"sales_qty": 0, "return_qty": 0}
         if table_exists(conn, "bi_material_sales_daily_cleaning"):
@@ -10624,6 +13184,8 @@ async def list_inventory_flows(
         "pending_count": sum(1 for item in tasks if item["task_status"] == "pending"),
         "blocked_count": sum(1 for item in tasks if item["task_status"] == "blocked"),
         "completed_count": sum(1 for item in tasks if item["task_status"] == "completed"),
+        "schedule_task_count": len(schedule_tasks),
+        "enabled_schedule_task_count": sum(1 for item in schedule_tasks if item["is_enabled"]),
         "enabled_rule_count": sum(1 for item in rules if item["is_enabled"]),
         "auto_rule_count": sum(1 for item in rules if item["is_enabled"] and item["auto_create_task"]),
         "transfer_count": sum(1 for item in tasks if item["action_type"] == "warehouse_transfer"),
@@ -10632,10 +13194,48 @@ async def list_inventory_flows(
         "yesterday_sales_date": to_plain(sales_reference_date),
         "latest_sales_date": to_plain(latest_sales_date),
     }
+    scrap_reference_options = {
+        "org_options": [],
+        "bustype_options": [],
+        "warehouse_options": [],
+        "status_options": [],
+    }
+    scrap_integration = {
+        "supported": False,
+        "status": "unavailable",
+        "title": "报废单",
+        "note": "报废单接口尚未接入可用能力。",
+    }
+    if is_procurement_yonyou_configured():
+        try:
+            scrap_reference_options = load_scrap_reference_options()
+            scrap_integration = {
+                "supported": True,
+                "status": "create_submit_query_ready",
+                "title": "报废单",
+                "note": "报废单已接入新增、提交和查询能力，可直接纳入库存流转业务流。",
+            }
+        except Exception as exc:
+            scrap_integration = {
+                "supported": False,
+                "status": "reference_load_failed",
+                "title": "报废单",
+                "note": str(exc),
+            }
     return JSONResponse(
         {
             "rules": rules,
             "tasks": tasks,
+            "schedule_tasks": schedule_tasks,
+            "workflow_templates": workflow_templates,
+            "unfinished_workflow_instances": unfinished_workflow_instances,
+            "material_profiles": material_profiles,
+            "bom_profiles": bom_profiles,
+            "scrap_integration": scrap_integration,
+            "scrap_org_options": scrap_reference_options["org_options"],
+            "scrap_bustype_options": scrap_reference_options["bustype_options"],
+            "scrap_warehouse_options": scrap_reference_options["warehouse_options"],
+            "scrap_status_options": scrap_reference_options["status_options"],
             "summary": summary,
             "action_options": inventory_flow_action_options(),
             "task_status_options": inventory_flow_task_status_options(),
@@ -10765,6 +13365,820 @@ def build_inventory_live_stock_snapshot(force_refresh: bool = False) -> Dict[str
     }
 
 
+def resolve_inventory_flow_report_local_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return str(sock.getsockname()[0] or "127.0.0.1")
+    except Exception:
+        return "127.0.0.1"
+
+
+def inventory_flow_report_base_url() -> str:
+    configured = str(os.getenv("BI_REPORT_PUBLIC_BASE_URL") or "").strip()
+    if configured:
+        return configured.rstrip("/")
+    port = int(str(os.getenv("SERVER_PORT") or "8888").strip() or "8888")
+    return f"http://{resolve_inventory_flow_report_local_ip()}:{port}"
+
+
+def inventory_flow_report_file_path(file_name: str) -> Path:
+    safe_name = Path(str(file_name or "").strip()).name
+    return INVENTORY_FLOW_SCHEDULE_EXPORT_DIR / safe_name
+
+
+def inventory_flow_report_public_url(file_name: str) -> str:
+    return f"{inventory_flow_report_base_url()}{INVENTORY_FLOW_REPORT_PUBLIC_PATH}/{quote(Path(file_name).name)}"
+
+
+def inventory_flow_schedule_dingtalk_webhook() -> str:
+    configured = str(getattr(settings, "DINGTALK_WEBHOOK_URL", "") or "").strip()
+    return configured or INVENTORY_FLOW_SCHEDULE_DEFAULT_WEBHOOK
+
+
+def inventory_flow_schedule_dingtalk_secret() -> str:
+    configured = str(getattr(settings, "DINGTALK_SECRET", "") or "").strip()
+    return configured or INVENTORY_FLOW_SCHEDULE_DEFAULT_SECRET
+
+
+def inventory_flow_schedule_oss_object_key(file_name: str) -> str:
+    prefix = str(getattr(settings, "OSS_PREFIX", "") or "").strip().strip("/")
+    safe_name = Path(file_name).name
+    return f"{prefix}/{safe_name}" if prefix else safe_name
+
+
+def upload_inventory_flow_schedule_report_image(file_path: Path, file_name: str) -> str:
+    oss_service = OSSService()
+    if not oss_service.client:
+        return inventory_flow_report_public_url(file_name)
+
+    object_key = inventory_flow_schedule_oss_object_key(file_name)
+    encoded_name = quote(Path(file_name).name)
+    headers = {"Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}"}
+    with file_path.open("rb") as handle:
+        result = oss_service.client.put_object(object_key, handle, headers=headers)
+    if int(getattr(result, "status", 0) or 0) != 200:
+        raise RuntimeError(f"OSS 上传失败，状态码：{getattr(result, 'status', 'unknown')}")
+    signed_url = oss_service.generate_signed_url(object_key, expires_in=INVENTORY_FLOW_SCHEDULE_REPORT_URL_EXPIRE_SECONDS)
+    if not signed_url:
+        raise RuntimeError("OSS 签名链接生成失败")
+    return signed_url
+
+
+def normalize_inventory_flow_report_warehouse_name(value: str) -> str:
+    warehouse_name = str(value or "").strip()
+    if not warehouse_name:
+        return "未归类仓"
+    if "华泰" in warehouse_name:
+        return "华泰仓"
+    if "余杭" in warehouse_name or "盒马云仓" in warehouse_name:
+        return "余杭云仓"
+    if "萧山" in warehouse_name:
+        return "萧山云仓"
+    if "委外" in warehouse_name:
+        return "委外仓"
+    if "良品" in warehouse_name:
+        return "良品仓"
+    if "自营" in warehouse_name:
+        return "自营仓"
+    if "销退" in warehouse_name:
+        return "销退仓"
+    if "生产" in warehouse_name:
+        return "生产仓"
+    if "报废" in warehouse_name:
+        return "报废仓"
+    if "不良" in warehouse_name:
+        return "不良品仓"
+    return warehouse_name.replace("精准学", "").strip() or warehouse_name
+
+
+def inventory_flow_stock_status_bucket(status_name: str) -> str:
+    label = str(status_name or "").strip()
+    if "待检" in label or "未检" in label:
+        return "未检"
+    if "不良" in label:
+        return "不良品"
+    return "良品"
+
+
+def inventory_flow_material_family(material_name: str) -> str:
+    name = str(material_name or "").strip()
+    if not name:
+        return "未分类"
+    matched = re.match(r"([A-Za-z]+\d+[A-Za-z0-9]*)", name)
+    if matched:
+        return matched.group(1)
+    if name.lower().startswith("bong"):
+        return "Bong"
+    return name[:10]
+
+
+def load_inventory_flow_material_name_map(conn) -> Dict[str, str]:
+    if not table_exists(conn, "bi_inventory_snapshot_daily_cleaning"):
+        return {}
+    rows = conn.execute(
+        text(
+            """
+            SELECT material_code, material_name
+            FROM bi_inventory_snapshot_daily_cleaning
+            WHERE snapshot_date = (
+                SELECT MAX(snapshot_date) FROM bi_inventory_snapshot_daily_cleaning
+            )
+              AND COALESCE(material_name, '') <> ''
+            ORDER BY material_code
+            """
+        )
+    ).mappings().all()
+    mapping: Dict[str, str] = {}
+    for row in rows:
+        material_code = str(row["material_code"] or "").strip()
+        material_name = str(row["material_name"] or "").strip()
+        if material_code and material_name and material_code not in mapping:
+            mapping[material_code] = material_name
+    return mapping
+
+
+def build_inventory_live_stock_report_payload(
+    report_config: Dict[str, Any] | None = None,
+    *,
+    force_refresh: bool = True,
+    report_title: str | None = None,
+) -> Dict[str, Any]:
+    normalized_config = normalize_inventory_live_stock_report_config(report_config)
+    snapshot = build_inventory_live_stock_snapshot(force_refresh=force_refresh)
+    generated_at = snapshot["queried_at"]
+    rows = snapshot["items"]
+    selected_status_buckets = [
+        bucket for bucket in normalized_config["status_buckets"] if bucket in INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS
+    ] or list(INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS)
+    selected_material_codes = [str(item).strip() for item in normalized_config["material_codes"] if str(item).strip()]
+    selected_warehouse_codes = [str(item).strip() for item in normalized_config["warehouse_codes"] if str(item).strip()]
+    warehouse_name_by_code: Dict[str, str] = {}
+    material_name_by_code: Dict[str, str] = {}
+    warehouse_totals: Dict[str, float] = defaultdict(float)
+    material_totals: Dict[tuple[str, str], float] = defaultdict(float)
+    matrix: Dict[tuple[str, str], Dict[tuple[str, str], float]] = defaultdict(lambda: defaultdict(float))
+    incoming_totals: Dict[tuple[str, str], float] = defaultdict(float)
+    family_totals: Dict[str, float] = defaultdict(float)
+    family_materials: Dict[str, set[tuple[str, str]]] = defaultdict(set)
+    selected_family_order: List[str] = []
+    filtered_rows: List[Dict[str, Any]] = []
+
+    for row in rows:
+        warehouse_code = str(row.get("warehouse_code") or "").strip()
+        warehouse_name = normalize_inventory_flow_report_warehouse_name(str(row.get("warehouse_name") or ""))
+        if warehouse_code:
+            warehouse_name_by_code[warehouse_code] = warehouse_name or warehouse_code
+        material_code = str(row.get("material_code") or "").strip()
+        material_name = str(row.get("material_name") or "").strip() or material_code or "--"
+        if material_code:
+            material_name_by_code[material_code] = material_name
+        if selected_warehouse_codes and warehouse_code not in selected_warehouse_codes:
+            continue
+        if selected_material_codes and material_code not in selected_material_codes:
+            continue
+        filtered_rows.append(row)
+
+    for row in filtered_rows:
+        warehouse_name = normalize_inventory_flow_report_warehouse_name(str(row.get("warehouse_name") or ""))
+        status_bucket = inventory_flow_stock_status_bucket(str(row.get("stock_status_name") or ""))
+        if status_bucket not in selected_status_buckets:
+            continue
+        material_code = str(row.get("material_code") or "").strip()
+        material_name = str(row.get("material_name") or "").strip() or material_code or "--"
+        key = (material_code, material_name)
+        current_qty = float(row.get("current_qty") or 0.0)
+        incoming_qty = float(row.get("incoming_notice_qty") or 0.0)
+        if current_qty <= 0 and incoming_qty <= 0:
+            continue
+        warehouse_totals[warehouse_name] += current_qty
+        material_totals[key] += current_qty
+        matrix[key][(warehouse_name, status_bucket)] += current_qty
+        incoming_totals[key] += incoming_qty
+        family = inventory_flow_material_family(material_name)
+        family_totals[family] += current_qty
+        family_materials[family].add(key)
+        if selected_material_codes and family not in selected_family_order:
+            selected_family_order.append(family)
+
+    if selected_warehouse_codes:
+        selected_warehouses: List[str] = []
+        seen_warehouse_names: set[str] = set()
+        for warehouse_code in selected_warehouse_codes:
+            warehouse_name = warehouse_name_by_code.get(warehouse_code, warehouse_code)
+            if warehouse_name in seen_warehouse_names:
+                continue
+            seen_warehouse_names.add(warehouse_name)
+            selected_warehouses.append(warehouse_name)
+    else:
+        preferred_warehouses = ["良品仓", "委外仓", "萧山云仓", "余杭云仓"]
+        selected_warehouses = [name for name in preferred_warehouses if warehouse_totals.get(name, 0.0) > 0]
+        if len(selected_warehouses) < 4:
+            remaining = [
+                name
+                for name, _ in sorted(warehouse_totals.items(), key=lambda item: item[1], reverse=True)
+                if name not in selected_warehouses
+            ]
+            selected_warehouses.extend(remaining[: max(0, 4 - len(selected_warehouses))])
+        selected_warehouses = selected_warehouses[:4]
+
+    max_families = normalized_config["max_families"]
+    max_materials_per_section = normalized_config["max_materials_per_section"]
+    if selected_material_codes:
+        ordered_keys: List[tuple[str, str]] = []
+        for material_code in selected_material_codes:
+            material_name = material_name_by_code.get(material_code, material_code or "--")
+            key = (material_code, material_name)
+            if key in ordered_keys:
+                continue
+            ordered_keys.append(key)
+        family_keys_map: Dict[str, List[tuple[str, str]]] = defaultdict(list)
+        for key in ordered_keys:
+            family = inventory_flow_material_family(key[1])
+            family_keys_map[family].append(key)
+        selected_families = selected_family_order[:max_families]
+    else:
+        selected_families = [
+            family
+            for family, _ in sorted(family_totals.items(), key=lambda item: item[1], reverse=True)[:max_families]
+        ]
+        family_keys_map = {
+            family: sorted(
+                family_materials[family],
+                key=lambda key: material_totals.get(key, 0.0),
+                reverse=True,
+            )[:max_materials_per_section]
+            for family in selected_families
+        }
+
+    sections: List[Dict[str, Any]] = []
+    for family in selected_families:
+        family_keys = family_keys_map.get(family, [])[:max_materials_per_section]
+        section_rows: List[Dict[str, Any]] = []
+        for material_code, material_name in family_keys:
+            key = (material_code, material_name)
+            if key not in material_totals and key not in incoming_totals:
+                continue
+            values: Dict[str, float] = {}
+            for warehouse_name in selected_warehouses:
+                for status_bucket in selected_status_buckets:
+                    values[f"{warehouse_name}:{status_bucket}"] = round(
+                        matrix[key].get((warehouse_name, status_bucket), 0.0),
+                        2,
+                    )
+            values["现存量"] = round(material_totals.get(key, 0.0), 2)
+            values["在途数"] = round(incoming_totals.get(key, 0.0), 2)
+            section_rows.append({"material_name": material_name, "values": values})
+        if section_rows:
+            sections.append({"title": family, "rows": section_rows})
+
+    return {
+        "title": str(report_title or "库存现存量日报").strip() or "库存现存量日报",
+        "generated_at": generated_at,
+        "warehouses": selected_warehouses,
+        "status_buckets": selected_status_buckets,
+        "sections": sections,
+        "config_summary": {
+            "selected_warehouse_count": len(selected_warehouse_codes),
+            "selected_material_count": len(selected_material_codes),
+            "selected_status_bucket_count": len(selected_status_buckets),
+        },
+    }
+
+
+def build_warehouse_daily_movement_report_payload() -> Dict[str, Any]:
+    today = datetime.now(scheduler_timezone()).date()
+    window_dates = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    month_start = today.replace(day=1)
+    current_engine = get_engine()
+    with current_engine.connect() as conn:
+        material_name_map = load_inventory_flow_material_name_map(conn)
+        inbound_rows = conn.execute(
+            text(
+                """
+                SELECT DATE(source_pubts) AS biz_date, warehouse_name AS warehouse_name, material_code, qty
+                FROM bi_yonyou_purchase_inbound_clean
+                WHERE DATE(source_pubts) BETWEEN :month_start AND :today
+                  AND document_status = 'approved'
+                UNION ALL
+                SELECT DATE(source_pubts) AS biz_date, in_warehouse AS warehouse_name, material_code, qty
+                FROM bi_yonyou_storein_clean
+                WHERE DATE(source_pubts) BETWEEN :month_start AND :today
+                  AND document_status = 'approved'
+                """
+            ),
+            {"month_start": month_start, "today": today},
+        ).mappings().all()
+        outbound_rows = conn.execute(
+            text(
+                """
+                SELECT DATE(source_pubts) AS biz_date, out_warehouse AS warehouse_name, material_code, qty
+                FROM bi_yonyou_storeout_clean
+                WHERE DATE(source_pubts) BETWEEN :month_start AND :today
+                  AND document_status = 'approved'
+                """
+            ),
+            {"month_start": month_start, "today": today},
+        ).mappings().all()
+
+    def material_name_for(material_code: str) -> str:
+        material_code = str(material_code or "").strip()
+        return material_name_map.get(material_code, material_code or "--")
+
+    section_totals: Dict[str, float] = defaultdict(float)
+    section_matrix: Dict[str, Dict[str, Dict[date, float]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+
+    for row in inbound_rows:
+        biz_date = row["biz_date"]
+        warehouse_name = normalize_inventory_flow_report_warehouse_name(str(row["warehouse_name"] or ""))
+        section_key = f"{warehouse_name}入库"
+        material_name = material_name_for(str(row["material_code"] or ""))
+        qty = float(row["qty"] or 0.0)
+        if not isinstance(biz_date, date) or qty <= 0:
+            continue
+        section_totals[section_key] += qty
+        section_matrix[section_key][material_name][biz_date] += qty
+
+    for row in outbound_rows:
+        biz_date = row["biz_date"]
+        warehouse_name = normalize_inventory_flow_report_warehouse_name(str(row["warehouse_name"] or ""))
+        section_key = f"{warehouse_name}出库"
+        material_name = material_name_for(str(row["material_code"] or ""))
+        qty = float(row["qty"] or 0.0)
+        if not isinstance(biz_date, date) or qty <= 0:
+            continue
+        section_totals[section_key] += qty
+        section_matrix[section_key][material_name][biz_date] += qty
+
+    inbound_sections = sorted(
+        [key for key in section_totals if key.endswith("入库")],
+        key=lambda key: section_totals[key],
+        reverse=True,
+    )[:2]
+    outbound_sections = sorted(
+        [key for key in section_totals if key.endswith("出库")],
+        key=lambda key: section_totals[key],
+        reverse=True,
+    )[:2]
+    selected_sections = inbound_sections + outbound_sections
+    if not selected_sections:
+        selected_sections = [key for key, _ in sorted(section_totals.items(), key=lambda item: item[1], reverse=True)[:4]]
+
+    rendered_sections: List[Dict[str, Any]] = []
+    for section_key in selected_sections:
+        material_rows = sorted(
+            section_matrix[section_key].items(),
+            key=lambda item: sum(item[1].values()),
+            reverse=True,
+        )[:8]
+        rows: List[Dict[str, Any]] = []
+        totals_by_date: Dict[date, float] = defaultdict(float)
+        month_total = 0.0
+        for material_name, daily_values in material_rows:
+            row_values = {entry_date: round(float(daily_values.get(entry_date, 0.0)), 2) for entry_date in window_dates}
+            row_month_total = round(sum(float(value) for value in daily_values.values()), 2)
+            for entry_date, value in row_values.items():
+                totals_by_date[entry_date] += value
+            month_total += row_month_total
+            rows.append({"name": material_name, "values": row_values, "month_total": row_month_total})
+        rows.append(
+            {
+                "name": "汇总",
+                "values": {entry_date: round(float(totals_by_date.get(entry_date, 0.0)), 2) for entry_date in window_dates},
+                "month_total": round(month_total, 2),
+                "is_total": True,
+            }
+        )
+        rendered_sections.append({"title": section_key, "rows": rows})
+
+    return {
+        "title": "每日仓库出入库",
+        "generated_at": datetime.now(scheduler_timezone()),
+        "window_dates": window_dates,
+        "sections": rendered_sections,
+    }
+
+
+def inventory_flow_load_report_fonts() -> Dict[str, Any]:
+    from PIL import ImageFont
+
+    regular_candidates = [
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\simsun.ttc",
+    ]
+    bold_candidates = [
+        r"C:\Windows\Fonts\msyhbd.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\msyh.ttc",
+    ]
+
+    def load_font(size: int, *, bold: bool = False):
+        candidates = bold_candidates if bold else regular_candidates
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                try:
+                    return ImageFont.truetype(candidate, size=size)
+                except Exception:
+                    continue
+        return ImageFont.load_default()
+
+    return {
+        "title": load_font(26, bold=True),
+        "header": load_font(16, bold=True),
+        "body": load_font(14),
+        "body_bold": load_font(14, bold=True),
+        "small": load_font(12),
+    }
+
+
+def inventory_flow_wrap_text(draw, text: str, font, max_width: int, max_lines: int = 2) -> List[str]:
+    value = str(text or "").strip()
+    if not value:
+        return [""]
+    lines: List[str] = []
+    current = ""
+    for char in value:
+        trial = f"{current}{char}"
+        if draw.textbbox((0, 0), trial, font=font)[2] <= max_width or not current:
+            current = trial
+            continue
+        lines.append(current)
+        current = char
+        if len(lines) >= max_lines:
+            break
+    if len(lines) < max_lines and current:
+        lines.append(current)
+    if len(lines) == max_lines and "".join(lines) != value:
+        trimmed = lines[-1]
+        while trimmed and draw.textbbox((0, 0), f"{trimmed}…", font=font)[2] > max_width:
+            trimmed = trimmed[:-1]
+        lines[-1] = f"{trimmed}…" if trimmed else "…"
+    return lines[:max_lines] or [value]
+
+
+def draw_inventory_flow_report_cell(
+    draw,
+    *,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    text_value: str,
+    font,
+    fill: str = "#FFFFFF",
+    outline: str = "#D8E0EA",
+    text_fill: str = "#0F172A",
+    align: str = "center",
+    padding_x: int = 8,
+    max_lines: int = 2,
+) -> None:
+    draw.rectangle((x, y, x + width, y + height), fill=fill, outline=outline, width=1)
+    lines = inventory_flow_wrap_text(draw, text_value, font, max(width - padding_x * 2, 24), max_lines=max_lines)
+    bbox = draw.textbbox((0, 0), "国", font=font)
+    line_height = max(1, bbox[3] - bbox[1]) + 2
+    text_block_height = line_height * len(lines)
+    text_y = y + max((height - text_block_height) // 2, 4)
+    for line in lines:
+        text_width = draw.textbbox((0, 0), line, font=font)[2]
+        if align == "left":
+            text_x = x + padding_x
+        elif align == "right":
+            text_x = x + width - padding_x - text_width
+        else:
+            text_x = x + max((width - text_width) // 2, padding_x)
+        draw.text((text_x, text_y), line, font=font, fill=text_fill)
+        text_y += line_height
+
+
+def format_decimal(value: Any) -> str:
+    amount = float(value or 0.0)
+    if abs(amount - round(amount)) < 1e-9:
+        return f"{int(round(amount))}"
+    return f"{amount:.2f}".rstrip("0").rstrip(".")
+
+
+def render_inventory_live_stock_report_image(report: Dict[str, Any], file_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    fonts = inventory_flow_load_report_fonts()
+    warehouses = report["warehouses"]
+    status_buckets = [
+        bucket for bucket in report.get("status_buckets", list(INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS))
+        if bucket in INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS
+    ] or list(INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS)
+    sections = report["sections"]
+    columns = [{"label": "物料名称", "key": "material_name", "width": 260, "align": "left"}]
+    for warehouse_name in warehouses:
+        for status_bucket in status_buckets:
+            columns.append(
+                {"label": status_bucket, "group": warehouse_name, "key": f"{warehouse_name}:{status_bucket}", "width": 74, "align": "right"}
+            )
+    columns.extend(
+        [
+            {"label": "现存量", "group": "汇总", "key": "现存量", "width": 92, "align": "right"},
+            {"label": "在途数", "group": "在途数", "key": "在途数", "width": 92, "align": "right"},
+        ]
+    )
+    total_width = sum(column["width"] for column in columns)
+    canvas_width = total_width + 48
+    title_height = 42
+    group_header_height = 34
+    sub_header_height = 34
+    section_height = 34
+    row_height = 38
+    total_height = 22 + title_height + group_header_height + sub_header_height + 24
+    for section in sections:
+        total_height += section_height + len(section["rows"]) * row_height
+
+    image = Image.new("RGB", (canvas_width, total_height), "#FFFFFF")
+    draw = ImageDraw.Draw(image)
+    x0 = 24
+    y = 22
+    generated_at = report["generated_at"]
+    draw_inventory_flow_report_cell(draw, x=x0, y=y, width=220, height=title_height, text_value=f"导出时间：{generated_at.strftime('%m月%d日 %H:%M')}", font=fonts["header"], fill="#F8FAFC", outline="#CBD5E1", align="left", max_lines=1)
+    draw_inventory_flow_report_cell(draw, x=x0 + 220, y=y, width=total_width - 220, height=title_height, text_value=f"{report['title']}日报", font=fonts["title"], fill="#FFFFFF", outline="#CBD5E1", max_lines=1)
+    y += title_height
+
+    cursor_x = x0
+    draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=columns[0]["width"], height=group_header_height + sub_header_height, text_value=columns[0]["label"], font=fonts["header"], fill="#F8FAFC", outline="#CBD5E1", max_lines=1)
+    cursor_x += columns[0]["width"]
+    for warehouse_name in warehouses:
+        group_width = 74 * len(status_buckets)
+        draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=group_width, height=group_header_height, text_value=warehouse_name, font=fonts["header"], fill="#E0F2FE", outline="#94A3B8", max_lines=1)
+        cursor_x += group_width
+    for label in ("汇总", "在途数"):
+        draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=92, height=group_header_height, text_value=label, font=fonts["header"], fill="#E0F2FE", outline="#94A3B8", max_lines=1)
+        cursor_x += 92
+    y += group_header_height
+
+    cursor_x = x0 + columns[0]["width"]
+    for _warehouse_name in warehouses:
+        for status_bucket in status_buckets:
+            draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=74, height=sub_header_height, text_value=status_bucket, font=fonts["header"], fill="#F0F9FF", outline="#CBD5E1", max_lines=1)
+            cursor_x += 74
+    for label in ("现存量", "在途数"):
+        draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=92, height=sub_header_height, text_value=label, font=fonts["header"], fill="#F0F9FF", outline="#CBD5E1", max_lines=1)
+        cursor_x += 92
+    y += sub_header_height
+
+    for section in sections:
+        draw_inventory_flow_report_cell(draw, x=x0, y=y, width=total_width, height=section_height, text_value=section["title"], font=fonts["header"], fill="#DFF3FF", outline="#94A3B8", max_lines=1)
+        y += section_height
+        for row in section["rows"]:
+            cursor_x = x0
+            draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=columns[0]["width"], height=row_height, text_value=row["material_name"], font=fonts["body_bold"], fill="#FFFFFF", outline="#E2E8F0", align="left", max_lines=2)
+            cursor_x += columns[0]["width"]
+            for column in columns[1:]:
+                raw_value = row["values"].get(column["key"], 0.0)
+                display_value = "" if abs(float(raw_value or 0.0)) < 1e-9 else format_decimal(raw_value)
+                draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=column["width"], height=row_height, text_value=display_value, font=fonts["body"], fill="#FFFFFF", outline="#E2E8F0", align=column["align"], max_lines=1)
+                cursor_x += column["width"]
+            y += row_height
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(file_path, format="PNG", optimize=True)
+
+
+def render_warehouse_daily_movement_report_image(report: Dict[str, Any], file_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    fonts = inventory_flow_load_report_fonts()
+    window_dates = report["window_dates"]
+    columns = [{"label": "ITEM", "width": 280, "align": "left"}]
+    columns.extend({"label": entry_date.strftime("%Y/%m/%d"), "width": 92, "align": "right"} for entry_date in window_dates)
+    columns.append({"label": "月度总计", "width": 108, "align": "right"})
+    total_width = sum(column["width"] for column in columns)
+    canvas_width = total_width + 48
+    title_height = 42
+    header_height = 34
+    section_height = 34
+    row_height = 36
+    total_height = 22 + title_height + header_height + 24
+    for section in report["sections"]:
+        total_height += section_height + len(section["rows"]) * row_height
+
+    image = Image.new("RGB", (canvas_width, total_height), "#FFFFFF")
+    draw = ImageDraw.Draw(image)
+    x0 = 24
+    y = 22
+    generated_at = report["generated_at"]
+    draw_inventory_flow_report_cell(draw, x=x0, y=y, width=220, height=title_height, text_value=f"导出时间：{generated_at.strftime('%m月%d日 %H:%M')}", font=fonts["header"], fill="#F8FAFC", outline="#CBD5E1", align="left", max_lines=1)
+    draw_inventory_flow_report_cell(draw, x=x0 + 220, y=y, width=total_width - 220, height=title_height, text_value=report["title"], font=fonts["title"], fill="#FFFFFF", outline="#CBD5E1", max_lines=1)
+    y += title_height
+
+    cursor_x = x0
+    for column in columns:
+        draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=column["width"], height=header_height, text_value=column["label"], font=fonts["header"], fill="#E0F2FE", outline="#94A3B8", max_lines=1)
+        cursor_x += column["width"]
+    y += header_height
+
+    for section in report["sections"]:
+        draw_inventory_flow_report_cell(draw, x=x0, y=y, width=total_width, height=section_height, text_value=section["title"], font=fonts["header"], fill="#DFF3FF", outline="#94A3B8", max_lines=1)
+        y += section_height
+        for row in section["rows"]:
+            cursor_x = x0
+            is_total = bool(row.get("is_total"))
+            fill = "#FFF7ED" if is_total else "#FFFFFF"
+            text_fill = "#DC2626" if is_total else "#0F172A"
+            draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=columns[0]["width"], height=row_height, text_value=row["name"], font=fonts["body_bold"], fill=fill, outline="#E2E8F0", align="left", text_fill=text_fill, max_lines=1)
+            cursor_x += columns[0]["width"]
+            for entry_date in window_dates:
+                raw_value = row["values"].get(entry_date, 0.0)
+                display_value = "" if abs(float(raw_value or 0.0)) < 1e-9 else format_decimal(raw_value)
+                draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=92, height=row_height, text_value=display_value, font=fonts["body"], fill=fill, outline="#E2E8F0", align="right", text_fill=text_fill, max_lines=1)
+                cursor_x += 92
+            month_total = row.get("month_total", 0.0)
+            display_month_total = "" if abs(float(month_total or 0.0)) < 1e-9 else format_decimal(month_total)
+            draw_inventory_flow_report_cell(draw, x=cursor_x, y=y, width=108, height=row_height, text_value=display_month_total, font=fonts["body_bold"] if is_total else fonts["body"], fill=fill, outline="#E2E8F0", align="right", text_fill=text_fill, max_lines=1)
+            y += row_height
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(file_path, format="PNG", optimize=True)
+
+
+def build_inventory_flow_schedule_report(task_row: Dict[str, Any]) -> Dict[str, Any]:
+    task_type = str(task_row.get("task_type") or "").strip()
+    timestamp = datetime.now(scheduler_timezone())
+    report_slug = f"{task_row['task_key']}_{timestamp.strftime('%Y%m%d_%H%M%S')}.png"
+    file_path = inventory_flow_report_file_path(report_slug)
+    if task_type == "inventory_live_stock":
+        payload = build_inventory_live_stock_report_payload(
+            task_row.get("report_config"),
+            force_refresh=True,
+            report_title=str(task_row.get("report_title") or task_row.get("task_name") or "库存现存量日报"),
+        )
+        render_inventory_live_stock_report_image(payload, file_path)
+    elif task_type == "warehouse_daily_movement":
+        payload = build_warehouse_daily_movement_report_payload()
+        render_warehouse_daily_movement_report_image(payload, file_path)
+    else:
+        raise RuntimeError(f"未知的库存流转定时任务类型：{task_type}")
+    report_url = upload_inventory_flow_schedule_report_image(file_path, report_slug)
+    return {
+        "title": str(task_row.get("report_title") or task_row.get("task_name") or "库存流转报表"),
+        "generated_at": timestamp,
+        "file_name": report_slug,
+        "file_path": str(file_path),
+        "public_url": report_url,
+    }
+
+
+def send_inventory_flow_schedule_report_to_dingtalk(
+    *,
+    webhook_url: str,
+    secret: str,
+    title: str,
+    public_url: str,
+    generated_at: datetime,
+    trigger: str,
+) -> Dict[str, Any]:
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": (
+                f"## {title}\n\n"
+                f"![{title}]({public_url})\n\n"
+                f"[查看原图]({public_url})\n\n"
+                f"> 触发方式：{trigger}\n"
+                f"> 生成时间：{generated_at.strftime('%Y-%m-%d %H:%M:%S')}"
+            ),
+        },
+    }
+    request_params: Dict[str, str] | None = None
+    normalized_secret = str(secret or "").strip()
+    if normalized_secret:
+        timestamp = str(round(time.time() * 1000))
+        string_to_sign = f"{timestamp}\n{normalized_secret}"
+        sign = b64encode(
+            hmac.new(
+                normalized_secret.encode("utf-8"),
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).digest()
+        ).decode("utf-8")
+        request_params = {"timestamp": timestamp, "sign": sign}
+    response = requests.post(
+        webhook_url,
+        params=request_params,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        timeout=15,
+    )
+    response.raise_for_status()
+    result = response.json()
+    errcode = result.get("errcode")
+    if int(-1 if errcode is None else errcode) != 0:
+        raise RuntimeError(str(result.get("errmsg") or "钉钉机器人发送失败"))
+    return result
+
+
+def execute_inventory_flow_schedule_task(task_key: str, trigger: str = "manual") -> Dict[str, Any]:
+    ensure_schema()
+    if not inventory_flow_schedule_run_lock.acquire(blocking=False):
+        return {"ok": False, "status": "busy", "message": "已有库存流转定时任务正在执行"}
+
+    started_at = datetime.now(scheduler_timezone())
+    current_engine = get_engine()
+    try:
+        with current_engine.begin() as conn:
+            task_row = conn.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM bi_inventory_flow_schedule_task
+                    WHERE task_key = :task_key
+                    LIMIT 1
+                    """
+                ),
+                {"task_key": task_key},
+            ).mappings().first()
+            if not task_row:
+                raise RuntimeError(f"未找到库存流转定时任务：{task_key}")
+            conn.execute(
+                text(
+                    """
+                    UPDATE bi_inventory_flow_schedule_task
+                    SET last_run_started_at = :started_at,
+                        last_run_status = 'running',
+                        last_run_message = '',
+                        last_run_trigger = :trigger
+                    WHERE task_key = :task_key
+                    """
+                ),
+                {"task_key": task_key, "started_at": started_at, "trigger": trigger},
+            )
+
+        task = normalize_inventory_flow_schedule_row(dict(task_row))
+        report = build_inventory_flow_schedule_report(task)
+        send_result = send_inventory_flow_schedule_report_to_dingtalk(
+            webhook_url=str(task.get("webhook_url") or "").strip(),
+            secret=inventory_flow_schedule_dingtalk_secret(),
+            title=report["title"],
+            public_url=report["public_url"],
+            generated_at=report["generated_at"],
+            trigger=trigger,
+        )
+        finished_at = datetime.now(scheduler_timezone())
+        with current_engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE bi_inventory_flow_schedule_task
+                    SET last_run_finished_at = :finished_at,
+                        last_run_status = 'success',
+                        last_run_message = :message,
+                        last_report_path = :report_path,
+                        last_report_url = :report_url,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE task_key = :task_key
+                    """
+                ),
+                {
+                    "task_key": task_key,
+                    "finished_at": finished_at,
+                    "message": "发送成功",
+                    "report_path": report["file_path"],
+                    "report_url": report["public_url"],
+                },
+            )
+        return {
+            "ok": True,
+            "status": "success",
+            "task_key": task_key,
+            "title": report["title"],
+            "public_url": report["public_url"],
+            "file_path": report["file_path"],
+            "generated_at": to_plain(report["generated_at"]),
+            "send_result": send_result,
+        }
+    except Exception as exc:
+        finished_at = datetime.now(scheduler_timezone())
+        with current_engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE bi_inventory_flow_schedule_task
+                    SET last_run_finished_at = :finished_at,
+                        last_run_status = 'failed',
+                        last_run_message = :message,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE task_key = :task_key
+                    """
+                ),
+                {
+                    "task_key": task_key,
+                    "finished_at": finished_at,
+                    "message": str(exc)[:250],
+                },
+            )
+        app_logger.warning("Inventory flow schedule task failed. task=%s error=%s", task_key, exc)
+        return {"ok": False, "status": "failed", "task_key": task_key, "message": str(exc)}
+    finally:
+        inventory_flow_schedule_run_lock.release()
+
+
 @router.get("/bi-dashboard/api/inventory-flows/live-stock")
 async def list_inventory_live_stock(
     warehouse_code: str | None = Query(None),
@@ -10790,6 +14204,22 @@ async def list_inventory_live_stock(
     inventory_rows = snapshot["items"]
     queried_at = snapshot["queried_at"]
     material_options = snapshot["material_options"]
+    warehouse_options = sorted(
+        {
+            (str(item.get("warehouse_code") or "").strip(), str(item.get("warehouse_name") or "").strip())
+            for item in inventory_rows
+            if str(item.get("warehouse_code") or "").strip()
+        },
+        key=lambda item: item[1] or item[0],
+    )
+    stock_status_options = sorted(
+        {
+            (str(item.get("stock_status_id") or "").strip(), str(item.get("stock_status_name") or "").strip())
+            for item in inventory_rows
+            if str(item.get("stock_status_id") or "").strip()
+        },
+        key=lambda item: item[1] or item[0],
+    )
     raw_row_count = int(snapshot["raw_row_count"])
     cache_hit = bool(snapshot["cache_hit"])
     cache_stale = bool(snapshot["cache_stale"])
@@ -10846,6 +14276,14 @@ async def list_inventory_live_stock(
                 "material_code": str(material_code or "").strip(),
                 "material_name": str(material_name or "").strip(),
                 "stock_status_id": str(stock_status_id or "").strip(),
+                "warehouse_options": [
+                    {"value": warehouse_code, "label": warehouse_name or warehouse_code}
+                    for warehouse_code, warehouse_name in warehouse_options
+                ],
+                "stock_status_options": [
+                    {"value": status_id, "label": status_name or status_id}
+                    for status_id, status_name in stock_status_options
+                ],
                 "material_options": material_options,
             },
         },
@@ -10955,6 +14393,582 @@ async def list_inventory_live_stock(
             },
         }
     )
+
+
+def create_procurement_workflow_instance(
+    conn: Any,
+    *,
+    workflow: Dict[str, Any],
+    payload: Dict[str, Any],
+    launched_by: str,
+) -> Dict[str, Any]:
+    instance_no = build_procurement_workflow_instance_no(str(workflow.get("key") or ""))
+    quantity = parse_numeric_or_zero(payload.get("quantity"))
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO bi_procurement_workflow_instance(
+                instance_no,
+                workflow_key,
+                workflow_title,
+                material_code,
+                quantity,
+                purchase_order_code,
+                warehouse_code,
+                inwarehouse_code,
+                bom_code,
+                current_step_key,
+                current_step_title,
+                current_document_key,
+                current_document_id,
+                current_document_code,
+                current_document_status,
+                current_document_status_label,
+                current_pending_approver,
+                instance_status,
+                error_message,
+                step_count,
+                completed_step_count,
+                launched_by,
+                launched_at
+            ) VALUES (
+                :instance_no,
+                :workflow_key,
+                :workflow_title,
+                :material_code,
+                :quantity,
+                :purchase_order_code,
+                :warehouse_code,
+                :inwarehouse_code,
+                :bom_code,
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                'running',
+                '',
+                :step_count,
+                0,
+                :launched_by,
+                :launched_at
+            )
+            """
+        ),
+        {
+            "instance_no": instance_no,
+            "workflow_key": str(workflow.get("key") or "").strip(),
+            "workflow_title": str(workflow.get("title") or "").strip(),
+            "material_code": str(payload.get("material_code") or workflow.get("default_material_code") or "").strip(),
+            "quantity": quantity,
+            "purchase_order_code": str(payload.get("purchase_order_code") or "").strip(),
+            "warehouse_code": str(payload.get("warehouse_code") or "").strip(),
+            "inwarehouse_code": str(payload.get("inwarehouse_code") or "").strip(),
+            "bom_code": str(payload.get("bom_code") or workflow.get("bom_code") or "").strip(),
+            "step_count": len(workflow.get("steps") or []),
+            "launched_by": str(launched_by or "").strip() or None,
+            "launched_at": datetime.now(scheduler_timezone()).replace(microsecond=0),
+        },
+    )
+    return {"id": int(result.lastrowid or 0), "instance_no": instance_no}
+
+
+def update_procurement_workflow_instance_runtime(
+    conn: Any,
+    *,
+    instance_id: int,
+    current_step_key: str,
+    current_step_title: str,
+    current_document_key: str,
+    current_document_id: str,
+    current_document_code: str,
+    current_document_status: str,
+    current_document_status_label: str,
+    current_pending_approver: str,
+    instance_status: str,
+    error_message: str,
+    completed_step_count: int,
+) -> None:
+    conn.execute(
+        text(
+            """
+            UPDATE bi_procurement_workflow_instance
+            SET current_step_key = :current_step_key,
+                current_step_title = :current_step_title,
+                current_document_key = :current_document_key,
+                current_document_id = :current_document_id,
+                current_document_code = :current_document_code,
+                current_document_status = :current_document_status,
+                current_document_status_label = :current_document_status_label,
+                current_pending_approver = :current_pending_approver,
+                instance_status = :instance_status,
+                error_message = :error_message,
+                completed_step_count = :completed_step_count,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :instance_id
+            """
+        ),
+        {
+            "instance_id": int(instance_id),
+            "current_step_key": str(current_step_key or "").strip(),
+            "current_step_title": str(current_step_title or "").strip(),
+            "current_document_key": str(current_document_key or "").strip(),
+            "current_document_id": str(current_document_id or "").strip(),
+            "current_document_code": str(current_document_code or "").strip(),
+            "current_document_status": str(current_document_status or "").strip(),
+            "current_document_status_label": str(current_document_status_label or "").strip(),
+            "current_pending_approver": str(current_pending_approver or "").strip(),
+            "instance_status": str(instance_status or "").strip() or "running",
+            "error_message": str(error_message or "").strip()[:250],
+            "completed_step_count": max(0, int(completed_step_count or 0)),
+        },
+    )
+
+
+def insert_procurement_workflow_instance_step(
+    conn: Any,
+    *,
+    instance_id: int,
+    step_order: int,
+    step_key: str,
+    step_title: str,
+    document_key: str,
+    document_id: str,
+    document_code: str,
+    document_status: str,
+    document_status_label: str,
+    pending_approver: str,
+    step_status: str,
+    detail: Dict[str, Any] | None,
+) -> None:
+    conn.execute(
+        text(
+            """
+            INSERT INTO bi_procurement_workflow_instance_step(
+                instance_id,
+                step_order,
+                step_key,
+                step_title,
+                document_key,
+                document_id,
+                document_code,
+                document_status,
+                document_status_label,
+                pending_approver,
+                step_status,
+                detail_json
+            ) VALUES (
+                :instance_id,
+                :step_order,
+                :step_key,
+                :step_title,
+                :document_key,
+                :document_id,
+                :document_code,
+                :document_status,
+                :document_status_label,
+                :pending_approver,
+                :step_status,
+                :detail_json
+            )
+            """
+        ),
+        {
+            "instance_id": int(instance_id),
+            "step_order": int(step_order),
+            "step_key": str(step_key or "").strip(),
+            "step_title": str(step_title or "").strip(),
+            "document_key": str(document_key or "").strip(),
+            "document_id": str(document_id or "").strip(),
+            "document_code": str(document_code or "").strip(),
+            "document_status": str(document_status or "").strip(),
+            "document_status_label": str(document_status_label or "").strip(),
+            "pending_approver": str(pending_approver or "").strip(),
+            "step_status": str(step_status or "").strip() or "running",
+            "detail_json": json_dumps(sanitize_audit_detail(detail or {})),
+        },
+    )
+
+
+def execute_procurement_supply_workflow_launch(
+    workflow_key: str,
+    payload: Dict[str, Any],
+    launched_by: str = "",
+) -> Dict[str, Any]:
+    workflow_lookup = {str(item["key"]): item for item in procurement_supply_workflow_templates()}
+    workflow = workflow_lookup.get(str(workflow_key or "").strip())
+    if workflow is None:
+        raise ValueError(f"未识别的业务流：{workflow_key}")
+    if str(workflow.get("status") or "").strip() != "published":
+        raise ValueError("仅支持发起已发布的业务流。")
+
+    steps = workflow.get("steps") or []
+    if not steps:
+        raise ValueError("当前业务流未配置执行步骤。")
+
+    context: Dict[str, str] = {}
+    step_results: List[Dict[str, Any]] = []
+    purchase_order_code = str(payload.get("purchase_order_code") or "").strip()
+    warehouse_code = str(payload.get("warehouse_code") or "").strip() or "000003"
+    inwarehouse_code = str(payload.get("inwarehouse_code") or "").strip() or "15532921"
+    bom_code = str(payload.get("bom_code") or workflow.get("bom_code") or "").strip()
+    vouchdate = str(payload.get("vouchdate") or "").strip()
+    remark = str(payload.get("remark") or "").strip()
+    material_code = str(payload.get("material_code") or workflow.get("default_material_code") or "").strip()
+    serials = [str(item).strip() for item in (payload.get("serials") or []) if str(item).strip()]
+    quantity_value = payload.get("quantity")
+
+    if bool(workflow.get("purchase_order_required")) and "purchase_order" not in {str(step.get("key") or "").strip() for step in steps}:
+        if not purchase_order_code:
+            raise ValueError("请先输入用友采购订单编号。")
+        context["purchase_order_code"] = purchase_order_code
+
+    if any(str(step.get("key") or "").strip() == "morphology_conversion" for step in steps):
+        if not bom_code:
+            raise ValueError("请先选择形态转换 BOM。")
+        if quantity_value in (None, "", 0, "0"):
+            raise ValueError("请先输入计划数量。")
+
+    current_engine = get_engine()
+    with current_engine.begin() as conn:
+        instance = create_procurement_workflow_instance(
+            conn,
+            workflow=workflow,
+            payload={
+                **payload,
+                "material_code": material_code,
+                "quantity": quantity_value,
+                "purchase_order_code": purchase_order_code,
+                "warehouse_code": warehouse_code,
+                "inwarehouse_code": inwarehouse_code,
+                "bom_code": bom_code,
+            },
+            launched_by=launched_by,
+        )
+    instance_id = int(instance["id"])
+    instance_no = str(instance["instance_no"])
+
+    for index, step in enumerate(steps, start=1):
+        step_key = str(step.get("key") or "").strip()
+        step_title = str(step.get("title") or step_key).strip() or step_key
+        if not step_key:
+            continue
+
+        if step_key == "purchase_order":
+            step_payload = {
+                "material_code": material_code,
+                "quantity": quantity_value,
+                "unit_price": payload.get("unit_price") or 0,
+                "bustype_code": payload.get("bustype_code") or "A20001",
+                "vendor_code": payload.get("vendor_code") or "01000327",
+                "invoice_vendor_code": payload.get("invoice_vendor_code") or payload.get("vendor_code") or "01000327",
+                "org_code": payload.get("org_code") or "ZJJZX",
+                "exch_rate_type": payload.get("exch_rate_type") or "01",
+                "taxitems_code": payload.get("taxitems_code") or "VATR1",
+                "creator": payload.get("creator") or "",
+                "creator_id": payload.get("creator_id") or "",
+                "vouchdate": vouchdate,
+            }
+        elif step_key == "purchase_inbound":
+            source_purchase_order_code = context.get("purchase_order_code") or purchase_order_code
+            if not source_purchase_order_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少采购订单编号。")
+            step_payload = {
+                "purchase_order_code": source_purchase_order_code,
+                "warehouse_code": warehouse_code,
+                "vouchdate": vouchdate,
+            }
+        elif step_key == "morphology_conversion":
+            purchase_inbound_code = context.get("purchase_inbound_code")
+            if not purchase_inbound_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少采购入库单号。")
+            step_payload = {
+                "purchase_inbound_code": purchase_inbound_code,
+                "bom_code": bom_code,
+                "quantity": quantity_value,
+                "remark": remark,
+                "vouchdate": vouchdate,
+                "serials": serials,
+            }
+        elif step_key == "transfer_order":
+            purchase_inbound_code = context.get("purchase_inbound_code")
+            if not purchase_inbound_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少采购入库单号。")
+            step_payload = {
+                "purchase_inbound_code": purchase_inbound_code,
+                "inwarehouse_code": inwarehouse_code,
+                "memo": remark,
+                "vouchdate": vouchdate,
+            }
+        elif step_key == "storeout":
+            transfer_order_code = context.get("transfer_order_code")
+            if not transfer_order_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少调拨订单号。")
+            step_payload = {
+                "transfer_order_code": transfer_order_code,
+                "vouchdate": vouchdate,
+            }
+        elif step_key == "storein":
+            storeout_code = context.get("storeout_code")
+            if not storeout_code:
+                raise ValueError(f"第 {index} 步“{step_title}”缺少调出单号。")
+            step_payload = {
+                "storeout_code": storeout_code,
+                "vouchdate": vouchdate,
+            }
+        else:
+            raise ValueError(f"暂不支持业务流步骤：{step_title}")
+
+        try:
+            result = launch_procurement_document(step_key, step_payload)
+        except (ValueError, YonyouRequestError) as exc:
+            error_message = f"第 {index} 步“{step_title}”执行失败：{exc}"
+            with current_engine.begin() as conn:
+                insert_procurement_workflow_instance_step(
+                    conn,
+                    instance_id=instance_id,
+                    step_order=index,
+                    step_key=step_key,
+                    step_title=step_title,
+                    document_key=step_key,
+                    document_id="",
+                    document_code="",
+                    document_status="failed",
+                    document_status_label="执行失败",
+                    pending_approver="",
+                    step_status="failed",
+                    detail={"error": str(exc), "payload": step_payload},
+                )
+                update_procurement_workflow_instance_runtime(
+                    conn,
+                    instance_id=instance_id,
+                    current_step_key=step_key,
+                    current_step_title=step_title,
+                    current_document_key=step_key,
+                    current_document_id="",
+                    current_document_code="",
+                    current_document_status="failed",
+                    current_document_status_label="执行失败",
+                    current_pending_approver="",
+                    instance_status="failed",
+                    error_message=error_message,
+                    completed_step_count=len(step_results),
+                )
+            raise ValueError(error_message) from exc
+
+        document_code = str(result.get("document_code") or "").strip()
+        document_id = str(result.get("document_id") or "").strip()
+        summary = result.get("summary") or {}
+        document_status = normalize_procurement_workflow_document_status(step_key, summary)
+        document_status_label = procurement_workflow_document_status_label(document_status)
+        pending_approver = extract_procurement_workflow_pending_approver(result)
+        if document_code:
+            context[f"{step_key}_code"] = document_code
+            if step_key == "purchase_order":
+                context["purchase_order_code"] = document_code
+            if step_key == "purchase_inbound":
+                context["purchase_inbound_code"] = document_code
+            if step_key == "transfer_order":
+                context["transfer_order_code"] = document_code
+            if step_key == "storeout":
+                context["storeout_code"] = document_code
+
+        step_result = {
+            "step_key": step_key,
+            "step_title": step_title,
+            "document_key": str(result.get("document_key") or step_key).strip(),
+            "document_id": document_id,
+            "document_code": document_code,
+            "document_status": document_status,
+            "document_status_label": document_status_label,
+            "pending_approver": pending_approver,
+            "summary": summary,
+        }
+        step_results.append(step_result)
+
+        with current_engine.begin() as conn:
+            insert_procurement_workflow_instance_step(
+                conn,
+                instance_id=instance_id,
+                step_order=index,
+                step_key=step_key,
+                step_title=step_title,
+                document_key=step_result["document_key"],
+                document_id=document_id,
+                document_code=document_code,
+                document_status=document_status,
+                document_status_label=document_status_label,
+                pending_approver=pending_approver,
+                step_status="completed" if document_status == "completed" else "running",
+                detail={"summary": summary, "request_payload": result.get("request_payload") or {}},
+            )
+            update_procurement_workflow_instance_runtime(
+                conn,
+                instance_id=instance_id,
+                current_step_key=step_key,
+                current_step_title=step_title,
+                current_document_key=step_result["document_key"],
+                current_document_id=document_id,
+                current_document_code=document_code,
+                current_document_status=document_status,
+                current_document_status_label=document_status_label,
+                current_pending_approver=pending_approver,
+                instance_status="running",
+                error_message="",
+                completed_step_count=sum(1 for item in step_results if item["document_status"] == "completed"),
+            )
+
+    last_step = step_results[-1] if step_results else None
+    final_instance_status = "completed" if last_step and last_step["document_status"] == "completed" else "running"
+    with current_engine.begin() as conn:
+        update_procurement_workflow_instance_runtime(
+            conn,
+            instance_id=instance_id,
+            current_step_key=str((last_step or {}).get("step_key") or ""),
+            current_step_title=str((last_step or {}).get("step_title") or ""),
+            current_document_key=str((last_step or {}).get("document_key") or ""),
+            current_document_id=str((last_step or {}).get("document_id") or ""),
+            current_document_code=str((last_step or {}).get("document_code") or ""),
+            current_document_status=str((last_step or {}).get("document_status") or ""),
+            current_document_status_label=str((last_step or {}).get("document_status_label") or ""),
+            current_pending_approver=str((last_step or {}).get("pending_approver") or ""),
+            instance_status=final_instance_status,
+            error_message="",
+            completed_step_count=sum(1 for item in step_results if item["document_status"] == "completed"),
+        )
+
+    return {
+        "instance_id": instance_id,
+        "instance_no": instance_no,
+        "workflow_key": str(workflow.get("key") or workflow_key).strip(),
+        "workflow_title": str(workflow.get("title") or workflow_key).strip(),
+        "instance_status": final_instance_status,
+        "instance_status_label": procurement_workflow_instance_status_label(final_instance_status),
+        "current_step_key": str((last_step or {}).get("step_key") or ""),
+        "current_step_title": str((last_step or {}).get("step_title") or ""),
+        "current_document_code": str((last_step or {}).get("document_code") or ""),
+        "current_document_status": str((last_step or {}).get("document_status") or ""),
+        "current_document_status_label": str((last_step or {}).get("document_status_label") or ""),
+        "current_pending_approver": str((last_step or {}).get("pending_approver") or ""),
+        "launched_at": to_plain(datetime.now(scheduler_timezone())),
+        "step_results": step_results,
+    }
+
+
+@router.get("/bi-dashboard/public/report-assets/{file_name}")
+async def get_inventory_flow_report_asset(file_name: str) -> FileResponse:
+    file_path = inventory_flow_report_file_path(file_name)
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="报表图片不存在")
+    return FileResponse(file_path, media_type="image/png", filename=file_path.name)
+
+
+@router.get("/bi-dashboard/api/inventory-flows/schedules")
+async def list_inventory_flow_schedules(
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    with get_engine().connect() as conn:
+        tasks = load_inventory_flow_schedule_tasks(conn)
+    return JSONResponse(
+        {
+            "items": tasks,
+            "summary": {
+                "task_count": len(tasks),
+                "enabled_task_count": sum(1 for item in tasks if item["is_enabled"]),
+            },
+        }
+    )
+
+
+@router.post("/bi-dashboard/api/inventory-flows/live-stock/report-preview")
+async def preview_inventory_live_stock_report(
+    payload: Dict[str, Any] = Body(default={}),
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    report = build_inventory_live_stock_report_payload(
+        payload.get("report_config"),
+        force_refresh=False,
+        report_title=str(payload.get("report_title") or "库存现存量日报"),
+    )
+    return JSONResponse(
+        {
+            "title": str(report.get("title") or "库存现存量日报"),
+            "generated_at": to_plain(report.get("generated_at")),
+            "warehouses": report.get("warehouses", []),
+            "status_buckets": report.get("status_buckets", list(INVENTORY_LIVE_STOCK_REPORT_STATUS_BUCKETS)),
+            "sections": report.get("sections", []),
+            "config_summary": report.get("config_summary", {}),
+        }
+    )
+
+
+@router.put("/bi-dashboard/api/inventory-flows/schedules")
+async def save_inventory_flow_schedules(
+    payload: Dict[str, Any] = Body(default={}),
+    username: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    tasks = normalize_inventory_flow_schedule_payload(payload)
+    with get_engine().begin() as conn:
+        existing_ids = {int(row[0]) for row in conn.execute(text("SELECT id FROM bi_inventory_flow_schedule_task")).fetchall()}
+        submitted_ids = {item["id"] for item in tasks if item["id"] > 0}
+        for item in tasks:
+            record = {**item, "updated_by": username}
+            if item["id"] > 0 and item["id"] in existing_ids:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE bi_inventory_flow_schedule_task
+                        SET task_name = :task_name,
+                            task_type = :task_type,
+                            cron_expr = :cron_expr,
+                            report_title = :report_title,
+                            report_config_json = :report_config_json,
+                            webhook_url = :webhook_url,
+                            is_enabled = :is_enabled,
+                            sort_order = :sort_order,
+                            updated_by = :updated_by,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = :id
+                        """
+                    ),
+                    record,
+                )
+            else:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO bi_inventory_flow_schedule_task(
+                            task_key, task_name, task_type, cron_expr, report_title, webhook_url,
+                            report_config_json, is_enabled, sort_order, last_run_status, last_run_message, created_by, updated_by
+                        ) VALUES (
+                            :task_key, :task_name, :task_type, :cron_expr, :report_title, :webhook_url,
+                            :report_config_json, :is_enabled, :sort_order, 'idle', '', :updated_by, :updated_by
+                        )
+                        """
+                    ),
+                    record,
+                )
+    refresh_sync_scheduler()
+    with get_engine().connect() as conn:
+        saved_tasks = load_inventory_flow_schedule_tasks(conn)
+    return JSONResponse({"saved": True, "items": saved_tasks})
+
+
+@router.post("/bi-dashboard/api/inventory-flows/schedules/{task_key}/run")
+async def run_inventory_flow_schedule(
+    task_key: str,
+    _auth: str = Depends(require_auth),
+) -> JSONResponse:
+    ensure_schema()
+    result = execute_inventory_flow_schedule_task(task_key, "manual")
+    status_code = 200 if result.get("ok") else 500
+    return JSONResponse(result, status_code=status_code)
 
 
 @router.put("/bi-dashboard/api/inventory-flows/rules")

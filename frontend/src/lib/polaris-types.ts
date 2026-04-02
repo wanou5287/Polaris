@@ -314,12 +314,73 @@ export type ProcurementSupplyConsoleResponse = {
   workflow_templates: ProcurementSupplyWorkflowTemplate[];
   material_profiles: ProcurementSupplyMaterialProfile[];
   bom_profiles: ProcurementSupplyBomProfile[];
+  unfinished_workflow_instances: {
+    unfinished_count: number;
+    items: ProcurementSupplyWorkflowInstance[];
+  };
+  sync_summary?: {
+    data_source: string;
+    cache_ready: boolean;
+    is_configured: boolean;
+    last_synced_at: string | null;
+    is_stale: boolean;
+    stale_after_seconds: number;
+    total_clean_rows: number;
+    last_error?: string;
+    modules: Array<{
+      module_key: string;
+      module_name: string;
+      clean_row_count: number;
+      state: Record<string, unknown>;
+      cursor?: {
+        latest_cursor_time: string;
+        latest_document_id: string;
+        latest_document_no: string;
+        last_incremental_synced_at: string | null;
+        last_incremental_pages: number;
+        last_incremental_rows: number;
+        last_backfill_synced_at: string | null;
+        last_backfill_pages: number;
+        last_backfill_rows: number;
+        has_full_backfill: boolean;
+      };
+    }>;
+  };
   serial_import_template: {
     accepted_extensions: string[];
     required_headers: string[];
     optional_headers: string[];
     tips: string[];
   };
+};
+
+export type ProcurementSupplyWorkflowInstance = {
+  id: number;
+  instance_no: string;
+  workflow_key: string;
+  workflow_title: string;
+  material_code: string;
+  quantity: number | string | null;
+  purchase_order_code: string;
+  warehouse_code: string;
+  inwarehouse_code: string;
+  bom_code: string;
+  current_step_key: string;
+  current_step_title: string;
+  current_document_key: string;
+  current_document_id: string;
+  current_document_code: string;
+  current_document_status: string;
+  current_document_status_label: string;
+  current_pending_approver: string;
+  instance_status: string;
+  instance_status_label: string;
+  error_message: string;
+  step_count: number;
+  completed_step_count: number;
+  launched_by: string;
+  launched_at: string | null;
+  updated_at: string | null;
 };
 
 export type ProcurementSerialImportPreviewResponse = {
@@ -347,6 +408,35 @@ export type ProcurementSupplyLaunchResponse = {
   summary: Record<string, string | number | null | undefined>;
   request_payload: Record<string, unknown>;
   response: Record<string, unknown>;
+};
+
+export type ProcurementSupplyWorkflowLaunchStepResult = {
+  step_key: string;
+  step_title: string;
+  document_key: string;
+  document_id: string;
+  document_code: string;
+  document_status: string;
+  document_status_label: string;
+  pending_approver: string;
+  summary: Record<string, string | number | null | undefined>;
+};
+
+export type ProcurementSupplyWorkflowLaunchResponse = {
+  instance_id: number;
+  instance_no: string;
+  workflow_key: string;
+  workflow_title: string;
+  instance_status: string;
+  instance_status_label: string;
+  current_step_key: string;
+  current_step_title: string;
+  current_document_code: string;
+  current_document_status: string;
+  current_document_status_label: string;
+  current_pending_approver: string;
+  launched_at: string | null;
+  step_results: ProcurementSupplyWorkflowLaunchStepResult[];
 };
 
 export type InventoryFlowRule = {
@@ -444,6 +534,8 @@ export type InventoryLiveStockResponse = {
     material_code: string;
     material_name: string;
     stock_status_id: string;
+    warehouse_options: Option[];
+    stock_status_options: Option[];
     material_options: Array<{
       material_code: string;
       material_name: string;
@@ -452,14 +544,161 @@ export type InventoryLiveStockResponse = {
   };
 };
 
+export type InventoryLiveStockReportConfig = {
+  warehouse_codes: string[];
+  material_codes: string[];
+  status_buckets: string[];
+  max_families: number;
+  max_materials_per_section: number;
+};
+
+export type InventoryLiveStockReportPreview = {
+  title: string;
+  generated_at: string | null;
+  warehouses: string[];
+  status_buckets: string[];
+  sections: Array<{
+    title: string;
+    rows: Array<{
+      material_name: string;
+      values: Record<string, number>;
+    }>;
+  }>;
+  config_summary: {
+    selected_warehouse_count: number;
+    selected_material_count: number;
+    selected_status_bucket_count: number;
+  };
+};
+
+export type InventoryFlowScheduleTask = {
+  id: number;
+  task_key: string;
+  task_name: string;
+  task_type: string;
+  cron_expr: string;
+  time_of_day: string;
+  schedule_label: string;
+  report_title: string;
+  report_config: InventoryLiveStockReportConfig | null;
+  webhook_url: string;
+  is_enabled: boolean;
+  sort_order: number;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_status: string;
+  last_run_message: string;
+  last_run_trigger: string;
+  last_report_path: string;
+  last_report_url: string;
+  next_run_at: string | null;
+  created_by: string;
+  updated_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type InventoryFlowWorkflowStep = ProcurementSupplyWorkflowStep;
+export type InventoryFlowWorkflowStatus = ProcurementSupplyWorkflowStatus;
+
+export type InventoryFlowWorkflowTemplate = {
+  key: string;
+  title: string;
+  description: string;
+  workflow_code: string;
+  version: string;
+  status: InventoryFlowWorkflowStatus;
+  default_material_code: string;
+  default_purchase_inbound_placeholder: string;
+  default_transfer_order_placeholder: string;
+  default_warehouse_code: string;
+  default_inwarehouse_code: string;
+  default_scrap_org?: string;
+  default_scrap_bustype?: string;
+  default_scrap_warehouse?: string;
+  default_scrap_stock_status?: string;
+  bom_code: string;
+  required_inputs: string[];
+  steps: InventoryFlowWorkflowStep[];
+};
+
+export type InventoryFlowWorkflowInstance = {
+  id: number;
+  instance_no: string;
+  workflow_key: string;
+  workflow_title: string;
+  material_code: string;
+  quantity: number | string | null;
+  purchase_inbound_code: string;
+  transfer_order_code: string;
+  warehouse_code: string;
+  inwarehouse_code: string;
+  bom_code: string;
+  current_step_key: string;
+  current_step_title: string;
+  current_document_key: string;
+  current_document_id: string;
+  current_document_code: string;
+  current_document_status: string;
+  current_document_status_label: string;
+  current_pending_approver: string;
+  instance_status: string;
+  instance_status_label: string;
+  error_message: string;
+  step_count: number;
+  completed_step_count: number;
+  launched_by: string;
+  launched_at: string | null;
+  updated_at: string | null;
+};
+
+export type InventoryFlowWorkflowLaunchStepResult = ProcurementSupplyWorkflowLaunchStepResult;
+
+export type InventoryFlowWorkflowLaunchResponse = {
+  instance_id: number;
+  instance_no: string;
+  workflow_key: string;
+  workflow_title: string;
+  instance_status: string;
+  instance_status_label: string;
+  current_step_key: string;
+  current_step_title: string;
+  current_document_code: string;
+  current_document_status: string;
+  current_document_status_label: string;
+  current_pending_approver: string;
+  launched_at: string | null;
+  step_results: InventoryFlowWorkflowLaunchStepResult[];
+};
+
 export type InventoryFlowResponse = {
   rules: InventoryFlowRule[];
   tasks: InventoryFlowTask[];
+  schedule_tasks: InventoryFlowScheduleTask[];
+  workflow_templates: InventoryFlowWorkflowTemplate[];
+  unfinished_workflow_instances: {
+    unfinished_count: number;
+    items: InventoryFlowWorkflowInstance[];
+  };
+  material_profiles: ProcurementSupplyMaterialProfile[];
+  bom_profiles: ProcurementSupplyBomProfile[];
+  scrap_integration: {
+    supported: boolean;
+    status: string;
+    title: string;
+    note: string;
+  };
+  scrap_org_options: Option[];
+  scrap_bustype_options: Option[];
+  scrap_warehouse_options: Option[];
+  scrap_status_options: Option[];
   summary: {
     task_count: number;
     pending_count: number;
     blocked_count: number;
     completed_count: number;
+    schedule_task_count: number;
+    enabled_schedule_task_count: number;
     enabled_rule_count: number;
     auto_rule_count: number;
     transfer_count: number;
@@ -864,7 +1103,49 @@ export type DataAgentChatResponse = {
   source: string;
 };
 
+export type CurrentUser = {
+  id: number;
+  username: string;
+  email: string;
+  display_name: string;
+  role_name: string;
+  is_admin: boolean;
+  is_enabled: boolean;
+  access_granted: boolean;
+  module_permissions: string[];
+  default_home_path: string;
+  must_change_password: boolean;
+  note: string;
+  source_type: string;
+  last_login_at: string | null;
+  password_updated_at: string | null;
+  registered_at: string | null;
+  created_by: string;
+  updated_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type CurrentUserResponse = {
+  current_user: CurrentUser;
+};
+
+export type DashboardUserManagementResponse = {
+  current_user: CurrentUser;
+  items: CurrentUser[];
+  role_options: Option[];
+  module_options: Array<Option & { default_path: string }>;
+  summary: {
+    total_count: number;
+    enabled_count: number;
+    admin_count: number;
+    pending_count: number;
+    role_count: number;
+  };
+};
+
 export type OverviewResponse = {
+  currentUser: CurrentUser | null;
   metricSummary: MetricDictionaryResponse["summary"];
   masterSummary: MasterDataResponse["summary"];
   taskCenterSummary: TaskCenterResponse["summary"] & {

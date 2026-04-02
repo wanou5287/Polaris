@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
@@ -52,6 +53,13 @@ DEFAULT_GATEWAY_PREFIX = "/iuap-api-gateway"
 DEFAULT_AUTH_PATH = "/iuap-api-auth/open-auth/selfAppAuth/getAccessToken"
 STOREIN_LIST_PATH = "/yonbip/scm/storein/list"
 STOREIN_SAVE_PATH = "/yonbip/scm/storein/mergeSourceData/save"
+SCRAP_LIST_PATH = "/yonbip/scm/storescrapped/list"
+SCRAP_SAVE_PATH = "/yonbip/scm/storescrapped/save"
+SCRAP_SUBMIT_PATH = "/yonbip/scm/storescrapped/batchsubmit"
+SCRAP_CHANGE_TYPE = "scrappedchange"
+SCRAP_SOURCE = "stockanalysis_scrappedchange_list"
+SCRAP_MAKE_RULE_CODE = "stockanalysisToScrappedChangeReceive"
+SCRAP_DEFAULT_IN_STOCK_STATUS = "0"
 
 DEFAULT_PURCHASE_ORDER_VALUES = {
     "bustype_code": "A20001",
@@ -749,6 +757,321 @@ def _create_storein(client: YonyouHttpClient, payload: Dict[str, Any]) -> Dict[s
     }
 
 
+def _resolve_other_outbound_id(client: YonyouHttpClient, code: str) -> str:
+    payload = client.post_json(
+        OTHER_OUTBOUND_LIST_PATH,
+        {
+            "pageIndex": 1,
+            "pageSize": 10,
+            "isSum": False,
+            "simpleVOs": [{"field": "code", "op": "eq", "value1": code}],
+            "queryOrders": [{"field": "id", "order": "desc"}],
+        },
+    )
+    if _to_status(payload.get("code")) not in SUCCESS_CODES:
+        raise YonyouRequestError(f"查询其他出库单失败：{_message_from_payload(payload)}")
+    record_list = ((payload.get("data") or {}).get("recordList") or [])
+    if not record_list:
+        raise ValueError(f"未找到其他出库单：{code}")
+    return _coalesce(record_list[0].get("id"))
+
+
+def _fetch_other_outbound_detail(client: YonyouHttpClient, other_outbound_id: str) -> Dict[str, Any]:
+    payload = client.get_json(OTHER_OUTBOUND_DETAIL_PATH, {"id": other_outbound_id})
+    if _to_status(payload.get("code")) not in SUCCESS_CODES:
+        raise YonyouRequestError(f"查询其他出库单详情失败：{_message_from_payload(payload)}")
+    detail = payload.get("data") or {}
+    if not detail:
+        raise YonyouRequestError(f"其他出库单详情为空：{other_outbound_id}")
+    return detail
+
+
+def _submit_other_outbound(client: YonyouHttpClient, payload: Dict[str, Any]) -> Dict[str, Any]:
+    other_outbound_code = _coalesce(payload.get("other_outbound_code"))
+    if not other_outbound_code:
+        raise ValueError("请先输入其他出库单号。")
+    other_outbound_id = _resolve_other_outbound_id(client, other_outbound_code)
+    request_payload = {"data": [{"id": int(other_outbound_id)}]}
+    response = client.post_json(OTHER_OUTBOUND_SUBMIT_PATH, request_payload)
+    _ensure_success_payload(response, "其他出库单提交")
+    detail = _fetch_other_outbound_detail(client, other_outbound_id)
+    detail_rows = detail.get("details") or []
+    first_line = (detail_rows[0] if detail_rows else {}) or {}
+    return {
+        "document_key": "other_outbound",
+        "document_id": _coalesce(detail.get("id"), other_outbound_id),
+        "document_code": _coalesce(detail.get("code"), other_outbound_code),
+        "summary": {
+            "code": _coalesce(detail.get("code"), other_outbound_code),
+            "status": detail.get("status"),
+            "verifystate": detail.get("verifystate"),
+            "warehouse": _coalesce(
+                detail.get("warehouse_name"),
+                detail.get("bizWarehouseName"),
+                detail.get("warehouse"),
+            ),
+            "source_no": _coalesce(detail.get("srcBillNO"), detail.get("firstupcode")),
+            "material_code": _coalesce(
+                first_line.get("product_cCode"),
+                first_line.get("productCode"),
+                first_line.get("invcode"),
+            ),
+            "qty": _normalize_quantity(first_line.get("qty"), first_line.get("subQty"), first_line.get("priceQty")),
+            "pending_approver": _coalesce(
+                detail.get("wfCurrentApproverName"),
+                detail.get("wfCurrentApprover"),
+                detail.get("currentApprover"),
+            ),
+        },
+        "request_payload": request_payload,
+        "response": response,
+        "detail": detail,
+    }
+
+
+def _query_scrap_rows(
+    client: YonyouHttpClient,
+    *,
+    page_index: int = 1,
+    page_size: int = 100,
+    simple_vos: Sequence[Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
+    payload = client.post_json(
+        SCRAP_LIST_PATH,
+        {
+            "pageIndex": max(1, int(page_index or 1)),
+            "pageSize": max(1, min(int(page_size or 100), 200)),
+            "isSum": False,
+            "simpleVOs": list(simple_vos or []),
+            "queryOrders": [{"field": "id", "order": "desc"}],
+        },
+    )
+    if _to_status(payload.get("code")) not in SUCCESS_CODES:
+        raise YonyouRequestError(f"查询报废单失败：{_message_from_payload(payload)}")
+    return list(((payload.get("data") or {}).get("recordList") or []))
+
+
+def _fetch_scrap_row(
+    client: YonyouHttpClient,
+    *,
+    scrap_code: str = "",
+    scrap_id: str = "",
+) -> Dict[str, Any]:
+    filters: List[Dict[str, Any]] = []
+    if scrap_code:
+        filters.append({"field": "code", "op": "eq", "value1": scrap_code})
+    if scrap_id:
+        filters.append({"field": "id", "op": "eq", "value1": scrap_id})
+    rows = _query_scrap_rows(client, page_index=1, page_size=50, simple_vos=filters)
+    if not rows:
+        identifier = scrap_code or scrap_id
+        raise ValueError(f"未找到报废单：{identifier}")
+    return dict(rows[0] or {})
+
+
+def _resolve_scrap_id(client: YonyouHttpClient, scrap_code: str) -> str:
+    row = _fetch_scrap_row(client, scrap_code=scrap_code)
+    return _coalesce(row.get("id"))
+
+
+def _normalize_scrap_vouchdate(value: Any) -> str:
+    text = _coalesce(value)
+    if not text:
+        return datetime.now().strftime("%Y-%m-%d 00:00:00")
+    if len(text) == 10:
+        return f"{text} 00:00:00"
+    return text
+
+
+def load_scrap_reference_options(max_pages: int = 3, page_size: int = 100) -> Dict[str, List[Dict[str, str]]]:
+    client = create_procurement_client()
+    org_map: Dict[str, str] = {}
+    bustype_map: Dict[str, str] = {}
+    warehouse_map: Dict[str, str] = {}
+    status_map: Dict[str, str] = {}
+
+    for page_index in range(1, max(1, int(max_pages or 1)) + 1):
+        rows = _query_scrap_rows(client, page_index=page_index, page_size=page_size)
+        if not rows:
+            break
+        for row in rows:
+            org_value = _coalesce(row.get("org"))
+            org_label = _coalesce(row.get("org_name"), row.get("org"))
+            if org_value and org_label:
+                org_map[org_value] = org_label
+
+            bustype_value = _coalesce(row.get("bustype"))
+            bustype_label = _coalesce(row.get("bustype_name"), row.get("bustype"))
+            if bustype_value and bustype_label:
+                bustype_map[bustype_value] = bustype_label
+
+            warehouse_value = _coalesce(row.get("warehouse"))
+            warehouse_label = _coalesce(row.get("warehouse_name"), row.get("warehouse"))
+            if warehouse_value and warehouse_label:
+                warehouse_map[warehouse_value] = warehouse_label
+
+            status_value = _coalesce(row.get("outStockStatusDoc"))
+            status_label = _coalesce(row.get("outStockStatusDoc_name"), row.get("outStockStatusDoc"))
+            if status_value and status_label:
+                status_map[status_value] = status_label
+
+        if len(rows) < page_size:
+            break
+
+    def _to_options(source: Dict[str, str]) -> List[Dict[str, str]]:
+        return [
+            {"value": value, "label": label}
+            for value, label in sorted(source.items(), key=lambda item: item[1])
+        ]
+
+    return {
+        "org_options": _to_options(org_map),
+        "bustype_options": _to_options(bustype_map),
+        "warehouse_options": _to_options(warehouse_map),
+        "status_options": _to_options(status_map),
+    }
+
+
+def _build_scrap_save_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    material_code = _coalesce(payload.get("material_code"))
+    if not material_code:
+        raise ValueError("请先选择物料。")
+    scrap_org = _coalesce(payload.get("scrap_org"))
+    if not scrap_org:
+        raise ValueError("请先选择库存组织。")
+    scrap_bustype = _coalesce(payload.get("scrap_bustype"))
+    if not scrap_bustype:
+        raise ValueError("请先选择交易类型。")
+    scrap_warehouse = _coalesce(payload.get("scrap_warehouse"))
+    if not scrap_warehouse:
+        raise ValueError("请先选择报废仓库。")
+    scrap_stock_status = _coalesce(payload.get("scrap_stock_status"))
+    if not scrap_stock_status:
+        raise ValueError("请先选择报废库存状态。")
+
+    try:
+        quantity_decimal = to_decimal(payload.get("quantity") or 0)
+    except Exception as exc:
+        raise ValueError("请输入有效的报废数量。") from exc
+    if quantity_decimal <= 0:
+        raise ValueError("请输入有效的报废数量。")
+
+    normalized_material_code = material_code.lower()
+    material_meta = MATERIAL_MASTER.get(normalized_material_code) or MATERIAL_MASTER.get(material_code) or {}
+    material_name = _coalesce(payload.get("material_name"), material_meta.get("material_name"), material_code)
+    product_value = _coalesce(material_meta.get("product"), material_code)
+    product_sku = _coalesce(material_meta.get("productsku"), "0")
+    unit_value = _coalesce(material_meta.get("stock_unit_id"), material_meta.get("main_unit_id"), material_meta.get("unit"), "0")
+    quantity_value = decimal_to_json_number(quantity_decimal)
+    serials = [str(item).strip() for item in (payload.get("serials") or []) if str(item).strip()]
+
+    line: Dict[str, Any] = {
+        "_status": "Insert",
+        "source": SCRAP_SOURCE,
+        "makeRuleCode": SCRAP_MAKE_RULE_CODE,
+        "outreserveid": "0",
+        "warehouse": scrap_warehouse,
+        "product": str(product_value),
+        "product_cCode": material_code,
+        "product_cName": material_name,
+        "productsku": str(product_sku or "0"),
+        "unit": str(unit_value),
+        "inreserveid": "0",
+        "invExchRate": "1",
+        "stockStatusDoc": scrap_stock_status,
+        "org": scrap_org,
+        "stockUnitId": str(unit_value),
+        "unitExchangeType": 0,
+        "qty": quantity_value,
+        "subQty": quantity_value,
+        "inStockStatusDoc": SCRAP_DEFAULT_IN_STOCK_STATUS,
+        "outgoodsposition": "",
+    }
+    if serials:
+        line["isSerialNoManage"] = True
+        line["storeScrappedsSNs"] = [{"snCharacter": {}, "sn": item, "_status": "Insert"} for item in serials]
+
+    return {
+        "data": {
+            "_status": "Insert",
+            "org": scrap_org,
+            "changeType": SCRAP_CHANGE_TYPE,
+            "code": _coalesce(payload.get("scrap_code")),
+            "vouchdate": _normalize_scrap_vouchdate(payload.get("vouchdate")),
+            "warehouse": scrap_warehouse,
+            "goodchangeDefineCharacter": {},
+            "bustype": scrap_bustype,
+            "bustype_name": _coalesce(payload.get("scrap_bustype_name")),
+            "accountOrg": scrap_org,
+            "storeScrappeds": [line],
+        }
+    }
+
+
+def _summarize_scrap_row(row: Dict[str, Any], fallback_code: str = "") -> Dict[str, Any]:
+    return {
+        "code": _coalesce(row.get("code"), fallback_code),
+        "status": row.get("status"),
+        "verifystate": row.get("verifystate"),
+        "warehouse": _coalesce(row.get("warehouse_name"), row.get("warehouse")),
+        "org_name": _coalesce(row.get("org_name"), row.get("org")),
+        "bustype_name": _coalesce(row.get("bustype_name"), row.get("bustype")),
+        "material_code": _coalesce(row.get("product_cCode"), row.get("productCode"), row.get("product")),
+        "qty": _normalize_quantity(row.get("qty"), row.get("subQty"), row.get("priceQty")),
+        "pending_approver": _coalesce(
+            row.get("wfCurrentApproverName"),
+            row.get("wfCurrentApprover"),
+            row.get("currentApprover"),
+            row.get("auditor"),
+        ),
+    }
+
+
+def _create_scrap(client: YonyouHttpClient, payload: Dict[str, Any]) -> Dict[str, Any]:
+    request_payload = _build_scrap_save_payload(payload)
+    response = client.post_json(SCRAP_SAVE_PATH, request_payload)
+    _ensure_success_payload(response, "报废单创建")
+    info = response.get("data") or {}
+    scrap_code = _coalesce(info.get("code"))
+    scrap_id = _coalesce(info.get("id"))
+    detail_row: Dict[str, Any] = {}
+    if scrap_code or scrap_id:
+        try:
+            detail_row = _fetch_scrap_row(client, scrap_code=scrap_code, scrap_id=scrap_id)
+        except Exception:
+            detail_row = {}
+    summary = _summarize_scrap_row(detail_row or info, scrap_code)
+    return {
+        "document_key": "scrap",
+        "document_id": _coalesce(info.get("id"), detail_row.get("id"), scrap_id),
+        "document_code": _coalesce(info.get("code"), detail_row.get("code"), scrap_code),
+        "summary": summary,
+        "request_payload": request_payload,
+        "response": response,
+        "detail": detail_row or info,
+    }
+
+
+def _submit_scrap(client: YonyouHttpClient, payload: Dict[str, Any]) -> Dict[str, Any]:
+    scrap_code = _coalesce(payload.get("scrap_code"))
+    if not scrap_code:
+        raise ValueError("请先输入报废单号。")
+    scrap_id = _resolve_scrap_id(client, scrap_code)
+    request_payload = {"data": [{"id": int(scrap_id)}]}
+    response = client.post_json(SCRAP_SUBMIT_PATH, request_payload)
+    _ensure_success_payload(response, "报废单提交")
+    detail_row = _fetch_scrap_row(client, scrap_code=scrap_code, scrap_id=scrap_id)
+    return {
+        "document_key": "scrap",
+        "document_id": _coalesce(detail_row.get("id"), scrap_id),
+        "document_code": _coalesce(detail_row.get("code"), scrap_code),
+        "summary": _summarize_scrap_row(detail_row, scrap_code),
+        "request_payload": request_payload,
+        "response": response,
+        "detail": detail_row,
+    }
+
+
 def launch_procurement_document(document_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     client = create_procurement_client()
     normalized_key = _coalesce(document_key)
@@ -764,6 +1087,10 @@ def launch_procurement_document(document_key: str, payload: Dict[str, Any]) -> D
         return _create_storeout(client, payload)
     if normalized_key == "storein":
         return _create_storein(client, payload)
+    if normalized_key == "scrap_create":
+        return _create_scrap(client, payload)
+    if normalized_key == "scrap_submit":
+        return _submit_scrap(client, payload)
     raise ValueError(f"暂不支持单独发起：{document_key}")
 
 
@@ -775,7 +1102,10 @@ def _build_purchase_order_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str,
         result.append(
             {
                 "id": f"purchase-order-{_coalesce(row.get('id'))}",
+                "document_id": _coalesce(row.get("id")),
+                "module_key": "purchase_order",
                 "status": _map_document_status("purchase_order", status=row.get("status"), verifystate=row.get("verifystate"), completed=completed),
+                "source_pubts": _coalesce(row.get("pubts")),
                 "values": {
                     "document_no": _coalesce(row.get("code")),
                     "vendor_name": _coalesce(row.get("vendor_name"), row.get("invoiceVendor_name"), row.get("vendor_code")),
@@ -796,7 +1126,10 @@ def _build_purchase_inbound_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[st
         result.append(
             {
                 "id": f"purchase-inbound-{_coalesce(row.get('id'))}",
+                "document_id": _coalesce(row.get("id")),
+                "module_key": "purchase_inbound",
                 "status": _map_document_status("purchase_inbound", status=row.get("status"), verifystate=row.get("verifystate"), completed=_to_status(row.get("writeOffStatus")) == "1"),
+                "source_pubts": _coalesce(row.get("pubts")),
                 "values": {
                     "document_no": _coalesce(row.get("code")),
                     "source_no": _coalesce(row.get("pocode"), row.get("srcBillNO"), row.get("firstupcode")),
@@ -817,7 +1150,10 @@ def _build_morphology_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
         result.append(
             {
                 "id": f"morphology-{_coalesce(row.get('id'))}",
+                "document_id": _coalesce(row.get("id")),
+                "module_key": "morphology_conversion",
                 "status": _map_document_status("morphology_conversion", status=row.get("status"), verifystate=row.get("verifystate")),
+                "source_pubts": _coalesce(row.get("pubts")),
                 "values": {
                     "document_no": _coalesce(row.get("code")),
                     "bom_code": "--",
@@ -838,7 +1174,10 @@ def _build_transfer_order_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str,
         result.append(
             {
                 "id": f"transfer-order-{_coalesce(row.get('id'))}",
+                "document_id": _coalesce(row.get("id")),
+                "module_key": "transfer_order",
                 "status": _map_document_status("transfer_order", status=row.get("status"), verifystate=row.get("verifystate"), completed=_to_status(row.get("finishoutqty")) not in {"", "0", "0.0"}),
+                "source_pubts": _coalesce(row.get("pubts")),
                 "values": {
                     "document_no": _coalesce(row.get("code")),
                     "out_warehouse": _coalesce(row.get("outwarehouse_name"), row.get("childoutwarehouse_name"), row.get("childoutwarehouse")),
@@ -859,7 +1198,10 @@ def _build_storeout_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]
         result.append(
             {
                 "id": f"storeout-{_coalesce(row.get('id'))}",
+                "document_id": _coalesce(row.get("id")),
+                "module_key": "storeout",
                 "status": _map_document_status("storeout", status=row.get("status"), verifystate=row.get("verifystate")),
+                "source_pubts": _coalesce(row.get("pubts")),
                 "values": {
                     "document_no": _coalesce(row.get("code")),
                     "source_no": _coalesce(row.get("srcbillno"), row.get("firstupcode")),
@@ -880,7 +1222,10 @@ def _build_storein_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         result.append(
             {
                 "id": f"storein-{_coalesce(row.get('id'))}",
+                "document_id": _coalesce(row.get("id")),
+                "module_key": "storein",
                 "status": _map_document_status("storein", status=row.get("status"), verifystate=row.get("verifystate")),
+                "source_pubts": _coalesce(row.get("pubts")),
                 "values": {
                     "document_no": _coalesce(row.get("code")),
                     "source_no": _coalesce(row.get("srcbillno"), row.get("firstupcode")),
@@ -894,7 +1239,84 @@ def _build_storein_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return result
 
 
-def query_procurement_document_rows(*, limit: int = 20) -> Dict[str, List[Dict[str, Any]]]:
+PROCUREMENT_DOCUMENT_MODULE_ORDER = (
+    "purchase_order",
+    "purchase_inbound",
+    "morphology_conversion",
+    "transfer_order",
+    "storeout",
+    "storein",
+)
+
+
+def _module_query_body(module_key: str, page_index: int, page_size: int) -> Dict[str, Any]:
+    if module_key == "morphology_conversion":
+        return {"data": {"pageIndex": page_index, "pageSize": page_size, "queryOrders": [{"field": "id", "order": "desc"}]}}
+    return {
+        "pageIndex": page_index,
+        "pageSize": page_size,
+        "isSum": False,
+        "queryOrders": [{"field": "id", "order": "desc"}],
+    }
+
+
+def query_procurement_document_snapshot_page_with_client(
+    client: YonyouHttpClient,
+    module_key: str,
+    *,
+    page_index: int = 1,
+    page_size: int = 100,
+) -> Dict[str, Any]:
+    normalized_key = _coalesce(module_key)
+    if normalized_key == "purchase_order":
+        raw_rows = _query_record_list(client, path=PURCHASE_ORDER_LIST_PATH, body=_module_query_body(normalized_key, page_index, page_size))
+        clean_rows = _build_purchase_order_rows(raw_rows)
+    elif normalized_key == "purchase_inbound":
+        raw_rows = _query_record_list(client, path=PURCHASE_INBOUND_LIST_PATH, body=_module_query_body(normalized_key, page_index, page_size))
+        clean_rows = _build_purchase_inbound_rows(raw_rows)
+    elif normalized_key == "morphology_conversion":
+        payload = client.post_json(MORPHOLOGY_CONVERSION_LIST_PATH, _module_query_body(normalized_key, page_index, page_size))
+        if _to_status(payload.get("code")) not in SUCCESS_CODES:
+            raise YonyouRequestError(f"鏌ヨ褰㈡€佽浆鎹㈠垪琛ㄥけ璐ワ細{_message_from_payload(payload)}")
+        raw_rows = [item for item in ((payload.get("data") or {}).get("recordList") or []) if isinstance(item, dict)]
+        clean_rows = _build_morphology_rows(raw_rows)
+    elif normalized_key == "transfer_order":
+        raw_rows = _query_record_list(client, path=TRANSFER_ORDER_LIST_PATH, body=_module_query_body(normalized_key, page_index, page_size))
+        clean_rows = _build_transfer_order_rows(raw_rows)
+    elif normalized_key == "storeout":
+        raw_rows = _query_record_list(client, path=STOREOUT_LIST_PATH, body=_module_query_body(normalized_key, page_index, page_size))
+        clean_rows = _build_storeout_rows(raw_rows)
+    elif normalized_key == "storein":
+        raw_rows = _query_record_list(client, path=STOREIN_LIST_PATH, body=_module_query_body(normalized_key, page_index, page_size))
+        clean_rows = _build_storein_rows(raw_rows)
+    else:
+        raise ValueError(f"Unsupported procurement module: {module_key}")
+    return {
+        "module_key": normalized_key,
+        "page_index": page_index,
+        "page_size": page_size,
+        "raw_rows": raw_rows,
+        "clean_rows": clean_rows,
+        "has_more": len(raw_rows) >= page_size,
+    }
+
+
+def query_procurement_document_snapshot_page(
+    module_key: str,
+    *,
+    page_index: int = 1,
+    page_size: int = 100,
+) -> Dict[str, Any]:
+    client = create_procurement_client()
+    return query_procurement_document_snapshot_page_with_client(
+        client,
+        module_key,
+        page_index=page_index,
+        page_size=page_size,
+    )
+
+
+def query_procurement_document_snapshots(*, limit: int = 20) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     client = create_procurement_client()
     purchase_order_rows = _query_record_list(
         client,
@@ -929,10 +1351,37 @@ def query_procurement_document_rows(*, limit: int = 20) -> Dict[str, List[Dict[s
         body={"pageIndex": 1, "pageSize": limit, "isSum": False, "queryOrders": [{"field": "id", "order": "desc"}]},
     )
     return {
-        "purchase_order": _build_purchase_order_rows(purchase_order_rows),
-        "purchase_inbound": _build_purchase_inbound_rows(purchase_inbound_rows),
-        "morphology_conversion": _build_morphology_rows(morphology_rows),
-        "transfer_order": _build_transfer_order_rows(transfer_rows),
-        "storeout": _build_storeout_rows(storeout_rows),
-        "storein": _build_storein_rows(storein_rows),
+        "purchase_order": {"raw_rows": purchase_order_rows, "clean_rows": _build_purchase_order_rows(purchase_order_rows)},
+        "purchase_inbound": {"raw_rows": purchase_inbound_rows, "clean_rows": _build_purchase_inbound_rows(purchase_inbound_rows)},
+        "morphology_conversion": {"raw_rows": morphology_rows, "clean_rows": _build_morphology_rows(morphology_rows)},
+        "transfer_order": {"raw_rows": transfer_rows, "clean_rows": _build_transfer_order_rows(transfer_rows)},
+        "storeout": {"raw_rows": storeout_rows, "clean_rows": _build_storeout_rows(storeout_rows)},
+        "storein": {"raw_rows": storein_rows, "clean_rows": _build_storein_rows(storein_rows)},
     }
+
+
+def query_procurement_document_rows(*, limit: int = 20) -> Dict[str, List[Dict[str, Any]]]:
+    snapshots = query_procurement_document_snapshots(limit=limit)
+    return {module_key: list(snapshot.get("clean_rows") or []) for module_key, snapshot in snapshots.items()}
+
+
+def query_procurement_document_snapshots(*, limit: int = 20) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    client = create_procurement_client()
+    snapshots: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    for module_key in PROCUREMENT_DOCUMENT_MODULE_ORDER:
+        page = query_procurement_document_snapshot_page_with_client(
+            client,
+            module_key,
+            page_index=1,
+            page_size=limit,
+        )
+        snapshots[module_key] = {
+            "raw_rows": list(page.get("raw_rows") or []),
+            "clean_rows": list(page.get("clean_rows") or []),
+        }
+    return snapshots
+
+
+def query_procurement_document_rows(*, limit: int = 20) -> Dict[str, List[Dict[str, Any]]]:
+    snapshots = query_procurement_document_snapshots(limit=limit)
+    return {module_key: list(snapshot.get("clean_rows") or []) for module_key, snapshot in snapshots.items()}
