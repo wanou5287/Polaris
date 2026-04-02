@@ -17,31 +17,31 @@ export const BI_DASHBOARD_CHART_PALETTES: BiDashboardChartPalette[] = [
   {
     key: "berry_sky",
     label: "莓紫晴空",
-    description: "紫粉与蓝天层次，适合分布和趋势对比。",
+    description: "紫粉与晴空蓝层次分明，适合趋势与分布对比。",
     colors: ["#A855F7", "#F59E8B", "#6D72E4", "#8EC5FF", "#E879F9", "#C084FC"],
   },
   {
     key: "lagoon_pop",
     label: "海盐果汽",
-    description: "蓝绿与橙色搭配，适合双指标和堆叠图。",
+    description: "蓝绿与橙色搭配清晰，适合双指标和堆叠图。",
     colors: ["#4F6DFF", "#74D39E", "#A855F7", "#58D4E8", "#FF9822", "#2FB8A8"],
   },
   {
     key: "spring_orchard",
     label: "春野果园",
-    description: "清亮绿、橙、黄，适合库存与状态分布。",
+    description: "清亮绿、橙、黄组合，适合库存与状态分布。",
     colors: ["#35C7A5", "#FF8A3D", "#FFD257", "#84CC5A", "#9CD76A", "#F59E0B"],
   },
   {
     key: "candy_signal",
     label: "活力糖果",
-    description: "高识别度，适合需要快速区分系列的看板。",
+    description: "识别度高，适合需要快速区分系列的经营看板。",
     colors: ["#FF7A21", "#FFB000", "#3D73E2", "#49C6B7", "#B228E3", "#7C3AED"],
   },
   {
     key: "lime_forest",
     label: "青柠森林",
-    description: "偏绿色系，适合库存结构和清洗状态。",
+    description: "偏绿系层次鲜明，适合库存结构和清洗状态。",
     colors: ["#B15EFF", "#F4CC34", "#C4E34E", "#76D957", "#47C3B8", "#2DB88C"],
   },
   {
@@ -59,25 +59,25 @@ export const BI_DASHBOARD_CHART_PALETTES: BiDashboardChartPalette[] = [
   {
     key: "glacier",
     label: "冰川湖面",
-    description: "轻盈蓝系，适合线图和面积感更强的展示。",
+    description: "轻盈蓝系，适合折线图和面感更强的展示。",
     colors: ["#4EA9F1", "#69B8F4", "#8CC8F4", "#A5D4F6", "#C9E2F8", "#7FCBF0"],
   },
   {
     key: "forest_layers",
     label: "林地层次",
-    description: "深浅绿层次明显，适合状态和结构拆分。",
+    description: "深浅绿层次分明，适合状态和结构拆分。",
     colors: ["#11883A", "#2E9846", "#65B26A", "#8BC691", "#C8E7CB", "#A5D6A7"],
   },
   {
     key: "amber_morning",
     label: "琥珀晨曦",
-    description: "暖黄色层次，适合单系列强调型图表。",
+    description: "暖黄层次柔和，适合单系列强调型图表。",
     colors: ["#FFBE0B", "#FFC93C", "#FFDD73", "#FDE68A", "#FDEFC4", "#F8D45D"],
   },
   {
     key: "sunset_cream",
     label: "落日奶油",
-    description: "暖橙到浅奶油过渡，适合温和的经营看板。",
+    description: "暖橙到浅奶油渐变，适合更柔和的经营看板。",
     colors: ["#FF8A1E", "#FFA94D", "#FFC078", "#FFE0B2", "#FFF0DE", "#FDBA74"],
   },
 ];

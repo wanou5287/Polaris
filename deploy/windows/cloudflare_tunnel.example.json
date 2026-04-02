@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "public_hostname": "polaris.example.com",
+  "token": "PASTE_CLOUDFLARE_TUNNEL_TOKEN_HERE"
+}

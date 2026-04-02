@@ -5,6 +5,8 @@ from pathlib import Path
 from urllib.parse import quote_plus
 import socket
 
+from app.core.paths import get_project_root
+
 
 def _detect_lan_ip() -> str:
     """尽力探测本机局域网IP，失败回退127.0.0.1"""
@@ -27,7 +29,7 @@ def _prime_env_from_files() -> None:
     优先级（高→低）：OS 环境变量 > .env.{env} > .env
     """
     env = os.getenv("APP_ENV", "dev").lower()
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = get_project_root()
     base_file = project_root / ".env"
     env_file = project_root / f".env.{env}"
 
@@ -145,10 +147,14 @@ def get_settings() -> Settings:
     if not s.SERVER_BASE_URL and env == "dev":
         s.SERVER_BASE_URL = f"http://{s.SERVER_HOST}:{s.SERVER_PORT}"
     
-    # 统一重算 DB_URL（支持 .env 覆盖）
-    s.DB_URL = (
-        f"mysql+pymysql://{s.DB_USERNAME}:{quote_plus(s.DB_PASSWORD)}@{s.DB_HOST}:{s.DB_PORT}/{s.DB_NAME}"
-    )
+    # 优先使用显式 DB_URL；若未提供，再按 MySQL 连接信息拼接
+    explicit_db_url = str(s.DB_URL or "").strip()
+    if explicit_db_url:
+        s.DB_URL = explicit_db_url
+    else:
+        s.DB_URL = (
+            f"mysql+pymysql://{s.DB_USERNAME}:{quote_plus(s.DB_PASSWORD)}@{s.DB_HOST}:{s.DB_PORT}/{s.DB_NAME}"
+        )
     
     return s
 

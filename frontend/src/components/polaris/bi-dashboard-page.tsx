@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, XAxis, YAxis } from "recharts";
 import { BookCheck, CalendarDays, PencilLine } from "lucide-react";
 import { useSearchParams } from "next/navigation";
@@ -123,11 +123,45 @@ export const defaultViewId = (views: BiDashboardViewSummary[], preferred: number
 export const sortWidgets = (widgets: BiDashboardWidget[]) =>
   [...widgets].sort((left, right) => (left.layout.y - right.layout.y) || (left.layout.x - right.layout.x) || (left.sort_order - right.sort_order));
 
+const XL_SPAN_CLASS: Record<number, string> = {
+  1: "xl:col-span-1",
+  2: "xl:col-span-2",
+  3: "xl:col-span-3",
+  4: "xl:col-span-4",
+  5: "xl:col-span-5",
+  6: "xl:col-span-6",
+  7: "xl:col-span-7",
+  8: "xl:col-span-8",
+  9: "xl:col-span-9",
+  10: "xl:col-span-10",
+  11: "xl:col-span-11",
+  12: "xl:col-span-12",
+};
+
+const toDashboardColumns = (widget: BiDashboardWidget) => {
+  if (widget.widget_type === "table" || widget.layout.span === 2 || widget.layout.w >= 24) {
+    return 12;
+  }
+
+  const width = Math.round((widget.layout.w ?? 12) / 2);
+  return Math.min(12, Math.max(3, width));
+};
+
 const spanClass = (widget: BiDashboardWidget) => {
-  if (widget.widget_type === "table" || widget.layout.span === 2 || widget.layout.w >= 24) return "xl:col-span-12";
-  if (widget.layout.w >= 18) return "xl:col-span-8";
-  if (widget.layout.w >= 12) return "xl:col-span-6";
-  return "xl:col-span-4";
+  const xlColumns = toDashboardColumns(widget);
+  const mdColumns = xlColumns >= 8 ? 2 : 1;
+  return cn(mdColumns === 2 ? "md:col-span-2" : "md:col-span-1", XL_SPAN_CLASS[xlColumns]);
+};
+
+const widgetMinHeight = (widget: BiDashboardWidget) => {
+  const logicalHeight =
+    widget.layout.height === "compact"
+      ? 4
+      : widget.layout.height === "tall"
+        ? 7
+        : widget.layout.h ?? 5;
+
+  return Math.max(260, logicalHeight * 58);
 };
 
 const datasetLabel = (meta: BiDashboardMetaResponse | null, dataset: string) =>
@@ -237,21 +271,30 @@ function WidgetShell({
   subtitle,
   className,
   selected = false,
+  style,
+  actions,
+  onClick,
   children,
 }: {
   title: string;
   subtitle: string;
   className: string;
   selected?: boolean;
+  style?: CSSProperties;
+  actions?: ReactNode;
+  onClick?: () => void;
   children: ReactNode;
 }) {
   return (
     <Card
       className={cn(
         "rounded-[28px] border-border/80 bg-white shadow-[var(--shadow-card)] transition-all",
+        onClick ? "cursor-pointer hover:border-sky-200 hover:shadow-[0_22px_45px_rgba(15,23,42,0.08)]" : "",
         selected ? "border-sky-300 ring-2 ring-sky-200/70" : "",
         className,
       )}
+      style={style}
+      onClick={onClick}
     >
       <CardHeader className="space-y-2 pb-2">
         <div className="flex items-start justify-between gap-3">
@@ -259,7 +302,10 @@ function WidgetShell({
             <CardTitle className="text-xl font-semibold tracking-tight">{title}</CardTitle>
             <CardDescription className="text-sm text-muted-foreground">{subtitle}</CardDescription>
           </div>
-          {selected ? <Badge className="rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-none">当前选中</Badge> : null}
+          <div className="flex items-start gap-2">
+            {selected ? <Badge className="rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-none">当前选中</Badge> : null}
+            {actions}
+          </div>
         </div>
       </CardHeader>
       <CardContent>{children}</CardContent>
@@ -280,11 +326,15 @@ export function DashboardCanvas({
   widgets,
   itemMap,
   highlightWidgetId = null,
+  onWidgetSelect,
+  renderWidgetActions,
 }: {
   meta: BiDashboardMetaResponse | null;
   widgets: BiDashboardWidget[];
   itemMap: Map<number, BiDashboardWidgetDataItem>;
   highlightWidgetId?: number | null;
+  onWidgetSelect?: (widgetId: number) => void;
+  renderWidgetActions?: (widget: BiDashboardWidget, item?: BiDashboardWidgetDataItem | null) => ReactNode;
 }) {
   const metricWidgets = widgets.filter((widget) => widget.widget_type === "metric");
   const contentWidgets = widgets.filter((widget) => widget.widget_type !== "metric");
@@ -301,8 +351,10 @@ export function DashboardCanvas({
                 key={widget.id}
                 className={cn(
                   "rounded-[26px] border-border/80 bg-white shadow-[var(--shadow-card)]",
+                  onWidgetSelect ? "cursor-pointer hover:border-sky-200 hover:shadow-[0_22px_45px_rgba(15,23,42,0.08)]" : "",
                   highlightWidgetId === widget.id ? "border-sky-300 ring-2 ring-sky-200/70" : "",
                 )}
+                onClick={() => onWidgetSelect?.(widget.id)}
               >
                 <CardHeader className="space-y-2 pb-3">
                   <div className="flex items-start justify-between gap-3">
@@ -310,9 +362,12 @@ export function DashboardCanvas({
                       <CardTitle className="text-sm font-medium text-muted-foreground">{widgetTitle(widget, item)}</CardTitle>
                       <CardDescription className="text-xs text-muted-foreground">{widgetSubtitle(meta, widget, item)}</CardDescription>
                     </div>
-                    {highlightWidgetId === widget.id ? (
-                      <Badge className="rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-none">当前选中</Badge>
-                    ) : null}
+                    <div className="flex items-start gap-2">
+                      {highlightWidgetId === widget.id ? (
+                        <Badge className="rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-none">当前选中</Badge>
+                      ) : null}
+                      {renderWidgetActions?.(widget, item)}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -335,7 +390,16 @@ export function DashboardCanvas({
 
             if (!item) {
               return (
-                <WidgetShell key={widget.id} title={title} subtitle={subtitle} className={className} selected={selected}>
+                <WidgetShell
+                  key={widget.id}
+                  title={title}
+                  subtitle={subtitle}
+                  className={className}
+                  selected={selected}
+                  style={{ minHeight: widgetMinHeight(widget) }}
+                  onClick={() => onWidgetSelect?.(widget.id)}
+                  actions={renderWidgetActions?.(widget, item)}
+                >
                   <EmptyWidget label="当前组件暂未返回可展示数据。" />
                 </WidgetShell>
               );
@@ -344,7 +408,16 @@ export function DashboardCanvas({
             if (widget.widget_type === "ranking") {
               const dim = dimensionField(item);
               return (
-                <WidgetShell key={widget.id} title={title} subtitle={subtitle} className={className} selected={selected}>
+                <WidgetShell
+                  key={widget.id}
+                  title={title}
+                  subtitle={subtitle}
+                  className={className}
+                  selected={selected}
+                  style={{ minHeight: widgetMinHeight(widget) }}
+                  onClick={() => onWidgetSelect?.(widget.id)}
+                  actions={renderWidgetActions?.(widget, item)}
+                >
                   <div className="space-y-3">
                     {item.rows.slice(0, 10).map((row, index) => (
                       <div key={`${row[dim]}-${index}`} className="flex items-center justify-between rounded-[18px] border border-border/70 bg-white px-4 py-4">
@@ -369,7 +442,16 @@ export function DashboardCanvas({
               ];
 
               return (
-                <WidgetShell key={widget.id} title={title} subtitle={subtitle} className={className} selected={selected}>
+                <WidgetShell
+                  key={widget.id}
+                  title={title}
+                  subtitle={subtitle}
+                  className={className}
+                  selected={selected}
+                  style={{ minHeight: widgetMinHeight(widget) }}
+                  onClick={() => onWidgetSelect?.(widget.id)}
+                  actions={renderWidgetActions?.(widget, item)}
+                >
                   <div className="overflow-x-auto rounded-[22px] border border-border/70">
                     <Table>
                       <TableHeader>
@@ -414,7 +496,16 @@ export function DashboardCanvas({
                 .filter((row) => row.value > 0);
 
               return (
-                <WidgetShell key={widget.id} title={title} subtitle={subtitle} className={className} selected={selected}>
+                <WidgetShell
+                  key={widget.id}
+                  title={title}
+                  subtitle={subtitle}
+                  className={className}
+                  selected={selected}
+                  style={{ minHeight: widgetMinHeight(widget) }}
+                  onClick={() => onWidgetSelect?.(widget.id)}
+                  actions={renderWidgetActions?.(widget, item)}
+                >
                   {rows.length ? (
                     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_220px]">
                       <ChartContainer
@@ -453,7 +544,16 @@ export function DashboardCanvas({
             const config = Object.fromEntries(model.series.map((entry) => [entry.key, { label: entry.label, color: entry.color }]));
             if (!model.rows.length) {
               return (
-                <WidgetShell key={widget.id} title={title} subtitle={subtitle} className={className} selected={selected}>
+                <WidgetShell
+                  key={widget.id}
+                  title={title}
+                  subtitle={subtitle}
+                  className={className}
+                  selected={selected}
+                  style={{ minHeight: widgetMinHeight(widget) }}
+                  onClick={() => onWidgetSelect?.(widget.id)}
+                  actions={renderWidgetActions?.(widget, item)}
+                >
                   <EmptyWidget label="当前日期下暂无图表数据。" />
                 </WidgetShell>
               );
@@ -461,7 +561,16 @@ export function DashboardCanvas({
 
             if (widget.widget_type === "line") {
               return (
-                <WidgetShell key={widget.id} title={title} subtitle={subtitle} className={className} selected={selected}>
+                <WidgetShell
+                  key={widget.id}
+                  title={title}
+                  subtitle={subtitle}
+                  className={className}
+                  selected={selected}
+                  style={{ minHeight: widgetMinHeight(widget) }}
+                  onClick={() => onWidgetSelect?.(widget.id)}
+                  actions={renderWidgetActions?.(widget, item)}
+                >
                   <ChartContainer config={config} className="h-[320px] w-full">
                     <LineChart data={model.rows} margin={{ top: 8, left: 8, right: 12, bottom: 4 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -482,7 +591,16 @@ export function DashboardCanvas({
             const isStacked = widget.widget_type === "stacked_bar" || widget.widget_type === "stacked_hbar";
 
             return (
-              <WidgetShell key={widget.id} title={title} subtitle={subtitle} className={className} selected={selected}>
+              <WidgetShell
+                key={widget.id}
+                title={title}
+                subtitle={subtitle}
+                className={className}
+                selected={selected}
+                style={{ minHeight: widgetMinHeight(widget) }}
+                onClick={() => onWidgetSelect?.(widget.id)}
+                actions={renderWidgetActions?.(widget, item)}
+              >
                 <ChartContainer config={config} className="h-[320px] w-full">
                   <BarChart
                     data={model.rows}

@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/polaris/app-shell";
 import {
+  POLARIS_AFTER_SALES_ENTRY_PATH,
+  POLARIS_AFTER_SALES_USERNAME,
   POLARIS_SESSION_COOKIE,
   POLARIS_USERNAME_COOKIE,
 } from "@/lib/polaris-server";
@@ -16,6 +18,10 @@ export default async function WorkspaceLayout({
 
   if (!session) {
     redirect("/login");
+  }
+
+  if (username === POLARIS_AFTER_SALES_USERNAME) {
+    redirect(POLARIS_AFTER_SALES_ENTRY_PATH);
   }
 
   return <AppShell username={username}>{children}</AppShell>;

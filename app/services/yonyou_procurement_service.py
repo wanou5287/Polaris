@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterable, List, Sequence
 
 import yaml
 
+from app.core.paths import get_project_root
 from scripts.yonyou_purchase_order import (
     PURCHASE_ORDER_PATH,
     build_purchase_order_payload,
@@ -45,7 +46,7 @@ from scripts.yonyou_purchase_order_flow import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = get_project_root()
 LOCAL_CONFIG_PATH = PROJECT_ROOT / "config" / "yonyou_inventory_sync.yaml"
 DEFAULT_BASE_URL = "https://c3.yonyoucloud.com"
 DEFAULT_GATEWAY_PREFIX = "/iuap-api-gateway"

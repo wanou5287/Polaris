@@ -1,24 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BookCheck,
-  ChevronLeft,
+  CalendarDays,
   Copy,
   LayoutDashboard,
+  MoreHorizontal,
   PencilLine,
   Plus,
   Save,
+  Sparkles,
   Trash2,
 } from "lucide-react";
-import { useSearchParams } from "next/navigation";
-import { toast } from "sonner";
 
+import { TransitionLink } from "@/components/polaris/transition-link";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import {
-  DashboardCanvas,
+  BI_DASHBOARD_CHART_PALETTES,
+  DEFAULT_CHART_PALETTE_KEY,
+  resolveChartPaletteKey,
+  supportsChartPalette,
+} from "@/lib/bi-dashboard-chart-palettes";
+import { apiFetch, cn, formatDate, formatDateTime } from "@/lib/polaris-client";
+import type {
+  BiDashboardMetaResponse,
+  BiDashboardMetricConfig,
+  BiDashboardViewDetail,
+  BiDashboardViewSummary,
+  BiDashboardWidget,
+  BiDashboardWidgetDataResponse,
+} from "@/lib/polaris-types";
+import {
   buildRuntimeHref,
+  DashboardCanvas,
+  defaultViewId,
   getDefaultBusinessDate,
-  LoadingState,
   normalizeText,
   requestDashboardMeta,
   requestDashboardViewDetail,
@@ -26,669 +55,464 @@ import {
   requestDashboardWidgetData,
   viewDescription,
   viewTitle,
-} from "@/components/polaris/bi-dashboard-page";
-import { TransitionLink } from "@/components/polaris/transition-link";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  BI_DASHBOARD_CHART_PALETTES,
-  DEFAULT_CHART_PALETTE_KEY,
-  getChartPalette,
-  resolveChartPaletteKey,
-  supportsChartPalette,
-} from "@/lib/bi-dashboard-chart-palettes";
-import { apiFetch, cn, formatDate, formatDateTime } from "@/lib/polaris-client";
-import type {
-  BiDashboardMetaField,
-  BiDashboardMetaResponse,
-  BiDashboardViewDetail,
-  BiDashboardViewSummary,
-  BiDashboardViewsResponse,
-  BiDashboardWidget,
-  BiDashboardWidgetDataResponse,
-} from "@/lib/polaris-types";
+} from "./bi-dashboard-page";
+
+type WidgetMetricDraft = {
+  field: string;
+  agg: string;
+  label: string;
+};
+
+type WidgetEditorDraft = {
+  id: number;
+  title: string;
+  widgetType: string;
+  dataset: string;
+  dimension: string;
+  seriesField: string;
+  metrics: WidgetMetricDraft[];
+  chartPalette: string;
+  dateMode: string;
+  dateValue: string;
+  startDate: string;
+  endDate: string;
+  dateField: string;
+  sortField: string;
+  sortDirection: string;
+  limit: number;
+  textContent: string;
+  analysisText: string;
+  layoutWidth: number;
+  layoutHeight: "compact" | "normal" | "tall";
+  layoutX: number;
+  layoutY: number;
+  sortOrder: number;
+};
+
+type WidgetLibraryItem = {
+  type: string;
+  title: string;
+  summary: string;
+  badge: string;
+};
 
 const AGGREGATION_FALLBACK = [
   { key: "sum", label: "求和" },
   { key: "avg", label: "平均值" },
+  { key: "count", label: "记录数" },
   { key: "max", label: "最大值" },
   { key: "min", label: "最小值" },
-  { key: "median", label: "中位数" },
-  { key: "count", label: "计数" },
 ];
 
 const DATE_MODE_OPTIONS = [
-  { key: "follow_page", label: "跟随页面日期" },
-  { key: "single", label: "固定单日" },
-  { key: "range", label: "日期区间" },
-  { key: "all", label: "全部数据" },
+  { value: "follow_page", label: "跟随页面" },
+  { value: "fixed_date", label: "固定日期" },
+  { value: "date_range", label: "区间日期" },
 ];
 
-const LAYOUT_SPAN_OPTIONS = [
-  { key: "1", label: "单列卡片" },
-  { key: "2", label: "跨列卡片" },
+const LAYOUT_WIDTH_OPTIONS = [
+  { value: 8, label: "三分之一" },
+  { value: 12, label: "二分之一" },
+  { value: 16, label: "三分之二" },
+  { value: 24, label: "整行" },
 ];
 
-type FieldOption = {
-  value: string;
-  label: string;
+const LAYOUT_HEIGHT_OPTIONS: Array<{ value: WidgetEditorDraft["layoutHeight"]; label: string }> = [
+  { value: "compact", label: "紧凑" },
+  { value: "normal", label: "标准" },
+  { value: "tall", label: "高版" },
+];
+
+const WIDGET_LIBRARY_GROUPS: Array<{ title: string; items: WidgetLibraryItem[] }> = [
+  {
+    title: "指标组件",
+    items: [
+      { type: "metric", title: "指标卡", summary: "用于展示单个核心经营指标。", badge: "指标" },
+      { type: "ranking", title: "排行榜", summary: "输出 Top 榜单和区域排行。", badge: "排行" },
+      { type: "table", title: "表格", summary: "查看明细、对账和数据明细。", badge: "明细" },
+    ],
+  },
+  {
+    title: "图表组件",
+    items: [
+      { type: "line", title: "折线图", summary: "适合销售趋势、库存趋势和周/月走势。", badge: "趋势" },
+      { type: "bar", title: "柱状图", summary: "适合 Top 榜、单维度对比。", badge: "对比" },
+      { type: "stacked_bar", title: "堆叠柱图", summary: "适合多系列结构对比。", badge: "结构" },
+      { type: "stacked_hbar", title: "横向堆叠图", summary: "适合区域、仓库类排行。", badge: "横排" },
+      { type: "pie", title: "饼图", summary: "适合状态占比和结构分布。", badge: "占比" },
+      { type: "text", title: "文本卡", summary: "用于补充经营说明、备注和解读。", badge: "说明" },
+    ],
+  },
+];
+
+const supportsDimensions = (widgetType: string) => !["metric", "text"].includes(widgetType);
+const supportsSeries = (widgetType: string) => ["line", "bar", "stacked_bar", "stacked_hbar", "pie"].includes(widgetType);
+const supportsMetrics = (widgetType: string) => widgetType !== "text";
+const supportsLimit = (widgetType: string) => ["bar", "stacked_bar", "stacked_hbar", "ranking", "table", "pie"].includes(widgetType);
+const maxMetricCount = (widgetType: string) => {
+  if (["metric", "pie", "ranking"].includes(widgetType)) return 1;
+  if (widgetType === "table") return 3;
+  if (widgetType === "text") return 0;
+  return 3;
 };
 
-type ViewDraft = {
-  name: string;
-  description: string;
-};
-
-type CreateViewDraft = ViewDraft;
-
-type CreateWidgetDraft = {
-  title: string;
-  widgetType: string;
-  dataset: string;
-};
-
-type WidgetDraft = {
-  title: string;
-  widgetType: string;
-  dataset: string;
-  chartPalette: string;
-  dimensionPrimary: string;
-  dimensionSecondary: string;
-  seriesField: string;
-  metricOneField: string;
-  metricOneAgg: string;
-  metricOneLabel: string;
-  metricTwoField: string;
-  metricTwoAgg: string;
-  metricTwoLabel: string;
-  sortField: string;
-  sortDirection: string;
-  limit: string;
-  dateMode: string;
-  date: string;
-  startDate: string;
-  endDate: string;
-  textContent: string;
-  analysisText: string;
-  layoutWidth: string;
-  layoutHeightRows: string;
-  layoutSpan: string;
-  layoutHeightKey: string;
-};
-
-const parsePositiveInt = (value: string | null) => {
+const parsePositiveNumber = (value: string | number | null | undefined, fallback: number) => {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-const requestViews = () => apiFetch<BiDashboardViewsResponse>("/api/backend/views");
-const requestCreateView = (payload: CreateViewDraft) =>
+const rowsFromHeight = (height: WidgetEditorDraft["layoutHeight"]) => {
+  if (height === "compact") return 4;
+  if (height === "tall") return 7;
+  return 5;
+};
+
+const heightFromRows = (rows: number): WidgetEditorDraft["layoutHeight"] => {
+  if (rows >= 7) return "tall";
+  if (rows <= 4) return "compact";
+  return "normal";
+};
+
+const requestCreateView = (payload: { name: string; description: string }) =>
   apiFetch<{ id: number }>("/api/backend/views", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-const requestUpdateView = (viewId: number, payload: ViewDraft) =>
-  apiFetch(`/api/backend/views/${viewId}`, {
+
+const requestUpdateView = (viewId: number, payload: { name: string; description: string; global_filters?: unknown[] }) =>
+  apiFetch<{ id: number }>(`/api/backend/views/${viewId}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
-const requestCreateWidget = (
-  viewId: number,
-  payload: { title: string; widget_type: string; dataset: string },
-) =>
+
+const requestCreateWidget = (viewId: number, payload: { title: string; widget_type: string; dataset: string }) =>
   apiFetch<{ id: number }>(`/api/backend/views/${viewId}/widgets`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
-const requestUpdateWidget = (widgetId: number, payload: Record<string, unknown>) =>
-  apiFetch(`/api/backend/widgets/${widgetId}`, {
+
+const requestUpdateWidget = (
+  widgetId: number,
+  payload: {
+    title: string;
+    widget_type: string;
+    dataset: string;
+    config: Record<string, unknown>;
+    layout: Record<string, unknown>;
+    sort_order: number;
+    analysis_text: string;
+  },
+) =>
+  apiFetch<{ id: number }>(`/api/backend/widgets/${widgetId}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
+
 const requestDuplicateWidget = (widgetId: number) =>
   apiFetch<{ id: number }>(`/api/backend/widgets/${widgetId}/duplicate`, {
     method: "POST",
   });
+
 const requestDeleteWidget = (widgetId: number) =>
-  apiFetch(`/api/backend/widgets/${widgetId}`, {
+  apiFetch<{ deleted: boolean }>(`/api/backend/widgets/${widgetId}`, {
     method: "DELETE",
   });
 
-function resolveEditorDefaultViewId(
-  views: BiDashboardViewSummary[],
-  preferred: number | null,
-) {
-  if (!views.length) {
-    return null;
-  }
-  if (preferred && views.some((view) => view.id === preferred)) {
-    return preferred;
-  }
-  return views[0]?.id ?? null;
+function datasetFieldEntries(meta: BiDashboardMetaResponse | null, dataset: string) {
+  return Object.entries(meta?.dataset_fields?.[dataset] ?? {}).map(([key, field]) => ({
+    key,
+    label: normalizeText(field.label, key),
+    field,
+  }));
 }
 
-function clampInt(value: string, min: number, max: number, fallback: number) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.max(min, Math.min(max, parsed));
-}
-
-function supportsSeriesField(widgetType: string) {
-  return ["bar", "stacked_bar", "stacked_hbar", "line"].includes(widgetType);
-}
-
-function supportsDimensions(widgetType: string) {
-  return !["metric", "text"].includes(widgetType);
-}
-
-function supportsMetrics(widgetType: string) {
-  return widgetType !== "text";
-}
-
-function supportsSecondMetric(widgetType: string) {
-  return ["bar", "stacked_bar", "stacked_hbar", "line", "table"].includes(
-    widgetType,
-  );
-}
-
-function supportsTextContent(widgetType: string) {
-  return widgetType === "text";
-}
-
-function supportsLimit(widgetType: string) {
-  return !["metric", "text"].includes(widgetType);
-}
-
-function datasetFieldEntries(
-  meta: BiDashboardMetaResponse | null,
-  dataset: string,
-) {
-  return Object.entries(meta?.dataset_fields?.[dataset] ?? {});
-}
-
-function fieldOptions(
-  meta: BiDashboardMetaResponse | null,
-  dataset: string,
-  predicate?: (field: BiDashboardMetaField) => boolean,
-): FieldOption[] {
+function dimensionFieldOptions(meta: BiDashboardMetaResponse | null, dataset: string) {
   return datasetFieldEntries(meta, dataset)
-    .filter(([, field]) => (predicate ? predicate(field) : true))
-    .map(([fieldKey, field]) => ({
-      value: fieldKey,
-      label: normalizeText(field.label, fieldKey),
-    }));
+    .filter(({ field }) => field.groupable !== false || !field.numeric)
+    .map(({ key }) => key);
 }
 
-function metricLabel(
+function metricFieldOptions(meta: BiDashboardMetaResponse | null, dataset: string) {
+  return datasetFieldEntries(meta, dataset)
+    .filter(({ field }) => field.numeric || ["number", "integer", "float", "decimal"].includes(field.type))
+    .map(({ key }) => key);
+}
+
+function dateFieldOptions(meta: BiDashboardMetaResponse | null, dataset: string) {
+  return datasetFieldEntries(meta, dataset)
+    .filter(({ key, field }) => field.type.includes("date") || key.includes("date"))
+    .map(({ key }) => key);
+}
+
+function fieldLabel(meta: BiDashboardMetaResponse | null, dataset: string, fieldKey: string, fallback = "未命名字段") {
+  return normalizeText(meta?.dataset_fields?.[dataset]?.[fieldKey]?.label, fieldKey || fallback);
+}
+
+function widgetTypeLabel(meta: BiDashboardMetaResponse | null, widgetType: string) {
+  return normalizeText(meta?.widget_type_map?.[widgetType], widgetType);
+}
+
+function ensureMetricDrafts(
+  metrics: WidgetMetricDraft[],
+  widgetType: string,
+  metricOptions: ReturnType<typeof metricFieldOptions>,
   meta: BiDashboardMetaResponse | null,
   dataset: string,
-  field: string,
-  agg: string,
 ) {
-  const fieldMap = meta?.dataset_fields?.[dataset] ?? {};
-  const aggregationOptions = meta?.aggregation_options?.length
-    ? meta.aggregation_options
-    : AGGREGATION_FALLBACK;
-  const aggLabel =
-    aggregationOptions.find((item) => item.key === agg)?.label ?? agg;
-  if (!field) {
-    return aggLabel;
+  if (!supportsMetrics(widgetType)) {
+    return [];
   }
-  const fieldLabel = normalizeText(fieldMap[field]?.label, field);
-  return `${fieldLabel}${aggLabel}`;
+
+  const optionKeys = new Set(metricOptions);
+  const cleaned = metrics
+    .filter((metric) => metric.field && optionKeys.has(metric.field))
+    .map((metric) => ({
+      field: metric.field,
+      agg: metric.agg || "sum",
+      label: metric.label || fieldLabel(meta, dataset, metric.field, metric.field),
+    }));
+
+  if (!cleaned.length && metricOptions[0]) {
+    cleaned.push({
+      field: metricOptions[0],
+      agg: "sum",
+      label: fieldLabel(meta, dataset, metricOptions[0], metricOptions[0]),
+    });
+  }
+
+  return cleaned.slice(0, maxMetricCount(widgetType));
 }
 
-function nextWidgetLayout(widgets: BiDashboardWidget[]) {
-  const nextY = widgets.reduce(
-    (maxValue, widget) =>
-      Math.max(maxValue, widget.layout.y + widget.layout.h),
-    0,
-  );
-  return {
-    x: 0,
-    y: nextY,
-    w: 12,
-    h: 5,
-    span: 1,
-    height: "normal",
-  };
+function sortOptionsForDraft(draft: WidgetEditorDraft, meta: BiDashboardMetaResponse | null) {
+  const options: Array<{ value: string; label: string }> = [];
+  if (draft.dimension) {
+    options.push({ value: draft.dimension, label: `${fieldLabel(meta, draft.dataset, draft.dimension)}（横轴）` });
+  }
+  draft.metrics.forEach((metric, index) => {
+    options.push({ value: `metric_${index}`, label: metric.label || fieldLabel(meta, draft.dataset, metric.field) });
+  });
+  return options;
 }
 
-function sanitizeWidgetDraft(
-  draft: WidgetDraft,
-  meta: BiDashboardMetaResponse | null,
-) {
-  const groupable = fieldOptions(
-    meta,
-    draft.dataset,
-    (field) => Boolean(field.groupable),
-  );
-  const numeric = fieldOptions(
-    meta,
-    draft.dataset,
-    (field) => Boolean(field.numeric) || field.type === "number",
-  );
-  const sortable = fieldOptions(
-    meta,
-    draft.dataset,
-    (field) => Boolean(field.sortable),
-  );
+function normalizeWidgetDraft(draft: WidgetEditorDraft, meta: BiDashboardMetaResponse | null): WidgetEditorDraft {
+  const dimensions = dimensionFieldOptions(meta, draft.dataset);
+  const metricOptions = metricFieldOptions(meta, draft.dataset);
+  const dateOptions = dateFieldOptions(meta, draft.dataset);
+  const dimensionSet = new Set(dimensions);
+  const dateSet = new Set(dateOptions);
 
-  const dimensionPrimary =
-    supportsDimensions(draft.widgetType) &&
-    groupable.some((item) => item.value === draft.dimensionPrimary)
-      ? draft.dimensionPrimary
-      : supportsDimensions(draft.widgetType)
-        ? (groupable[0]?.value ?? "")
-        : "";
+  const nextDimension = supportsDimensions(draft.widgetType)
+    ? dimensionSet.has(draft.dimension)
+      ? draft.dimension
+      : dimensions[0] ?? ""
+    : "";
 
-  const dimensionSecondary =
-    supportsDimensions(draft.widgetType) &&
-    draft.dimensionSecondary &&
-    draft.dimensionSecondary !== dimensionPrimary &&
-    groupable.some((item) => item.value === draft.dimensionSecondary)
-      ? draft.dimensionSecondary
-      : "";
+  const nextSeries = supportsSeries(draft.widgetType) && dimensionSet.has(draft.seriesField) && draft.seriesField !== nextDimension
+    ? draft.seriesField
+    : "";
 
-  const metricOneField =
-    supportsMetrics(draft.widgetType) &&
-    numeric.some((item) => item.value === draft.metricOneField)
-      ? draft.metricOneField
-      : supportsMetrics(draft.widgetType)
-        ? (numeric[0]?.value ?? "")
-        : "";
-
-  const metricTwoField =
-    supportsSecondMetric(draft.widgetType) &&
-    draft.metricTwoField &&
-    draft.metricTwoField !== metricOneField &&
-    numeric.some((item) => item.value === draft.metricTwoField)
-      ? draft.metricTwoField
-      : "";
-
-  const seriesOptions = groupable.filter(
-    (item) =>
-      item.value !== dimensionPrimary && item.value !== dimensionSecondary,
-  );
-  const seriesField =
-    supportsSeriesField(draft.widgetType) &&
-    seriesOptions.some((item) => item.value === draft.seriesField)
-      ? draft.seriesField
-      : "";
-
-  const sortOptions = [
-    { value: "metric_0", label: "主指标" },
-    ...(metricTwoField ? [{ value: "metric_1", label: "第二指标" }] : []),
-    ...sortable,
-  ];
-  const sortField = sortOptions.some((item) => item.value === draft.sortField)
-    ? draft.sortField
-    : supportsMetrics(draft.widgetType)
-      ? "metric_0"
-      : "";
-  const chartPalette = supportsChartPalette(draft.widgetType)
+  const nextMetrics = ensureMetricDrafts(draft.metrics, draft.widgetType, metricOptions, meta, draft.dataset);
+  const nextDateField = dateSet.has(draft.dateField) ? draft.dateField : dateOptions[0] ?? "";
+  const nextChartPalette = supportsChartPalette(draft.widgetType)
     ? resolveChartPaletteKey(draft.chartPalette)
     : DEFAULT_CHART_PALETTE_KEY;
+  const nextSortOptions = [
+    ...(nextDimension ? [{ value: nextDimension }] : []),
+    ...nextMetrics.map((_, index) => ({ value: `metric_${index}` })),
+  ];
+  const nextSortField = nextSortOptions.some((option) => option.value === draft.sortField)
+    ? draft.sortField
+    : nextMetrics.length
+      ? "metric_0"
+      : nextDimension;
 
   return {
     ...draft,
-    chartPalette,
-    dimensionPrimary,
-    dimensionSecondary,
-    seriesField,
-    metricOneField,
-    metricTwoField,
-    metricOneAgg: draft.metricOneAgg || "sum",
-    metricTwoAgg: draft.metricTwoAgg || "sum",
-    metricOneLabel:
-      draft.metricOneLabel ||
-      (metricOneField
-        ? metricLabel(meta, draft.dataset, metricOneField, draft.metricOneAgg || "sum")
-        : ""),
-    metricTwoLabel:
-      draft.metricTwoLabel ||
-      (metricTwoField
-        ? metricLabel(meta, draft.dataset, metricTwoField, draft.metricTwoAgg || "sum")
-        : ""),
-    sortField,
-    sortDirection: draft.sortDirection === "asc" ? "asc" : "desc",
-    layoutSpan: draft.layoutSpan === "2" ? "2" : "1",
-    layoutHeightKey:
-      meta?.layout_heights?.includes(draft.layoutHeightKey) || !meta?.layout_heights
-        ? draft.layoutHeightKey || "normal"
-        : "normal",
+    dimension: nextDimension,
+    seriesField: nextSeries,
+    metrics: nextMetrics.map((metric) => ({
+      ...metric,
+      label: metric.label || fieldLabel(meta, draft.dataset, metric.field, metric.field),
+    })),
+    dateField: nextDateField,
+    chartPalette: nextChartPalette,
+    sortField: nextSortField,
+    limit: Math.max(5, Math.min(50, parsePositiveNumber(draft.limit, 20))),
+    layoutWidth: LAYOUT_WIDTH_OPTIONS.some((option) => option.value === draft.layoutWidth) ? draft.layoutWidth : 12,
+    layoutHeight: LAYOUT_HEIGHT_OPTIONS.some((option) => option.value === draft.layoutHeight) ? draft.layoutHeight : "normal",
   };
 }
 
-function buildWidgetDraft(
-  widget: BiDashboardWidget,
-  meta: BiDashboardMetaResponse | null,
-): WidgetDraft {
-  const firstMetric = widget.config.metrics[0];
-  const secondMetric = widget.config.metrics[1];
-  const firstSort = widget.config.sort[0];
+function buildWidgetDraft(widget: BiDashboardWidget, meta: BiDashboardMetaResponse | null): WidgetEditorDraft {
+  const sortRule = widget.config.sort?.[0] ?? { field: "metric_0", direction: "desc" };
+  const dateFilter = widget.config.date_filter ?? {
+    mode: "follow_page",
+    date: "",
+    start_date: "",
+    end_date: "",
+    date_col: "",
+  };
 
-  return sanitizeWidgetDraft(
+  return normalizeWidgetDraft(
     {
-      title: normalizeText(widget.title, `${widget.widget_type} 组件`),
+      id: widget.id,
+      title: normalizeText(widget.title, "未命名图表"),
       widgetType: widget.widget_type,
       dataset: widget.dataset,
-      chartPalette: widget.config.chart_palette ?? DEFAULT_CHART_PALETTE_KEY,
-      dimensionPrimary: widget.config.dimensions[0] ?? "",
-      dimensionSecondary: widget.config.dimensions[1] ?? "",
+      dimension: widget.config.dimensions?.[0] ?? "",
       seriesField: widget.config.series_field ?? "",
-      metricOneField: firstMetric?.field ?? "",
-      metricOneAgg: firstMetric?.agg ?? "sum",
-      metricOneLabel:
-        firstMetric?.label ??
-        metricLabel(meta, widget.dataset, firstMetric?.field ?? "", firstMetric?.agg ?? "sum"),
-      metricTwoField: secondMetric?.field ?? "",
-      metricTwoAgg: secondMetric?.agg ?? "sum",
-      metricTwoLabel:
-        secondMetric?.label ??
-        metricLabel(meta, widget.dataset, secondMetric?.field ?? "", secondMetric?.agg ?? "sum"),
-      sortField: firstSort?.field ?? "metric_0",
-      sortDirection: firstSort?.direction ?? "desc",
-      limit: String(widget.config.limit ?? 20),
-      dateMode: widget.config.date_filter.mode ?? "follow_page",
-      date: widget.config.date_filter.date ?? "",
-      startDate: widget.config.date_filter.start_date ?? "",
-      endDate: widget.config.date_filter.end_date ?? "",
-      textContent: widget.config.text_content ?? "",
-      analysisText: widget.analysis_text ?? "",
-      layoutWidth: String(widget.layout.w ?? 12),
-      layoutHeightRows: String(widget.layout.h ?? 5),
-      layoutSpan: String(widget.layout.span ?? 1),
-      layoutHeightKey: widget.layout.height ?? "normal",
+      metrics: (widget.config.metrics ?? []).map((metric) => ({
+        field: metric.field,
+        agg: metric.agg,
+        label: normalizeText(metric.label, metric.field),
+      })),
+      chartPalette: resolveChartPaletteKey(widget.config.chart_palette),
+      dateMode: dateFilter.mode || "follow_page",
+      dateValue: dateFilter.date || "",
+      startDate: dateFilter.start_date || "",
+      endDate: dateFilter.end_date || "",
+      dateField: dateFilter.date_col || "",
+      sortField: sortRule.field || "metric_0",
+      sortDirection: sortRule.direction || "desc",
+      limit: parsePositiveNumber(widget.config.limit, 20),
+      textContent: widget.config.text_content || "",
+      analysisText: widget.analysis_text || "",
+      layoutWidth: widget.layout.w || 12,
+      layoutHeight: heightFromRows(widget.layout.h || rowsFromHeight("normal")),
+      layoutX: widget.layout.x || 0,
+      layoutY: widget.layout.y || 0,
+      sortOrder: widget.sort_order,
     },
     meta,
   );
 }
 
-function buildWidgetPayload(
-  baseWidget: BiDashboardWidget,
-  draft: WidgetDraft,
-  meta: BiDashboardMetaResponse | null,
-) {
-  const normalized = sanitizeWidgetDraft(draft, meta);
-  const metrics = [];
-
-  if (supportsMetrics(normalized.widgetType) && normalized.metricOneField) {
-    metrics.push({
-      field: normalized.metricOneField,
-      agg: normalized.metricOneAgg || "sum",
-      label:
-        normalized.metricOneLabel ||
-        metricLabel(
-          meta,
-          normalized.dataset,
-          normalized.metricOneField,
-          normalized.metricOneAgg || "sum",
-        ),
-    });
-  }
-  if (supportsSecondMetric(normalized.widgetType) && normalized.metricTwoField) {
-    metrics.push({
-      field: normalized.metricTwoField,
-      agg: normalized.metricTwoAgg || "sum",
-      label:
-        normalized.metricTwoLabel ||
-        metricLabel(
-          meta,
-          normalized.dataset,
-          normalized.metricTwoField,
-          normalized.metricTwoAgg || "sum",
-        ),
-    });
-  }
+function buildWidgetPayload(draft: WidgetEditorDraft, meta: BiDashboardMetaResponse | null) {
+  const nextDraft = normalizeWidgetDraft(draft, meta);
+  const metrics: BiDashboardMetricConfig[] = nextDraft.metrics.map((metric) => ({
+    field: metric.field,
+    agg: metric.agg,
+    label: metric.label || fieldLabel(meta, nextDraft.dataset, metric.field, metric.field),
+  }));
 
   return {
-    title:
-      normalized.title.trim() ||
-      normalizeText(
-        meta?.widget_type_map?.[normalized.widgetType],
-        normalized.widgetType,
-      ),
-    widget_type: normalized.widgetType,
-    dataset: normalized.dataset,
+    title: nextDraft.title,
+    widget_type: nextDraft.widgetType,
+    dataset: nextDraft.dataset,
     config: {
-      dataset: normalized.dataset,
-      chart_palette: supportsChartPalette(normalized.widgetType)
-        ? normalized.chartPalette
-        : undefined,
-      dimensions: supportsDimensions(normalized.widgetType)
-        ? [normalized.dimensionPrimary, normalized.dimensionSecondary].filter(Boolean)
-        : [],
-      series_field: supportsSeriesField(normalized.widgetType)
-        ? normalized.seriesField
-        : "",
+      dataset: nextDraft.dataset,
+      dimensions: supportsDimensions(nextDraft.widgetType) && nextDraft.dimension ? [nextDraft.dimension] : [],
+      series_field: supportsSeries(nextDraft.widgetType) ? nextDraft.seriesField : "",
       metrics,
-      date_filter:
-        normalized.dateMode === "all"
-          ? { mode: "all" }
-          : normalized.dateMode === "single"
-            ? { mode: "single", date: normalized.date }
-            : normalized.dateMode === "range"
-              ? {
-                  mode: "range",
-                  start_date: normalized.startDate,
-                  end_date: normalized.endDate,
-                }
-              : { mode: "follow_page" },
-      filters: baseWidget.config.filters ?? [],
-      sort: normalized.sortField
-        ? [{ field: normalized.sortField, direction: normalized.sortDirection }]
-        : [],
-      limit: supportsLimit(normalized.widgetType)
-        ? clampInt(normalized.limit, 1, 500, baseWidget.config.limit ?? 20)
-        : 1,
-      text_content: supportsTextContent(normalized.widgetType)
-        ? normalized.textContent
-        : "",
+      chart_palette: supportsChartPalette(nextDraft.widgetType) ? nextDraft.chartPalette : undefined,
+      date_filter: {
+        mode: nextDraft.dateMode,
+        date: nextDraft.dateValue,
+        start_date: nextDraft.startDate,
+        end_date: nextDraft.endDate,
+        date_col: nextDraft.dateField,
+      },
+      filters: [],
+      sort: nextDraft.sortField ? [{ field: nextDraft.sortField, direction: nextDraft.sortDirection }] : [],
+      limit: supportsLimit(nextDraft.widgetType) ? nextDraft.limit : 20,
+      text_content: nextDraft.widgetType === "text" ? nextDraft.textContent : "",
     },
     layout: {
-      ...baseWidget.layout,
-      w: clampInt(normalized.layoutWidth, 4, 24, baseWidget.layout.w ?? 12),
-      h: clampInt(
-        normalized.layoutHeightRows,
-        3,
-        12,
-        baseWidget.layout.h ?? 5,
-      ),
-      span: normalized.layoutSpan === "2" ? 2 : 1,
-      height: normalized.layoutHeightKey || "normal",
+      x: nextDraft.layoutX,
+      y: nextDraft.layoutY,
+      w: nextDraft.layoutWidth,
+      h: rowsFromHeight(nextDraft.layoutHeight),
+      span: nextDraft.layoutWidth > 12 ? 2 : 1,
+      height: nextDraft.layoutHeight,
     },
-    sort_order: baseWidget.sort_order,
-    analysis_text: normalized.analysisText,
+    sort_order: nextDraft.sortOrder,
+    analysis_text: nextDraft.analysisText,
   };
 }
 
-function EditorField({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
+function WidgetLibraryMenu({ onCreate }: { onCreate: (item: WidgetLibraryItem) => void }) {
   return (
-    <label className="space-y-2">
-      <div className="space-y-1">
-        <div className="text-sm font-medium text-foreground">{label}</div>
-        {hint ? (
-          <div className="text-xs leading-5 text-muted-foreground">{hint}</div>
-        ) : null}
-      </div>
-      {children}
-    </label>
+    <div className="grid gap-4">
+      {WIDGET_LIBRARY_GROUPS.map((group) => (
+        <div key={group.title} className="space-y-2">
+          <div className="px-1 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{group.title}</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {group.items.map((item) => (
+              <button
+                key={item.type}
+                type="button"
+                onClick={() => onCreate(item)}
+                className="rounded-[24px] border border-border/80 bg-white px-4 py-4 text-left transition-all hover:border-sky-200 hover:bg-sky-50/60"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-foreground">{item.title}</div>
+                  <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+                    {item.badge}
+                  </Badge>
+                </div>
+                <div className="mt-2 text-sm leading-6 text-muted-foreground">{item.summary}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
-type WidgetSummaryCardProps = {
-  widget: BiDashboardWidget;
-  selected: boolean;
-  onSelect: () => void;
-};
-
-function WidgetSummaryCard({
-  widget,
-  selected,
-  onSelect,
-}: WidgetSummaryCardProps) {
-  const metricNames = widget.config.metrics.map((metric) =>
-    normalizeText(metric.label, metric.field),
-  );
-  const dimensionNames = widget.config.dimensions.map((dimension) =>
-    normalizeText(dimension, dimension),
-  );
-
+function PalettePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "w-full rounded-[22px] border px-4 py-4 text-left transition-all",
-        selected
-          ? "border-sky-300 bg-sky-50 shadow-[0_18px_35px_rgba(56,189,248,0.12)]"
-          : "border-border/80 bg-white hover:border-slate-300",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-2">
-          <div className="text-base font-semibold text-foreground">
-            {normalizeText(widget.title, `${widget.widget_type} 组件`)}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {normalizeText(widget.widget_type, widget.widget_type)} ·{" "}
-            {normalizeText(widget.dataset, widget.dataset)}
-          </div>
-        </div>
-        <Badge
-          className={cn(
-            "rounded-full border px-2 py-0.5 text-[11px] shadow-none",
-            selected
-              ? "border-sky-200 bg-white text-sky-700"
-              : "border-border/80 bg-muted/40 text-muted-foreground",
-          )}
-        >
-          {widget.id}
-        </Badge>
-      </div>
-      <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
-        <div>指标：{metricNames.length ? metricNames.join(" / ") : "未配置"}</div>
-        <div>维度：{dimensionNames.length ? dimensionNames.join(" / ") : "无维度"}</div>
-      </div>
-    </button>
+    <div className="grid gap-2">
+      {BI_DASHBOARD_CHART_PALETTES.map((palette) => {
+        const active = palette.key === value;
+        return (
+          <button
+            key={palette.key}
+            type="button"
+            onClick={() => onChange(palette.key)}
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-[20px] border px-3 py-3 text-left transition-all",
+              active ? "border-sky-300 bg-sky-50 ring-2 ring-sky-100" : "border-border/80 bg-white hover:border-slate-300",
+            )}
+          >
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">{palette.label}</div>
+              <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{palette.description}</div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              {palette.colors.map((color) => (
+                <span key={color} className="size-4 rounded-full ring-1 ring-black/5" style={{ backgroundColor: color }} />
+              ))}
+            </div>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
 export function BiDashboardEditorPage() {
-  const searchParams = useSearchParams();
-  const preferredViewId = parsePositiveInt(searchParams.get("view_id"));
-  const preferredWidgetId = parsePositiveInt(searchParams.get("widget_id"));
-
-  const [selectedDate, setSelectedDate] = useState(
-    searchParams.get("biz_date") ?? getDefaultBusinessDate(),
-  );
+  const [selectedDate, setSelectedDate] = useState(getDefaultBusinessDate());
   const [meta, setMeta] = useState<BiDashboardMetaResponse | null>(null);
   const [views, setViews] = useState<BiDashboardViewSummary[]>([]);
-  const [activeViewId, setActiveViewId] = useState<number | null>(
-    preferredViewId,
-  );
+  const [activeViewId, setActiveViewId] = useState<number | null>(null);
   const [detail, setDetail] = useState<BiDashboardViewDetail | null>(null);
   const [data, setData] = useState<BiDashboardWidgetDataResponse | null>(null);
-  const [selectedWidgetId, setSelectedWidgetId] = useState<number | null>(
-    preferredWidgetId,
-  );
-  const [pendingWidgetId, setPendingWidgetId] = useState<number | null>(
-    preferredWidgetId,
-  );
-  const [viewDraft, setViewDraft] = useState<ViewDraft>({
-    name: "",
-    description: "",
-  });
-  const [widgetDraft, setWidgetDraft] = useState<WidgetDraft | null>(null);
-  const [createViewOpen, setCreateViewOpen] = useState(false);
-  const [createWidgetOpen, setCreateWidgetOpen] = useState(false);
-  const [createViewDraft, setCreateViewDraft] = useState<CreateViewDraft>({
-    name: "",
-    description: "",
-  });
-  const [createWidgetDraft, setCreateWidgetDraft] = useState<CreateWidgetDraft>({
-    title: "",
-    widgetType: "bar",
-    dataset: "sales_cleaning",
-  });
   const [loading, setLoading] = useState(true);
   const [viewLoading, setViewLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [viewDraftName, setViewDraftName] = useState("");
+  const [viewDraftDescription, setViewDraftDescription] = useState("");
+  const [isCreateViewOpen, setIsCreateViewOpen] = useState(false);
+  const [newViewName, setNewViewName] = useState("");
+  const [newViewDescription, setNewViewDescription] = useState("");
+  const [widgetLibraryOpen, setWidgetLibraryOpen] = useState(false);
+  const [selectedWidgetId, setSelectedWidgetId] = useState<number | null>(null);
+  const [widgetDraft, setWidgetDraft] = useState<WidgetEditorDraft | null>(null);
   const [savingView, setSavingView] = useState(false);
   const [savingWidget, setSavingWidget] = useState(false);
-  const [creatingView, setCreatingView] = useState(false);
-  const [creatingWidget, setCreatingWidget] = useState(false);
-  const [duplicatingWidget, setDuplicatingWidget] = useState(false);
-  const [deletingWidget, setDeletingWidget] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadViews = useCallback(async () => {
-    const response = await requestViews();
-    setViews(response.views);
-    return response.views;
-  }, []);
-
-  const loadActiveView = useCallback(async (viewId: number, bizDate: string) => {
-    setViewLoading(true);
-    setError(null);
-    try {
-      const [detailResponse, dataResponse] = await Promise.all([
-        requestDashboardViewDetail(viewId),
-        requestDashboardWidgetData(viewId, bizDate),
-      ]);
-      setDetail(detailResponse);
-      setData(dataResponse);
-    } catch (nextError) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "当前看板编辑数据加载失败。",
-      );
-    } finally {
-      setViewLoading(false);
-    }
-  }, []);
+  const [creatingWidgetType, setCreatingWidgetType] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -697,25 +521,14 @@ export function BiDashboardEditorPage() {
       setLoading(true);
       setError(null);
       try {
-        const [metaResponse, viewsResponse] = await Promise.all([
-          requestDashboardMeta(),
-          requestDashboardViews(),
-        ]);
-        if (cancelled) {
-          return;
-        }
+        const [metaResponse, viewsResponse] = await Promise.all([requestDashboardMeta(), requestDashboardViews()]);
+        if (cancelled) return;
         setMeta(metaResponse);
         setViews(viewsResponse.views);
-        setActiveViewId((current) =>
-          current ?? resolveEditorDefaultViewId(viewsResponse.views, preferredViewId),
-        );
+        setActiveViewId(defaultViewId(viewsResponse.views, null));
       } catch (nextError) {
         if (!cancelled) {
-          setError(
-            nextError instanceof Error
-              ? nextError.message
-              : "看板编辑页加载失败。",
-          );
+          setError(nextError instanceof Error ? nextError.message : "BI 看板编辑器加载失败。");
         }
       } finally {
         if (!cancelled) {
@@ -728,95 +541,66 @@ export function BiDashboardEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [preferredViewId]);
+  }, []);
 
   useEffect(() => {
-    if (!views.length) {
-      setActiveViewId(null);
-      return;
-    }
-    setActiveViewId((current) =>
-      current && views.some((view) => view.id === current)
-        ? current
-        : resolveEditorDefaultViewId(views, preferredViewId),
-    );
-  }, [preferredViewId, views]);
+    if (!activeViewId) return;
+    const currentViewId = activeViewId;
+    let cancelled = false;
 
-  useEffect(() => {
-    if (!activeViewId) {
-      setDetail(null);
-      setData(null);
-      return;
+    async function loadView() {
+      setViewLoading(true);
+      setError(null);
+      try {
+        const [viewsResponse, detailResponse, dataResponse] = await Promise.all([
+          requestDashboardViews(),
+          requestDashboardViewDetail(currentViewId),
+          requestDashboardWidgetData(currentViewId, selectedDate),
+        ]);
+        if (cancelled) return;
+        setViews(viewsResponse.views);
+        setDetail(detailResponse);
+        setData(dataResponse);
+        setViewDraftName(normalizeText(detailResponse.name, "未命名看板"));
+        setViewDraftDescription(detailResponse.description || "");
+        setSelectedWidgetId((current) => {
+          if (current && detailResponse.widgets.some((widget) => widget.id === current)) {
+            return current;
+          }
+          return detailResponse.widgets[0]?.id ?? null;
+        });
+      } catch (nextError) {
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : "当前看板加载失败。");
+        }
+      } finally {
+        if (!cancelled) {
+          setViewLoading(false);
+        }
+      }
     }
-    void loadActiveView(activeViewId, selectedDate);
-  }, [activeViewId, loadActiveView, selectedDate]);
 
-  const currentDetail =
-    detail?.id === activeViewId
-      ? detail
-      : views.find((view) => view.id === activeViewId)
-        ? ({
-            ...views.find((view) => view.id === activeViewId)!,
-            widgets: [],
-          } as BiDashboardViewDetail)
-        : null;
-  const activeView = views.find((view) => view.id === activeViewId) ?? null;
-  const widgets = useMemo(
-    () =>
-      [...(currentDetail?.widgets ?? [])].sort(
-        (left, right) =>
-          left.layout.y - right.layout.y ||
-          left.layout.x - right.layout.x ||
-          left.sort_order - right.sort_order,
-      ),
-    [currentDetail],
-  );
+    void loadView();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeViewId, selectedDate]);
+
   const itemMap = useMemo(
     () => new Map((data?.items ?? []).map((item) => [item.widget_id, item])),
     [data],
   );
 
-  useEffect(() => {
-    if (!currentDetail) {
-      setViewDraft({ name: "", description: "" });
-      return;
-    }
-    setViewDraft({
-      name: currentDetail.name ?? "",
-      description: currentDetail.description ?? "",
-    });
-  }, [currentDetail]);
+  const activeView = useMemo(
+    () => views.find((view) => view.id === activeViewId) ?? null,
+    [views, activeViewId],
+  );
 
-  useEffect(() => {
-    if (!widgets.length) {
-      setSelectedWidgetId(null);
-      return;
-    }
-    setSelectedWidgetId((current) => {
-      const targetId =
-        pendingWidgetId && widgets.some((widget) => widget.id === pendingWidgetId)
-          ? pendingWidgetId
-          : current && widgets.some((widget) => widget.id === current)
-            ? current
-            : preferredWidgetId &&
-                widgets.some((widget) => widget.id === preferredWidgetId)
-              ? preferredWidgetId
-              : widgets[0]?.id ?? null;
-      return targetId;
-    });
-  }, [pendingWidgetId, preferredWidgetId, widgets]);
-
-  useEffect(() => {
-    if (
-      pendingWidgetId &&
-      widgets.some((widget) => widget.id === pendingWidgetId)
-    ) {
-      setPendingWidgetId(null);
-    }
-  }, [pendingWidgetId, widgets]);
-
-  const selectedWidget =
-    widgets.find((widget) => widget.id === selectedWidgetId) ?? null;
+  const selectedWidget = useMemo(
+    () => detail?.widgets.find((widget) => widget.id === selectedWidgetId) ?? null,
+    [detail, selectedWidgetId],
+  );
+  const widgetLibraryItems = useMemo(() => WIDGET_LIBRARY_GROUPS.flatMap((group) => group.items), []);
 
   useEffect(() => {
     if (!selectedWidget) {
@@ -824,1399 +608,1053 @@ export function BiDashboardEditorPage() {
       return;
     }
     setWidgetDraft(buildWidgetDraft(selectedWidget, meta));
-  }, [meta, selectedWidget]);
+  }, [selectedWidget, meta]);
 
-  const appliedDate =
-    (data?.items ?? []).find((item) => item.applied_target_date)
-      ?.applied_target_date ??
-    data?.biz_date ??
-    selectedDate;
+  const latestDateLabel = activeView ? formatDate(activeView.updated_at) : "--";
+  const widgetCount = detail?.widgets.length ?? 0;
 
-  const datasetOptions =
-    meta?.datasets.map((dataset) => ({
-      value: dataset.key,
-      label: normalizeText(dataset.label, dataset.key),
-    })) ?? [];
-  const widgetTypeOptions =
-    meta?.widget_types.map((widgetType) => ({
-      value: widgetType.key,
-      label: normalizeText(widgetType.label, widgetType.key),
-    })) ?? [];
-  const aggregationOptions =
-    meta?.aggregation_options?.map((item) => ({
-      value: item.key,
-      label: normalizeText(item.label, item.key),
-    })) ??
-    AGGREGATION_FALLBACK.map((item) => ({
-      value: item.key,
-      label: item.label,
-    }));
-  const chartPaletteOptions = BI_DASHBOARD_CHART_PALETTES.map((palette) => ({
-    value: palette.key,
-    label: palette.label,
-    description: palette.description,
-  }));
+  const refreshCurrentView = async (nextSelectedWidgetId?: number | null, nextViewId?: number) => {
+    const targetViewId = nextViewId ?? activeViewId;
+    if (!targetViewId) return;
 
-  const widgetGroupableOptions = widgetDraft
-    ? fieldOptions(meta, widgetDraft.dataset, (field) => Boolean(field.groupable))
-    : [];
-  const widgetNumericOptions = widgetDraft
-    ? fieldOptions(
-        meta,
-        widgetDraft.dataset,
-        (field) => Boolean(field.numeric) || field.type === "number",
-      )
-    : [];
-  const widgetSortableOptions = widgetDraft
-    ? fieldOptions(meta, widgetDraft.dataset, (field) => Boolean(field.sortable))
-    : [];
-  const seriesOptions = widgetGroupableOptions.filter(
-    (item) =>
-      item.value !== widgetDraft?.dimensionPrimary &&
-      item.value !== widgetDraft?.dimensionSecondary,
-  );
-  const sortOptions = [
-    { value: "metric_0", label: "主指标" },
-    ...(widgetDraft?.metricTwoField
-      ? [{ value: "metric_1", label: "第二指标" }]
-      : []),
-    ...widgetSortableOptions,
-  ];
-
-  const selectedChartPalette = getChartPalette(widgetDraft?.chartPalette);
-
-  const openCreateViewDialog = () => {
-    setCreateViewDraft({
-      name: "",
-      description: "",
-    });
-    setCreateViewOpen(true);
-  };
-
-  const openCreateWidgetDialog = () => {
-    const defaultDataset =
-      selectedWidget?.dataset ??
-      currentDetail?.widgets[0]?.dataset ??
-      datasetOptions[0]?.value ??
-      "sales_cleaning";
-    const defaultWidgetType = widgetTypeOptions[0]?.value ?? "bar";
-
-    setCreateWidgetDraft({
-      title: "",
-      widgetType: defaultWidgetType,
-      dataset: defaultDataset,
-    });
-    setCreateWidgetOpen(true);
-  };
-
-  const updateWidgetDraft = (patch: Partial<WidgetDraft>) => {
-    setWidgetDraft((current) =>
-      current ? sanitizeWidgetDraft({ ...current, ...patch }, meta) : current,
-    );
-  };
-
-  async function handleSaveView() {
-    if (!activeViewId) {
-      return;
-    }
-    if (!viewDraft.name.trim()) {
-      toast.error("请先填写看板名称。");
-      return;
-    }
-
-    setSavingView(true);
+    setViewLoading(true);
     try {
-      await requestUpdateView(activeViewId, {
-        name: viewDraft.name.trim(),
-        description: viewDraft.description.trim(),
-      });
-      await loadViews();
-      await loadActiveView(activeViewId, selectedDate);
-      toast.success("看板信息已保存。");
-    } catch (nextError) {
-      toast.error(
-        nextError instanceof Error
-          ? nextError.message
-          : "看板保存失败，请稍后重试。",
+      const [viewsResponse, detailResponse, dataResponse] = await Promise.all([
+        requestDashboardViews(),
+        requestDashboardViewDetail(targetViewId),
+        requestDashboardWidgetData(targetViewId, selectedDate),
+      ]);
+      setViews(viewsResponse.views);
+      setDetail(detailResponse);
+      setData(dataResponse);
+      setActiveViewId(targetViewId);
+      setSelectedWidgetId(
+        nextSelectedWidgetId && detailResponse.widgets.some((widget) => widget.id === nextSelectedWidgetId)
+          ? nextSelectedWidgetId
+          : detailResponse.widgets[0]?.id ?? null,
       );
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const handleCreateView = async () => {
+    if (!newViewName.trim()) {
+      setError("请先输入看板名称。");
+      return;
+    }
+    setSavingView(true);
+    setError(null);
+    try {
+      const response = await requestCreateView({
+        name: newViewName.trim(),
+        description: newViewDescription.trim(),
+      });
+      setIsCreateViewOpen(false);
+      setNewViewName("");
+      setNewViewDescription("");
+      setMessage("已新增新的 BI 看板草稿。");
+      await refreshCurrentView(null, response.id);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "新增看板失败。");
     } finally {
       setSavingView(false);
     }
-  }
+  };
 
-  async function handleCreateView() {
-    if (!createViewDraft.name.trim()) {
-      toast.error("请先填写新看板名称。");
+  const handleSaveView = async () => {
+    if (!activeViewId) return;
+    if (!viewDraftName.trim()) {
+      setError("看板名称不能为空。");
       return;
     }
-
-    setCreatingView(true);
+    setSavingView(true);
+    setError(null);
     try {
-      const created = await requestCreateView({
-        name: createViewDraft.name.trim(),
-        description: createViewDraft.description.trim(),
+      await requestUpdateView(activeViewId, {
+        name: viewDraftName.trim(),
+        description: viewDraftDescription.trim(),
+        global_filters: detail?.global_filters ?? [],
       });
-      const nextViews = await loadViews();
-      setActiveViewId(created.id);
-      setCreateViewOpen(false);
-      setDetail(null);
-      setData(null);
-      if (nextViews.some((view) => view.id === created.id)) {
-        toast.success("新看板已创建，现在可以继续添加图表。");
-      }
+      setMessage("看板信息已保存。");
+      await refreshCurrentView(selectedWidgetId);
     } catch (nextError) {
-      toast.error(
-        nextError instanceof Error
-          ? nextError.message
-          : "新增看板失败，请稍后重试。",
-      );
+      setError(nextError instanceof Error ? nextError.message : "保存看板信息失败。");
     } finally {
-      setCreatingView(false);
+      setSavingView(false);
     }
-  }
+  };
 
-  async function handleCreateWidget() {
-    if (!activeViewId) {
-      toast.error("请先创建或选择一个看板。");
-      return;
-    }
-
-    setCreatingWidget(true);
+  const handleCreateWidget = async (item: WidgetLibraryItem) => {
+    if (!activeViewId) return;
+    const dataset = selectedWidget?.dataset || (activeView?.id === 3 ? "inventory_cleaning" : "sales_cleaning");
+    setCreatingWidgetType(item.type);
+    setError(null);
+    setWidgetLibraryOpen(false);
     try {
-      const created = await requestCreateWidget(activeViewId, {
-        title:
-          createWidgetDraft.title.trim() ||
-          normalizeText(
-            meta?.widget_type_map?.[createWidgetDraft.widgetType],
-            createWidgetDraft.widgetType,
-          ),
-        widget_type: createWidgetDraft.widgetType,
-        dataset: createWidgetDraft.dataset,
+      const response = await requestCreateWidget(activeViewId, {
+        title: item.title,
+        widget_type: item.type,
+        dataset,
       });
-
-      await requestUpdateWidget(created.id, {
-        title:
-          createWidgetDraft.title.trim() ||
-          normalizeText(
-            meta?.widget_type_map?.[createWidgetDraft.widgetType],
-            createWidgetDraft.widgetType,
-          ),
-        widget_type: createWidgetDraft.widgetType,
-        dataset: createWidgetDraft.dataset,
-        config: {
-          dataset: createWidgetDraft.dataset,
-          chart_palette: DEFAULT_CHART_PALETTE_KEY,
-        },
-        layout: nextWidgetLayout(widgets),
-      });
-
-      setPendingWidgetId(created.id);
-      setCreateWidgetOpen(false);
-      await loadViews();
-      await loadActiveView(activeViewId, selectedDate);
-      toast.success("图表组件已创建。");
+      setMessage(`已新增${item.title}。`);
+      await refreshCurrentView(response.id);
     } catch (nextError) {
-      toast.error(
-        nextError instanceof Error
-          ? nextError.message
-          : "新增图表失败，请稍后重试。",
-      );
+      setError(nextError instanceof Error ? nextError.message : "新增图表失败。");
     } finally {
-      setCreatingWidget(false);
+      setCreatingWidgetType(null);
     }
-  }
+  };
 
-  async function handleSaveWidget() {
-    if (!selectedWidget || !widgetDraft) {
-      return;
-    }
-    if (!widgetDraft.title.trim()) {
-      toast.error("请先填写图表标题。");
-      return;
-    }
-    if (
-      supportsMetrics(widgetDraft.widgetType) &&
-      !supportsTextContent(widgetDraft.widgetType) &&
-      !widgetDraft.metricOneField
-    ) {
-      toast.error("请至少选择一个指标字段。");
-      return;
-    }
-
+  const handleSaveWidget = async () => {
+    if (!widgetDraft) return;
     setSavingWidget(true);
+    setError(null);
     try {
-      await requestUpdateWidget(
-        selectedWidget.id,
-        buildWidgetPayload(selectedWidget, widgetDraft, meta),
-      );
-      setPendingWidgetId(selectedWidget.id);
-      await loadViews();
-      await loadActiveView(selectedWidget.view_id, selectedDate);
-      toast.success("图表配置已保存。");
+      await requestUpdateWidget(widgetDraft.id, buildWidgetPayload(widgetDraft, meta));
+      setMessage("图表配置已保存。");
+      await refreshCurrentView(widgetDraft.id);
     } catch (nextError) {
-      toast.error(
-        nextError instanceof Error
-          ? nextError.message
-          : "图表保存失败，请稍后重试。",
-      );
+      setError(nextError instanceof Error ? nextError.message : "保存图表失败。");
     } finally {
       setSavingWidget(false);
     }
-  }
+  };
 
-  async function handleDuplicateWidget() {
-    if (!selectedWidget) {
-      return;
-    }
-
-    setDuplicatingWidget(true);
+  const handleDuplicateWidget = async (widgetId: number) => {
+    setError(null);
     try {
-      const duplicated = await requestDuplicateWidget(selectedWidget.id);
-      setPendingWidgetId(duplicated.id);
-      await loadViews();
-      await loadActiveView(selectedWidget.view_id, selectedDate);
-      toast.success("图表已复制。");
+      const response = await requestDuplicateWidget(widgetId);
+      setMessage("已复制图表组件。");
+      await refreshCurrentView(response.id);
     } catch (nextError) {
-      toast.error(
-        nextError instanceof Error
-          ? nextError.message
-          : "复制图表失败，请稍后重试。",
-      );
-    } finally {
-      setDuplicatingWidget(false);
+      setError(nextError instanceof Error ? nextError.message : "复制图表失败。");
     }
-  }
+  };
 
-  async function handleDeleteWidget() {
-    if (!selectedWidget) {
+  const handleDeleteWidget = async (widgetId: number) => {
+    if (!window.confirm("删除后该图表会立即从当前看板移除，确认继续吗？")) {
       return;
     }
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm("确认删除当前图表吗？删除后不可恢复。")
-    ) {
-      return;
-    }
-
-    setDeletingWidget(true);
+    setError(null);
     try {
-      await requestDeleteWidget(selectedWidget.id);
-      setSelectedWidgetId(null);
-      setPendingWidgetId(null);
-      await loadViews();
-      await loadActiveView(selectedWidget.view_id, selectedDate);
-      toast.success("图表已删除。");
+      await requestDeleteWidget(widgetId);
+      setMessage("图表已删除。");
+      await refreshCurrentView(null);
     } catch (nextError) {
-      toast.error(
-        nextError instanceof Error
-          ? nextError.message
-          : "删除图表失败，请稍后重试。",
-      );
-    } finally {
-      setDeletingWidget(false);
+      setError(nextError instanceof Error ? nextError.message : "删除图表失败。");
     }
-  }
+  };
+
+  const selectedItem = selectedWidgetId ? itemMap.get(selectedWidgetId) : null;
+  const sortOptions = widgetDraft ? sortOptionsForDraft(widgetDraft, meta) : [];
+  const currentDimensionOptions = widgetDraft ? dimensionFieldOptions(meta, widgetDraft.dataset) : [];
+  const currentMetricOptions = widgetDraft ? metricFieldOptions(meta, widgetDraft.dataset) : [];
+  const currentDateOptions = widgetDraft ? dateFieldOptions(meta, widgetDraft.dataset) : [];
+  const aggregationOptions = meta?.aggregation_options?.length ? meta.aggregation_options : AGGREGATION_FALLBACK;
+  const canvasWidgets = useMemo(
+    () => [...(detail?.widgets ?? [])].sort((left, right) => (left.sort_order ?? 0) - (right.sort_order ?? 0)),
+    [detail],
+  );
+
+  const updateWidgetDraft = (updater: (draft: WidgetEditorDraft) => WidgetEditorDraft) => {
+    setWidgetDraft((current) => (current ? updater(current) : current));
+  };
+
+  const addMetricDraft = () => {
+    updateWidgetDraft((current) => ({
+      ...current,
+      metrics: [...current.metrics, { field: "", agg: aggregationOptions[0]?.key ?? "sum", label: "" }],
+    }));
+  };
+
+  const removeMetricDraft = (index: number) => {
+    updateWidgetDraft((current) => ({
+      ...current,
+      metrics: current.metrics.filter((_, metricIndex) => metricIndex !== index),
+    }));
+  };
 
   if (loading) {
-    return <LoadingState />;
-  }
-
-  if (!activeView || !currentDetail) {
     return (
-      <div className="surface-panel p-10">
-        <Empty className="border-border/70">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <PencilLine className="size-4" />
-            </EmptyMedia>
-            <EmptyTitle>当前还没有可编辑的 BI 看板</EmptyTitle>
-            <EmptyDescription>
-              {error || "先创建一个看板，再继续配置图表、指标与布局。"}
-            </EmptyDescription>
-          </EmptyHeader>
-          <div className="flex flex-wrap justify-center gap-3">
-            <Button className="rounded-full" onClick={openCreateViewDialog}>
-              <Plus className="size-4" />
-              新增看板
-            </Button>
-            <Button asChild variant="outline" className="rounded-full">
-              <TransitionLink href="/governance/metrics">
-                <ChevronLeft className="size-4" />
-                返回 BI 看板
-              </TransitionLink>
-            </Button>
-          </div>
-        </Empty>
+      <div className="space-y-6">
+        <Skeleton className="h-32 rounded-[32px]" />
+        <Skeleton className="h-[520px] rounded-[32px]" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <section className="surface-panel px-5 py-5">
+      <section className="surface-panel px-6 py-6">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {views.map((view) => {
-                const active = view.id === activeView.id;
-                return (
-                  <button
-                    key={view.id}
-                    type="button"
-                    onClick={() => setActiveViewId(view.id)}
-                    className={cn(
-                      "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-all",
-                      active
-                        ? "border-slate-950 bg-slate-950 text-white shadow-[0_18px_35px_rgba(15,23,42,0.16)]"
-                        : "border-border/80 bg-white text-foreground hover:border-slate-300",
-                    )}
-                  >
-                    {viewTitle(view)}
-                    <Badge
-                      className={cn(
-                        "rounded-full border px-2 py-0.5 text-[11px] shadow-none",
-                        active
-                          ? "border-white/20 bg-white/10 text-white"
-                          : "border-border/80 bg-muted/40 text-muted-foreground",
-                      )}
-                    >
-                      {view.widget_count}
-                    </Badge>
-                  </button>
-                );
-              })}
-              <Button
-                variant="outline"
-                className="h-10 rounded-full border-dashed border-slate-300 bg-white"
-                onClick={openCreateViewDialog}
-              >
-                <Plus className="size-4" />
-                新增看板
-              </Button>
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              <LayoutDashboard className="size-3.5" />
+              BI Dashboard Studio
             </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm leading-6 text-muted-foreground">
-              <span>{viewDescription(currentDetail)}</span>
-              <span>最近更新 {formatDateTime(activeView.updated_at)}</span>
-              <span>业务日期 {formatDate(appliedDate)}</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-4xl font-semibold tracking-tight text-foreground">可自定义 BI 看板</h2>
+              <Badge className="rounded-full bg-sky-50 px-3 py-1 text-sky-700 shadow-none">画布模式</Badge>
             </div>
+            <p className="max-w-4xl text-sm leading-7 text-muted-foreground">
+              围绕经营指标、趋势图和排行榜建立统一画布，支持新增组件、组件级配置、图表配色和看板级视图管理。
+            </p>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="space-y-2">
-              <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                业务日期
-              </span>
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(event) => setSelectedDate(event.target.value)}
-                className="h-11 min-w-[180px] rounded-2xl border-border/80 bg-white"
-              />
-            </label>
-            <Button
-              asChild
-              variant="outline"
-              className="h-11 rounded-full border-border/80 bg-white"
-            >
+          <div className="flex flex-wrap items-center gap-3">
+            <DropdownMenu open={widgetLibraryOpen} onOpenChange={setWidgetLibraryOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button className="h-11 rounded-full bg-sky-500 px-5 text-white shadow-[0_18px_35px_rgba(56,189,248,0.22)] hover:bg-sky-600">
+                  <Plus className="size-4" />
+                  添加图表
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-[420px] rounded-[28px] p-4">
+                <DropdownMenuLabel className="px-1 text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                  组件能力
+                </DropdownMenuLabel>
+                <div className="mt-3">
+                  <WidgetLibraryMenu onCreate={handleCreateWidget} />
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button variant="outline" className="h-11 rounded-full border-border/80 bg-white" onClick={() => setIsCreateViewOpen(true)}>
+              <Sparkles className="size-4" />
+              新建看板
+            </Button>
+            <Button variant="outline" className="h-11 rounded-full border-border/80 bg-white" onClick={handleSaveView} disabled={savingView || !activeViewId}>
+              <Save className="size-4" />
+              保存看板信息
+            </Button>
+            <Button asChild variant="outline" className="h-11 rounded-full border-border/80 bg-white">
               <TransitionLink href="/governance/metric-dictionary">
                 <BookCheck className="size-4" />
                 指标口径
               </TransitionLink>
             </Button>
-            <Button
-              asChild
-              variant="outline"
-              className="h-11 rounded-full border-border/80 bg-white"
-            >
-              <TransitionLink href={buildRuntimeHref(activeView.id, selectedDate)}>
-                <ChevronLeft className="size-4" />
-                返回看板
+            <Button asChild className="h-11 rounded-full bg-slate-950 px-5 text-white hover:bg-slate-800">
+              <TransitionLink href={buildRuntimeHref(activeViewId, selectedDate)}>
+                <PencilLine className="size-4" />
+                预览看板
               </TransitionLink>
             </Button>
           </div>
         </div>
+
+        <div className="mt-6 grid gap-4 xl:grid-cols-[1.4fr_0.8fr_0.8fr]">
+          <Card className="rounded-[30px] border border-border/70 bg-white/90 shadow-none">
+            <CardHeader>
+              <CardTitle>当前看板</CardTitle>
+              <CardDescription>切换视图后，右侧画布和配置面板会同步刷新。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {(views.length ? views : detail ? [detail] : []).map((view) => {
+                  const active = view.id === activeViewId;
+                  return (
+                    <button
+                      key={view.id}
+                      type="button"
+                      onClick={() => setActiveViewId(view.id)}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-all",
+                        active
+                          ? "border-slate-950 bg-slate-950 text-white shadow-[0_16px_30px_rgba(15,23,42,0.16)]"
+                          : "border-border/80 bg-white text-foreground hover:border-slate-300",
+                      )}
+                    >
+                      {viewTitle(view)}
+                    <Badge
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[11px] shadow-none",
+                        active ? "border-white/20 bg-white/10 text-white" : "border-border/80 bg-muted/40 text-muted-foreground",
+                      )}
+                    >
+                        {"widget_count" in view ? view.widget_count : view.widgets.length}
+                      </Badge>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="grid gap-4 md:grid-cols-[1fr_1.2fr]">
+                <label className="space-y-2">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">看板名称</span>
+                  <Input
+                    value={viewDraftName}
+                    onChange={(event) => setViewDraftName(event.target.value)}
+                    className="h-11 rounded-2xl border-border/80 bg-white"
+                    placeholder="输入看板名称"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                    <CalendarDays className="size-3.5" />
+                    业务日期
+                  </span>
+                  <Input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(event) => setSelectedDate(event.target.value)}
+                    className="h-11 rounded-2xl border-border/80 bg-white"
+                  />
+                </label>
+              </div>
+              <label className="space-y-2">
+                <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">看板说明</span>
+                <Textarea
+                  value={viewDraftDescription}
+                  onChange={(event) => setViewDraftDescription(event.target.value)}
+                  className="min-h-[108px] rounded-[24px] border-border/80 bg-white"
+                  placeholder="描述这个看板的业务目标、关注重点和使用对象。"
+                />
+              </label>
+            </CardContent>
+          </Card>
+          <Card className="rounded-[30px] border border-border/70 bg-white/90 shadow-none">
+            <CardHeader>
+              <CardTitle>组件概览</CardTitle>
+              <CardDescription>编辑器会围绕当前选中的看板同步刷新组件数量、最近更新时间和业务日期。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-[24px] border border-border/70 bg-muted/30 px-4 py-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">组件数量</div>
+                  <div className="mt-3 text-3xl font-semibold text-foreground">{widgetCount}</div>
+                </div>
+                <div className="rounded-[24px] border border-border/70 bg-muted/30 px-4 py-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">最近更新</div>
+                  <div className="mt-3 text-lg font-semibold text-foreground">{latestDateLabel}</div>
+                </div>
+              </div>
+              <div className="rounded-[24px] border border-sky-100 bg-sky-50/70 px-4 py-4 text-sm leading-6 text-slate-600">
+                当前编辑视图：<span className="font-medium text-slate-900">{activeView ? viewTitle(activeView) : "未选择看板"}</span>
+                <br />
+                当前业务日期：<span className="font-medium text-slate-900">{formatDate(selectedDate)}</span>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="rounded-[30px] border border-border/70 bg-white/90 shadow-none">
+            <CardHeader>
+              <CardTitle>编辑建议</CardTitle>
+              <CardDescription>先搭建看板骨架，再逐步补齐指标卡、趋势图、排行榜和分析文本。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm leading-6 text-muted-foreground">
+              <div className="rounded-[22px] border border-border/70 bg-muted/25 px-4 py-3">
+                1. 先新增一个视图并确定业务日期，再从左上角“添加图表”补齐经营摘要和核心趋势。
+              </div>
+              <div className="rounded-[22px] border border-border/70 bg-muted/25 px-4 py-3">
+                2. 点击图表卡片即可在右侧编辑面板中调整数据表、维度、指标、排序和配色。
+              </div>
+              <div className="rounded-[22px] border border-border/70 bg-muted/25 px-4 py-3">
+                3. 复制已有组件后再微调宽高和日期范围，可以更快拼出月度、周度和排行榜组合。
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </section>
 
-      {error ? (
-        <div className="surface-panel p-10">
-          <Empty className="border-border/70">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <PencilLine className="size-4" />
-              </EmptyMedia>
-              <EmptyTitle>当前看板编辑数据暂时不可用</EmptyTitle>
-              <EmptyDescription>{error}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+      {message ? (
+        <div className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-700">
+          {message}
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="space-y-6">
-          <Card className="rounded-[28px] border-border/80 bg-white shadow-[var(--shadow-card)]">
-            <CardHeader className="space-y-2 pb-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-2">
-                  <CardTitle className="text-xl font-semibold tracking-tight">
-                    看板信息
-                  </CardTitle>
-                  <CardDescription>
-                    这里直接编辑当前看板的标题和说明，保存后会立即同步到运行页。
-                  </CardDescription>
-                </div>
-                <Button
-                  className="rounded-full"
-                  onClick={() => void handleSaveView()}
-                  disabled={savingView}
-                >
-                  <Save className="size-4" />
-                  {savingView ? "保存中..." : "保存看板"}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <EditorField label="看板名称">
-                <Input
-                  value={viewDraft.name}
-                  onChange={(event) =>
-                    setViewDraft((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  className="h-11 rounded-2xl border-border/80 bg-white"
-                />
-              </EditorField>
-              <EditorField label="看板说明">
-                <Textarea
-                  value={viewDraft.description}
-                  onChange={(event) =>
-                    setViewDraft((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
-                  className="min-h-[120px] rounded-[22px] border-border/80 bg-white"
-                />
-              </EditorField>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-[22px] border border-border/80 bg-muted/20 px-4 py-4">
-                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    当前图表
-                  </div>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {widgets.length}
-                  </div>
-                </div>
-                <div className="rounded-[22px] border border-border/80 bg-muted/20 px-4 py-4">
-                  <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    更新时间
-                  </div>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {formatDateTime(activeView.updated_at)}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+      {error ? (
+        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-medium text-rose-700">
+          {error}
+        </div>
+      ) : null}
 
-          <Card className="rounded-[28px] border-border/80 bg-white shadow-[var(--shadow-card)]">
-            <CardHeader className="space-y-2 pb-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-2">
-                  <CardTitle className="text-xl font-semibold tracking-tight">
-                    图表组件
-                  </CardTitle>
-                  <CardDescription>
-                    新增组件后，右侧会立即开放配置表单；点击组件卡可切换当前编辑对象。
-                  </CardDescription>
-                </div>
-                <Button className="rounded-full" onClick={openCreateWidgetDialog}>
-                  <Plus className="size-4" />
-                  新增图表
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {widgets.length ? (
-                widgets.map((widget) => (
-                  <WidgetSummaryCard
-                    key={widget.id}
-                    widget={widget}
-                    selected={widget.id === selectedWidgetId}
-                    onSelect={() => setSelectedWidgetId(widget.id)}
-                  />
-                ))
-              ) : (
-                <div className="rounded-[22px] border border-dashed border-border/70 bg-muted/20 px-4 py-8 text-sm text-muted-foreground">
-                  当前看板还没有图表组件，先创建一个吧。
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </aside>
-
-        <div className="space-y-6">
-          <Card className="rounded-[28px] border-border/80 bg-white shadow-[var(--shadow-card)]">
-            <CardHeader className="space-y-2 pb-3">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    <LayoutDashboard className="size-3.5" />
-                    组件配置
-                  </div>
-                  <CardTitle className="text-2xl font-semibold tracking-tight">
-                    {selectedWidget
-                      ? normalizeText(
-                          selectedWidget.title,
-                          `${selectedWidget.widget_type} 组件`,
-                        )
-                      : "选择一个组件开始编辑"}
-                  </CardTitle>
-                  <CardDescription>
-                    {selectedWidget
-                      ? "这里可以直接修改图表类型、数据集、维度、指标和布局，保存后立即同步到看板。"
-                      : "先从左侧选中一个图表，或者先新增图表组件。"}
-                  </CardDescription>
-                </div>
-                {selectedWidget ? (
-                  <div className="flex flex-wrap gap-3">
-                    <Button
-                      className="rounded-full"
-                      onClick={() => void handleSaveWidget()}
-                      disabled={savingWidget}
-                    >
-                      <Save className="size-4" />
-                      {savingWidget ? "保存中..." : "保存组件"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="rounded-full border-border/80 bg-white"
-                      onClick={() => void handleDuplicateWidget()}
-                      disabled={duplicatingWidget}
-                    >
-                      <Copy className="size-4" />
-                      {duplicatingWidget ? "复制中..." : "复制组件"}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      className="rounded-full"
-                      onClick={() => void handleDeleteWidget()}
-                      disabled={deletingWidget}
-                    >
-                      <Trash2 className="size-4" />
-                      {deletingWidget ? "删除中..." : "删除组件"}
-                    </Button>
-                  </div>
+      {!activeViewId ? (
+        <section className="surface-panel p-10">
+          <Empty className="border-border/70">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <LayoutDashboard className="size-4" />
+              </EmptyMedia>
+              <EmptyTitle>先创建一个 BI 看板，再开始布置画布</EmptyTitle>
+              <EmptyDescription>看板建好后，你就可以继续新增指标卡、折线图、排行榜和文本组件。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </section>
+      ) : (
+        <section className="surface-panel overflow-hidden px-6 py-6">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="text-3xl font-semibold tracking-tight text-foreground">
+                  {activeView ? viewTitle(activeView) : "未命名看板"}
+                </h3>
+                <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 px-3 py-1 text-slate-700 shadow-none">
+                  画布模式
+                </Badge>
+                {creatingWidgetType ? (
+                  <Badge className="rounded-full bg-amber-50 px-3 py-1 text-amber-700 shadow-none">正在新增 {widgetTypeLabel(meta, creatingWidgetType)}</Badge>
                 ) : null}
               </div>
-            </CardHeader>
-            <CardContent>
-              {selectedWidget && widgetDraft ? (
-                <div className="space-y-6">
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <EditorField label="图表标题">
-                      <Input
-                        value={widgetDraft.title}
-                        onChange={(event) =>
-                          updateWidgetDraft({ title: event.target.value })
-                        }
-                        className="h-11 rounded-2xl border-border/80 bg-white"
-                      />
-                    </EditorField>
-                    <EditorField label="图表类型">
-                      <Select
-                        value={widgetDraft.widgetType}
-                        onValueChange={(value) =>
-                          updateWidgetDraft({ widgetType: value })
-                        }
-                      >
-                        <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                          <SelectValue placeholder="选择图表类型" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {widgetTypeOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </EditorField>
-                    <EditorField label="数据集">
-                      <Select
-                        value={widgetDraft.dataset}
-                        onValueChange={(value) =>
-                          updateWidgetDraft({ dataset: value })
-                        }
-                      >
-                        <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                          <SelectValue placeholder="选择数据集" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {datasetOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </EditorField>
-                    <EditorField label="图表解读">
-                      <Input
-                        value={widgetDraft.analysisText}
-                        onChange={(event) =>
-                          updateWidgetDraft({ analysisText: event.target.value })
-                        }
-                        className="h-11 rounded-2xl border-border/80 bg-white"
-                        placeholder="写给业务看的图表说明"
-                      />
-                    </EditorField>
-                  </div>
+              <p className="max-w-4xl text-sm leading-7 text-muted-foreground">
+                {activeView ? viewDescription(activeView) : "当前看板用于承载经营摘要、趋势分析和排行榜。点击图表卡片即可进入右侧配置。"}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+              <div className="rounded-[22px] border border-border/80 bg-white px-4 py-3">
+                <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">业务日期</div>
+                <div className="mt-2 text-base font-semibold text-foreground">{formatDate(selectedDate)}</div>
+              </div>
+              <div className="rounded-[22px] border border-border/80 bg-white px-4 py-3">
+                <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">组件数量</div>
+                <div className="mt-2 text-base font-semibold text-foreground">{widgetCount}</div>
+              </div>
+            </div>
+          </div>
 
-                  {supportsChartPalette(widgetDraft.widgetType) ? (
-                    <Card className="rounded-[24px] border-border/80 bg-muted/15 shadow-none">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-lg">图表色盘</CardTitle>
-                        <CardDescription>
-                          只影响当前图表组件的系列颜色，不会改变页面其余黑白灰界面样式。
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,280px)_1fr]">
-                        <EditorField label="色盘主题">
-                          <Select
-                            value={widgetDraft.chartPalette}
-                            onValueChange={(value) =>
-                              updateWidgetDraft({ chartPalette: value })
-                            }
-                          >
-                            <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                              <SelectValue placeholder="选择图表色盘" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {chartPaletteOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </EditorField>
-                        <div className="rounded-[22px] border border-border/80 bg-white px-4 py-4">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {selectedChartPalette.colors.map((color) => (
-                              <span
-                                key={color}
-                                className="h-8 min-w-10 flex-1 rounded-xl border border-white/70 shadow-sm"
-                                style={{ backgroundColor: color }}
-                              />
-                            ))}
-                          </div>
-                          <p className="mt-3 text-sm font-medium text-foreground">
-                            {selectedChartPalette.label}
-                          </p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {selectedChartPalette.description}
-                          </p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ) : null}
+          <div className="mt-6">
+            {viewLoading ? (
+              <div className="grid gap-5">
+                <Skeleton className="h-[240px] rounded-[32px]" />
+                <div className="grid gap-5 xl:grid-cols-2">
+                  <Skeleton className="h-[300px] rounded-[32px]" />
+                  <Skeleton className="h-[300px] rounded-[32px]" />
+                </div>
+              </div>
+            ) : canvasWidgets.length ? (
+              <DashboardCanvas
+                meta={meta}
+                widgets={canvasWidgets}
+                itemMap={itemMap}
+                onWidgetSelect={(widgetId) => setSelectedWidgetId(widgetId)}
+                renderWidgetActions={(widget) => (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex size-8 items-center justify-center rounded-full border border-border/80 bg-white text-muted-foreground transition-all hover:border-slate-300 hover:text-slate-900"
+                        aria-label="图表操作"
+                      >
+                        <MoreHorizontal className="size-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48 rounded-[20px] p-2">
+                      <DropdownMenuLabel className="px-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">图表菜单</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="rounded-xl" onSelect={() => setSelectedWidgetId(widget.id)}>
+                        <PencilLine className="mr-2 size-4" />
+                        编辑图表
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="rounded-xl" onSelect={() => void handleDuplicateWidget(widget.id)}>
+                        <Copy className="mr-2 size-4" />
+                        复制
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="rounded-xl text-rose-600 focus:text-rose-600" onSelect={() => void handleDeleteWidget(widget.id)}>
+                        <Trash2 className="mr-2 size-4" />
+                        删除
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              />
+            ) : (
+              <Empty className="border-border/70">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <Plus className="size-4" />
+                  </EmptyMedia>
+                  <EmptyTitle>当前看板还没有任何图表</EmptyTitle>
+                  <EmptyDescription>从左上角“添加图表”开始，为这个看板依次加入指标卡、趋势图、排行榜或文本说明。</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )}
+          </div>
+        </section>
+      )}
 
-                  {supportsDimensions(widgetDraft.widgetType) ? (
-                    <div className="grid gap-4 lg:grid-cols-3">
-                      <EditorField label="主维度">
+      <Dialog open={isCreateViewOpen} onOpenChange={setIsCreateViewOpen}>
+        <DialogContent className="sm:max-w-[560px] rounded-[30px] border-border/80 bg-white">
+          <DialogHeader>
+            <DialogTitle>新建看板</DialogTitle>
+            <DialogDescription>先创建一个新的视图骨架，再继续往画布里加入图表组件。</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-foreground">看板名称</span>
+              <Input
+                value={newViewName}
+                onChange={(event) => setNewViewName(event.target.value)}
+                className="h-11 rounded-2xl border-border/80 bg-white"
+                placeholder="例如：销售/退货看板"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-foreground">看板说明</span>
+              <Textarea
+                value={newViewDescription}
+                onChange={(event) => setNewViewDescription(event.target.value)}
+                className="min-h-[120px] rounded-[24px] border-border/80 bg-white"
+                placeholder="简要描述这个看板要回答的业务问题。"
+              />
+            </label>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="rounded-full" onClick={() => setIsCreateViewOpen(false)}>
+              取消
+            </Button>
+            <Button className="rounded-full bg-sky-500 text-white hover:bg-sky-600" onClick={() => void handleCreateView()} disabled={savingView}>
+              <Save className="size-4" />
+              保存并创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Sheet
+        open={Boolean(widgetDraft && selectedWidgetId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedWidgetId(null);
+          }
+        }}
+      >
+        <SheetContent side="right" className="w-full overflow-hidden border-l border-border/80 bg-white p-0 sm:max-w-[720px]">
+          <SheetHeader className="border-b border-border/70 px-6 py-5 text-left">
+            <SheetTitle>{widgetDraft ? widgetTypeLabel(meta, widgetDraft.widgetType) : "组件配置"}</SheetTitle>
+            <SheetDescription>围绕当前选中的图表配置数据表、维度、指标、布局和分析说明。</SheetDescription>
+          </SheetHeader>
+          {widgetDraft ? (
+            <>
+              <ScrollArea className="h-[calc(100vh-168px)] px-6 py-6">
+                <Tabs defaultValue="basic" className="space-y-6">
+                  <TabsList className="grid h-auto grid-cols-3 rounded-full bg-muted/30 p-1">
+                    <TabsTrigger value="basic" className="rounded-full">
+                      基础配置
+                    </TabsTrigger>
+                    <TabsTrigger value="advanced" className="rounded-full">
+                      自定义配置
+                    </TabsTrigger>
+                    <TabsTrigger value="analysis" className="rounded-full">
+                      分析
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="basic" className="space-y-6">
+                    <div className="grid gap-5 xl:grid-cols-2">
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-foreground">名称</span>
+                        <Input
+                          value={widgetDraft.title}
+                          onChange={(event) => updateWidgetDraft((current) => ({ ...current, title: event.target.value }))}
+                          className="h-11 rounded-2xl border-border/80 bg-white"
+                        />
+                      </label>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-foreground">图表类型</span>
                         <Select
-                          value={widgetDraft.dimensionPrimary}
+                          value={widgetDraft.widgetType}
                           onValueChange={(value) =>
-                            updateWidgetDraft({ dimensionPrimary: value })
+                            updateWidgetDraft((current) => normalizeWidgetDraft({ ...current, widgetType: value }, meta))
                           }
                         >
-                          <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                            <SelectValue placeholder="选择主维度" />
+                          <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                            <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {widgetGroupableOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
+                            {widgetLibraryItems.map((item) => (
+                              <SelectItem key={item.type} value={item.type}>
+                                {item.title}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
-                      </EditorField>
-                      <EditorField label="第二维度">
+                      </label>
+                    </div>
+
+                    <div className="grid gap-5 xl:grid-cols-2">
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-foreground">数据表</span>
                         <Select
-                          value={widgetDraft.dimensionSecondary || "none"}
+                          value={widgetDraft.dataset}
                           onValueChange={(value) =>
-                            updateWidgetDraft({
-                              dimensionSecondary: value === "none" ? "" : value,
-                            })
+                            updateWidgetDraft((current) =>
+                              normalizeWidgetDraft(
+                                {
+                                  ...current,
+                                  dataset: value,
+                                  dimension: "",
+                                  seriesField: "",
+                                  dateField: "",
+                                  sortField: "",
+                                  metrics: current.metrics.map((metric) => ({ ...metric, field: "" })),
+                                },
+                                meta,
+                              ),
+                            )
                           }
                         >
-                          <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                            <SelectValue placeholder="可选" />
+                          <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                            <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="none">不设置</SelectItem>
-                            {widgetGroupableOptions
-                              .filter(
-                                (option) =>
-                                  option.value !== widgetDraft.dimensionPrimary,
-                              )
-                              .map((option) => (
-                                <SelectItem
-                                  key={option.value}
-                                  value={option.value}
-                                >
-                                  {option.label}
-                                </SelectItem>
-                              ))}
+                            {Object.entries(meta?.datasets ?? {}).map(([key, dataset]) => (
+                              <SelectItem key={key} value={key}>
+                                {normalizeText(dataset.label, key)}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
-                      </EditorField>
-                      {supportsSeriesField(widgetDraft.widgetType) ? (
-                        <EditorField label="系列字段">
+                      </label>
+                      {supportsDimensions(widgetDraft.widgetType) ? (
+                        <label className="space-y-2">
+                          <span className="text-sm font-medium text-foreground">横轴维度</span>
                           <Select
-                            value={widgetDraft.seriesField || "none"}
+                            value={widgetDraft.dimension || "__none__"}
                             onValueChange={(value) =>
-                              updateWidgetDraft({
-                                seriesField: value === "none" ? "" : value,
-                              })
+                              updateWidgetDraft((current) => ({
+                                ...current,
+                                dimension: value === "__none__" ? "" : value,
+                                sortField: current.sortField === current.dimension ? value : current.sortField,
+                              }))
                             }
                           >
-                            <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                              <SelectValue placeholder="可选" />
+                            <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                              <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="none">不设置</SelectItem>
-                              {seriesOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
+                              <SelectItem value="__none__">暂不选择</SelectItem>
+                              {currentDimensionOptions.map((field) => (
+                                <SelectItem key={field} value={field}>
+                                  {fieldLabel(meta, widgetDraft.dataset, field)}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
-                        </EditorField>
+                        </label>
                       ) : null}
                     </div>
-                  ) : null}
 
-                  {supportsMetrics(widgetDraft.widgetType) ? (
-                    <div className="grid gap-4 xl:grid-cols-2">
-                      <Card className="rounded-[24px] border-border/80 bg-muted/15 shadow-none">
+                    {supportsSeries(widgetDraft.widgetType) ? (
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-foreground">系列拆分字段</span>
+                        <Select
+                          value={widgetDraft.seriesField || "__none__"}
+                          onValueChange={(value) =>
+                            updateWidgetDraft((current) => ({ ...current, seriesField: value === "__none__" ? "" : value }))
+                          }
+                        >
+                          <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">不拆分系列</SelectItem>
+                            {currentDimensionOptions.map((field) => (
+                              <SelectItem key={field} value={field}>
+                                {fieldLabel(meta, widgetDraft.dataset, field)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                    ) : null}
+
+                    {supportsMetrics(widgetDraft.widgetType) ? (
+                      <Card className="rounded-[28px] border border-border/80 bg-muted/20 shadow-none">
                         <CardHeader className="pb-3">
-                          <CardTitle className="text-lg">主指标</CardTitle>
-                          <CardDescription>
-                            主指标决定卡片数值或图表的核心展示结果。
-                          </CardDescription>
+                          <CardTitle className="text-lg">纵轴指标</CardTitle>
+                          <CardDescription>一个图表可配置多个字段值，叠加展示更适合对比趋势或实际/退货关系。</CardDescription>
                         </CardHeader>
-                        <CardContent className="grid gap-4">
-                          <EditorField label="指标字段">
-                            <Select
-                              value={widgetDraft.metricOneField}
-                              onValueChange={(value) =>
-                                updateWidgetDraft({
-                                  metricOneField: value,
-                                  metricOneLabel:
-                                    widgetDraft.metricOneLabel ||
-                                    metricLabel(
-                                      meta,
-                                      widgetDraft.dataset,
-                                      value,
-                                      widgetDraft.metricOneAgg,
-                                    ),
-                                })
-                              }
-                            >
-                              <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                                <SelectValue placeholder="选择指标字段" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {widgetNumericOptions.map((option) => (
-                                  <SelectItem
-                                    key={option.value}
-                                    value={option.value}
+                        <CardContent className="space-y-4">
+                          {widgetDraft.metrics.map((metric, index) => (
+                            <div key={`${widgetDraft.id}-${index}`} className="rounded-[24px] border border-border/80 bg-white px-4 py-4">
+                              <div className="grid gap-4 xl:grid-cols-[1.2fr_0.9fr_1fr_auto]">
+                                <label className="space-y-2">
+                                  <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">字段值</span>
+                                  <Select
+                                    value={metric.field || "__none__"}
+                                    onValueChange={(value) =>
+                                      updateWidgetDraft((current) => ({
+                                        ...current,
+                                        metrics: current.metrics.map((currentMetric, metricIndex) =>
+                                          metricIndex === index ? { ...currentMetric, field: value === "__none__" ? "" : value } : currentMetric,
+                                        ),
+                                      }))
+                                    }
                                   >
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </EditorField>
-                          <EditorField label="聚合方式">
-                            <Select
-                              value={widgetDraft.metricOneAgg}
-                              onValueChange={(value) =>
-                                updateWidgetDraft({
-                                  metricOneAgg: value,
-                                  metricOneLabel:
-                                    widgetDraft.metricOneLabel ||
-                                    metricLabel(
-                                      meta,
-                                      widgetDraft.dataset,
-                                      widgetDraft.metricOneField,
-                                      value,
-                                    ),
-                                })
-                              }
-                            >
-                              <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                                <SelectValue placeholder="选择聚合方式" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {aggregationOptions.map((option) => (
-                                  <SelectItem
-                                    key={option.value}
-                                    value={option.value}
+                                    <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">请选择</SelectItem>
+                                      {currentMetricOptions.map((field) => (
+                                        <SelectItem key={field} value={field}>
+                                          {fieldLabel(meta, widgetDraft.dataset, field)}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </label>
+                                <label className="space-y-2">
+                                  <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">统计方式</span>
+                                  <Select
+                                    value={metric.agg}
+                                    onValueChange={(value) =>
+                                      updateWidgetDraft((current) => ({
+                                        ...current,
+                                        metrics: current.metrics.map((currentMetric, metricIndex) =>
+                                          metricIndex === index ? { ...currentMetric, agg: value } : currentMetric,
+                                        ),
+                                      }))
+                                    }
                                   >
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </EditorField>
-                          <EditorField label="展示名称">
-                            <Input
-                              value={widgetDraft.metricOneLabel}
-                              onChange={(event) =>
-                                updateWidgetDraft({
-                                  metricOneLabel: event.target.value,
-                                })
-                              }
-                              className="h-11 rounded-2xl border-border/80 bg-white"
-                            />
-                          </EditorField>
+                                    <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {aggregationOptions.map((option) => (
+                                        <SelectItem key={option.key} value={option.key}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </label>
+                                <label className="space-y-2">
+                                  <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">显示名称</span>
+                                  <Input
+                                    value={metric.label}
+                                    onChange={(event) =>
+                                      updateWidgetDraft((current) => ({
+                                        ...current,
+                                        metrics: current.metrics.map((currentMetric, metricIndex) =>
+                                          metricIndex === index ? { ...currentMetric, label: event.target.value } : currentMetric,
+                                        ),
+                                      }))
+                                    }
+                                    className="h-11 rounded-2xl border-border/80 bg-white"
+                                    placeholder="例如：实际销量"
+                                  />
+                                </label>
+                                <div className="flex items-end">
+                                  <Button
+                                    variant="outline"
+                                    className="h-11 rounded-full border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"
+                                    onClick={() => removeMetricDraft(index)}
+                                    disabled={widgetDraft.metrics.length <= 1}
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          <Button
+                            variant="outline"
+                            className="rounded-full border-border/80 bg-white"
+                            onClick={addMetricDraft}
+                            disabled={widgetDraft.metrics.length >= maxMetricCount(widgetDraft.widgetType)}
+                          >
+                            <Plus className="size-4" />
+                            添加字段
+                          </Button>
                         </CardContent>
                       </Card>
-                      {supportsSecondMetric(widgetDraft.widgetType) ? (
-                        <Card className="rounded-[24px] border-border/80 bg-muted/15 shadow-none">
-                          <CardHeader className="pb-3">
-                            <CardTitle className="text-lg">第二指标</CardTitle>
-                            <CardDescription>
-                              可选，用于双指标对比或堆叠图展示。
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="grid gap-4">
-                            <EditorField label="指标字段">
-                              <Select
-                                value={widgetDraft.metricTwoField || "none"}
-                                onValueChange={(value) =>
-                                  updateWidgetDraft({
-                                    metricTwoField: value === "none" ? "" : value,
-                                    metricTwoLabel:
-                                      value === "none"
-                                        ? ""
-                                        : widgetDraft.metricTwoLabel ||
-                                          metricLabel(
-                                            meta,
-                                            widgetDraft.dataset,
-                                            value,
-                                            widgetDraft.metricTwoAgg,
-                                          ),
-                                  })
-                                }
-                              >
-                                <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                                  <SelectValue placeholder="可选" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">不设置</SelectItem>
-                                  {widgetNumericOptions
-                                    .filter(
-                                      (option) =>
-                                        option.value !== widgetDraft.metricOneField,
-                                    )
-                                    .map((option) => (
-                                      <SelectItem
-                                        key={option.value}
-                                        value={option.value}
-                                      >
-                                        {option.label}
-                                      </SelectItem>
-                                    ))}
-                                </SelectContent>
-                              </Select>
-                            </EditorField>
-                            <EditorField label="聚合方式">
-                              <Select
-                                value={widgetDraft.metricTwoAgg}
-                                onValueChange={(value) =>
-                                  updateWidgetDraft({
-                                    metricTwoAgg: value,
-                                    metricTwoLabel:
-                                      widgetDraft.metricTwoField &&
-                                      !widgetDraft.metricTwoLabel
-                                        ? metricLabel(
-                                            meta,
-                                            widgetDraft.dataset,
-                                            widgetDraft.metricTwoField,
-                                            value,
-                                          )
-                                        : widgetDraft.metricTwoLabel,
-                                  })
-                                }
-                              >
-                                <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                                  <SelectValue placeholder="选择聚合方式" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {aggregationOptions.map((option) => (
-                                    <SelectItem
-                                      key={option.value}
-                                      value={option.value}
-                                    >
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </EditorField>
-                            <EditorField label="展示名称">
-                              <Input
-                                value={widgetDraft.metricTwoLabel}
-                                onChange={(event) =>
-                                  updateWidgetDraft({
-                                    metricTwoLabel: event.target.value,
-                                  })
-                                }
-                                className="h-11 rounded-2xl border-border/80 bg-white"
-                              />
-                            </EditorField>
-                          </CardContent>
-                        </Card>
-                      ) : null}
-                    </div>
-                  ) : null}
+                    ) : null}
 
-                  {supportsTextContent(widgetDraft.widgetType) ? (
-                    <EditorField label="文本内容">
-                      <Textarea
-                        value={widgetDraft.textContent}
-                        onChange={(event) =>
-                          updateWidgetDraft({ textContent: event.target.value })
-                        }
-                        className="min-h-[160px] rounded-[22px] border-border/80 bg-white"
-                      />
-                    </EditorField>
-                  ) : null}
+                    {supportsChartPalette(widgetDraft.widgetType) ? (
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <div className="text-sm font-medium text-foreground">颜色主题</div>
+                          <div className="text-sm text-muted-foreground">图表组件默认使用彩色色盘，其余页面仍保持黑白灰主调。</div>
+                        </div>
+                        <PalettePicker
+                          value={resolveChartPaletteKey(widgetDraft.chartPalette)}
+                          onChange={(value) => updateWidgetDraft((current) => ({ ...current, chartPalette: value }))}
+                        />
+                      </div>
+                    ) : null}
 
-                  <div className="grid gap-4 xl:grid-cols-2">
-                    <Card className="rounded-[24px] border-border/80 bg-muted/15 shadow-none">
+                    {widgetDraft.widgetType === "text" ? (
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-foreground">文本内容</span>
+                        <Textarea
+                          value={widgetDraft.textContent}
+                          onChange={(event) => updateWidgetDraft((current) => ({ ...current, textContent: event.target.value }))}
+                          className="min-h-[160px] rounded-[24px] border-border/80 bg-white"
+                          placeholder="输入文本组件内容，例如经营摘要、分析说明或补充说明。"
+                        />
+                      </label>
+                    ) : null}
+                  </TabsContent>
+
+                  <TabsContent value="advanced" className="space-y-6">
+                    <Card className="rounded-[28px] border border-border/80 bg-muted/20 shadow-none">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-lg">布局与尺寸</CardTitle>
+                        <CardDescription>通过宽度和高度控制图表在画布中的占比，后续可继续补拖拽编排。</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-5">
+                        <div className="space-y-3">
+                          <div className="text-sm font-medium text-foreground">宽度</div>
+                          <div className="grid gap-3 sm:grid-cols-4">
+                            {LAYOUT_WIDTH_OPTIONS.map((option) => {
+                              const active = widgetDraft.layoutWidth === option.value;
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  onClick={() => updateWidgetDraft((current) => ({ ...current, layoutWidth: option.value }))}
+                                  className={cn(
+                                    "rounded-[20px] border px-4 py-3 text-sm font-medium transition-all",
+                                    active ? "border-sky-300 bg-sky-50 text-sky-700 ring-2 ring-sky-100" : "border-border/80 bg-white text-foreground hover:border-slate-300",
+                                  )}
+                                >
+                                  {option.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="text-sm font-medium text-foreground">高度</div>
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            {LAYOUT_HEIGHT_OPTIONS.map((option) => {
+                              const active = widgetDraft.layoutHeight === option.value;
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  onClick={() => updateWidgetDraft((current) => ({ ...current, layoutHeight: option.value }))}
+                                  className={cn(
+                                    "rounded-[20px] border px-4 py-3 text-sm font-medium transition-all",
+                                    active ? "border-sky-300 bg-sky-50 text-sky-700 ring-2 ring-sky-100" : "border-border/80 bg-white text-foreground hover:border-slate-300",
+                                  )}
+                                >
+                                  {option.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <div className="rounded-[22px] border border-border/80 bg-white px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">跨度</div>
+                            <div className="mt-2 text-lg font-semibold text-foreground">{widgetDraft.layoutWidth} 列</div>
+                          </div>
+                          <div className="rounded-[22px] border border-border/80 bg-white px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">高度行数</div>
+                            <div className="mt-2 text-lg font-semibold text-foreground">{rowsFromHeight(widgetDraft.layoutHeight)} 行</div>
+                          </div>
+                          <div className="rounded-[22px] border border-border/80 bg-white px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">排序序号</div>
+                            <div className="mt-2 text-lg font-semibold text-foreground">{widgetDraft.sortOrder || widgetDraft.id}</div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card className="rounded-[28px] border border-border/80 bg-muted/20 shadow-none">
                       <CardHeader className="pb-3">
                         <CardTitle className="text-lg">日期与排序</CardTitle>
-                        <CardDescription>
-                          这里决定图表取数日期、排序字段和条数上限。
-                        </CardDescription>
+                        <CardDescription>支持跟随页面业务日期、固定单日或一个日期区间，也可限制排行榜数量。</CardDescription>
                       </CardHeader>
-                      <CardContent className="grid gap-4">
-                        <EditorField label="日期模式">
-                          <Select
-                            value={widgetDraft.dateMode}
-                            onValueChange={(value) =>
-                              updateWidgetDraft({ dateMode: value })
-                            }
-                          >
-                            <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                              <SelectValue placeholder="选择日期模式" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {DATE_MODE_OPTIONS.map((option) => (
-                                <SelectItem key={option.key} value={option.key}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </EditorField>
+                      <CardContent className="space-y-5">
+                        <div className="grid gap-5 xl:grid-cols-2">
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-foreground">日期模式</span>
+                            <Select value={widgetDraft.dateMode} onValueChange={(value) => updateWidgetDraft((current) => ({ ...current, dateMode: value }))}>
+                              <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {DATE_MODE_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-foreground">日期字段</span>
+                            <Select
+                              value={widgetDraft.dateField || "__none__"}
+                              onValueChange={(value) => updateWidgetDraft((current) => ({ ...current, dateField: value === "__none__" ? "" : value }))}
+                            >
+                              <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">默认日期字段</SelectItem>
+                                {currentDateOptions.map((field) => (
+                                  <SelectItem key={field} value={field}>
+                                    {fieldLabel(meta, widgetDraft.dataset, field)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </label>
+                        </div>
 
-                        {widgetDraft.dateMode === "single" ? (
-                          <EditorField label="固定日期">
+                        {widgetDraft.dateMode === "fixed_date" ? (
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-foreground">固定日期</span>
                             <Input
                               type="date"
-                              value={widgetDraft.date}
-                              onChange={(event) =>
-                                updateWidgetDraft({ date: event.target.value })
-                              }
+                              value={widgetDraft.dateValue}
+                              onChange={(event) => updateWidgetDraft((current) => ({ ...current, dateValue: event.target.value }))}
                               className="h-11 rounded-2xl border-border/80 bg-white"
                             />
-                          </EditorField>
+                          </label>
                         ) : null}
 
-                        {widgetDraft.dateMode === "range" ? (
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <EditorField label="开始日期">
+                        {widgetDraft.dateMode === "date_range" ? (
+                          <div className="grid gap-5 xl:grid-cols-2">
+                            <label className="space-y-2">
+                              <span className="text-sm font-medium text-foreground">开始日期</span>
                               <Input
                                 type="date"
                                 value={widgetDraft.startDate}
-                                onChange={(event) =>
-                                  updateWidgetDraft({
-                                    startDate: event.target.value,
-                                  })
-                                }
+                                onChange={(event) => updateWidgetDraft((current) => ({ ...current, startDate: event.target.value }))}
                                 className="h-11 rounded-2xl border-border/80 bg-white"
                               />
-                            </EditorField>
-                            <EditorField label="结束日期">
+                            </label>
+                            <label className="space-y-2">
+                              <span className="text-sm font-medium text-foreground">结束日期</span>
                               <Input
                                 type="date"
                                 value={widgetDraft.endDate}
-                                onChange={(event) =>
-                                  updateWidgetDraft({ endDate: event.target.value })
-                                }
+                                onChange={(event) => updateWidgetDraft((current) => ({ ...current, endDate: event.target.value }))}
                                 className="h-11 rounded-2xl border-border/80 bg-white"
                               />
-                            </EditorField>
+                            </label>
                           </div>
                         ) : null}
 
-                        {supportsMetrics(widgetDraft.widgetType) ? (
-                          <>
-                            <EditorField label="排序字段">
-                              <Select
-                                value={widgetDraft.sortField || "none"}
-                                onValueChange={(value) =>
-                                  updateWidgetDraft({
-                                    sortField: value === "none" ? "" : value,
-                                  })
+                        <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr_0.6fr]">
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-foreground">排序字段</span>
+                            <Select
+                              value={widgetDraft.sortField || "__none__"}
+                              onValueChange={(value) => updateWidgetDraft((current) => ({ ...current, sortField: value === "__none__" ? "" : value }))}
+                            >
+                              <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">不排序</SelectItem>
+                                {sortOptions.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-foreground">排序方向</span>
+                            <Select value={widgetDraft.sortDirection} onValueChange={(value) => updateWidgetDraft((current) => ({ ...current, sortDirection: value }))}>
+                              <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="desc">降序</SelectItem>
+                                <SelectItem value="asc">升序</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </label>
+                          {supportsLimit(widgetDraft.widgetType) ? (
+                            <label className="space-y-2">
+                              <span className="text-sm font-medium text-foreground">结果数量</span>
+                              <Input
+                                inputMode="numeric"
+                                value={widgetDraft.limit || ""}
+                                onChange={(event) =>
+                                  updateWidgetDraft((current) => ({
+                                    ...current,
+                                    limit: parsePositiveNumber(event.target.value, current.limit),
+                                  }))
                                 }
-                              >
-                                <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                                  <SelectValue placeholder="可选" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">不排序</SelectItem>
-                                  {sortOptions.map((option) => (
-                                    <SelectItem
-                                      key={option.value}
-                                      value={option.value}
-                                    >
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </EditorField>
-                            <EditorField label="排序方向">
-                              <Select
-                                value={widgetDraft.sortDirection}
-                                onValueChange={(value) =>
-                                  updateWidgetDraft({ sortDirection: value })
-                                }
-                              >
-                                <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                                  <SelectValue placeholder="选择排序方向" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="desc">从高到低</SelectItem>
-                                  <SelectItem value="asc">从低到高</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </EditorField>
-                          </>
-                        ) : null}
-
-                        {supportsLimit(widgetDraft.widgetType) ? (
-                          <EditorField label="返回条数">
-                            <Input
-                              type="number"
-                              min="1"
-                              max="500"
-                              value={widgetDraft.limit}
-                              onChange={(event) =>
-                                updateWidgetDraft({ limit: event.target.value })
-                              }
-                              className="h-11 rounded-2xl border-border/80 bg-white"
-                            />
-                          </EditorField>
-                        ) : null}
+                                className="h-11 rounded-2xl border-border/80 bg-white"
+                              />
+                            </label>
+                          ) : null}
+                        </div>
                       </CardContent>
                     </Card>
-
-                    <Card className="rounded-[24px] border-border/80 bg-muted/15 shadow-none">
+                  </TabsContent>
+                  <TabsContent value="analysis" className="space-y-6">
+                    <Card className="rounded-[28px] border border-border/80 bg-muted/20 shadow-none">
                       <CardHeader className="pb-3">
-                        <CardTitle className="text-lg">布局尺寸</CardTitle>
-                        <CardDescription>
-                          支持直接改图表占宽、占高和卡片高度，保存后会立即体现在当前看板。
-                        </CardDescription>
+                        <CardTitle className="text-lg">分析摘要</CardTitle>
+                        <CardDescription>适合沉淀图表口径、补充解释和需要用户关注的异常信号。</CardDescription>
                       </CardHeader>
-                      <CardContent className="grid gap-4 sm:grid-cols-2">
-                        <EditorField label="宽度栅格">
-                          <Input
-                            type="number"
-                            min="4"
-                            max="24"
-                            value={widgetDraft.layoutWidth}
-                            onChange={(event) =>
-                              updateWidgetDraft({
-                                layoutWidth: event.target.value,
-                              })
-                            }
-                            className="h-11 rounded-2xl border-border/80 bg-white"
+                      <CardContent className="space-y-5">
+                        <label className="space-y-2">
+                          <span className="text-sm font-medium text-foreground">分析内容</span>
+                          <Textarea
+                            value={widgetDraft.analysisText}
+                            onChange={(event) => updateWidgetDraft((current) => ({ ...current, analysisText: event.target.value }))}
+                            className="min-h-[180px] rounded-[24px] border-border/80 bg-white"
+                            placeholder="例如：本周退货率在 3 月 26 日后明显抬升，建议重点核查渠道和在途拦截差异。"
                           />
-                        </EditorField>
-                        <EditorField label="高度行数">
-                          <Input
-                            type="number"
-                            min="3"
-                            max="12"
-                            value={widgetDraft.layoutHeightRows}
-                            onChange={(event) =>
-                              updateWidgetDraft({
-                                layoutHeightRows: event.target.value,
-                              })
-                            }
-                            className="h-11 rounded-2xl border-border/80 bg-white"
-                          />
-                        </EditorField>
-                        <EditorField label="跨列方式">
-                          <Select
-                            value={widgetDraft.layoutSpan}
-                            onValueChange={(value) =>
-                              updateWidgetDraft({ layoutSpan: value })
-                            }
-                          >
-                            <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                              <SelectValue placeholder="选择跨列方式" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {LAYOUT_SPAN_OPTIONS.map((option) => (
-                                <SelectItem key={option.key} value={option.key}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </EditorField>
-                        <EditorField label="卡片高度级别">
-                          <Select
-                            value={widgetDraft.layoutHeightKey}
-                            onValueChange={(value) =>
-                              updateWidgetDraft({ layoutHeightKey: value })
-                            }
-                          >
-                            <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                              <SelectValue placeholder="选择卡片高度" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {(meta?.layout_heights ?? [
-                                "compact",
-                                "normal",
-                                "tall",
-                              ]).map((item) => (
-                                <SelectItem key={item} value={item}>
-                                  {item === "compact"
-                                    ? "紧凑"
-                                    : item === "tall"
-                                      ? "加高"
-                                      : "常规"}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </EditorField>
+                        </label>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <div className="rounded-[22px] border border-border/80 bg-white px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">数据记录</div>
+                            <div className="mt-2 text-2xl font-semibold text-foreground">{selectedItem?.rows.length ?? 0}</div>
+                          </div>
+                          <div className="rounded-[22px] border border-border/80 bg-white px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">系列分组</div>
+                            <div className="mt-2 text-2xl font-semibold text-foreground">{selectedItem?.series_groups.length ?? 0}</div>
+                          </div>
+                          <div className="rounded-[22px] border border-border/80 bg-white px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">应用日期</div>
+                            <div className="mt-2 text-base font-semibold text-foreground">
+                              {selectedItem?.applied_target_date ? formatDate(selectedItem.applied_target_date) : formatDate(selectedDate)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-sm leading-6 text-muted-foreground">
+                          当前组件：<span className="font-medium text-slate-900">{widgetDraft.title}</span>
+                          <br />
+                          数据表：<span className="font-medium text-slate-900">{normalizeText(widgetDraft.dataset, "--")}</span>
+                          <br />
+                          当前类型：<span className="font-medium text-slate-900">{widgetTypeLabel(meta, widgetDraft.widgetType)}</span>
+                        </div>
                       </CardContent>
                     </Card>
+                  </TabsContent>
+                </Tabs>
+              </ScrollArea>
+
+              <SheetFooter className="border-t border-border/70 px-6 py-4">
+                <div className="flex w-full flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" className="rounded-full border-border/80 bg-white" onClick={() => void handleDuplicateWidget(widgetDraft.id)}>
+                      <Copy className="size-4" />
+                      复制
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-full border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"
+                      onClick={() => void handleDeleteWidget(widgetDraft.id)}
+                    >
+                      <Trash2 className="size-4" />
+                      删除
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" className="rounded-full border-border/80 bg-white" onClick={() => setSelectedWidgetId(null)}>
+                      关闭
+                    </Button>
+                    <Button className="rounded-full bg-sky-500 text-white hover:bg-sky-600" onClick={() => void handleSaveWidget()} disabled={savingWidget}>
+                      <Save className="size-4" />
+                      保存图表
+                    </Button>
                   </div>
                 </div>
-              ) : (
-                <Empty className="border-border/70">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <LayoutDashboard className="size-4" />
-                    </EmptyMedia>
-                    <EmptyTitle>还没有选中图表组件</EmptyTitle>
-                    <EmptyDescription>
-                      从左侧选一个现有图表，或先新增图表，再开始编辑。
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  <Button className="rounded-full" onClick={openCreateWidgetDialog}>
-                    <Plus className="size-4" />
-                    新增图表
-                  </Button>
-                </Empty>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-[28px] border-border/80 bg-white shadow-[var(--shadow-card)]">
-            <CardHeader className="space-y-2 pb-3">
-              <CardTitle className="text-2xl font-semibold tracking-tight">
-                看板预览
-              </CardTitle>
-              <CardDescription>
-                当前选中的图表会在预览区高亮，方便你核对布局、标题和数据表现。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {viewLoading && !widgets.length ? (
-                <LoadingState />
-              ) : widgets.length ? (
-                <DashboardCanvas
-                  meta={meta}
-                  widgets={widgets}
-                  itemMap={itemMap}
-                  highlightWidgetId={selectedWidgetId}
-                />
-              ) : (
-                <div className="rounded-[24px] border border-dashed border-border/70 bg-muted/20 px-6 py-14 text-center text-sm text-muted-foreground">
-                  当前看板还没有图表组件，先新增一个图表就会在这里实时预览。
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      <Dialog open={createViewOpen} onOpenChange={setCreateViewOpen}>
-        <DialogContent className="w-[calc(100vw-1rem)] max-w-none p-0 sm:w-[min(100vw-2rem,640px)] sm:max-w-[640px]">
-          <DialogHeader className="px-6 pt-6">
-            <DialogTitle>新增看板</DialogTitle>
-            <DialogDescription>
-              新建一个空白看板后，你就可以继续往里添加图表和指标卡。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-5 px-6 pb-6">
-            <EditorField label="看板名称">
-              <Input
-                value={createViewDraft.name}
-                onChange={(event) =>
-                  setCreateViewDraft((current) => ({
-                    ...current,
-                    name: event.target.value,
-                  }))
-                }
-                className="h-11 rounded-2xl border-border/80 bg-white"
-              />
-            </EditorField>
-            <EditorField label="看板说明">
-              <Textarea
-                value={createViewDraft.description}
-                onChange={(event) =>
-                  setCreateViewDraft((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
-                }
-                className="min-h-[120px] rounded-[22px] border-border/80 bg-white"
-              />
-            </EditorField>
-          </div>
-          <DialogFooter className="mx-0 mb-0 mt-0 shrink-0 px-6 py-4">
-            <Button
-              variant="outline"
-              className="rounded-full"
-              onClick={() => setCreateViewOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              className="rounded-full"
-              onClick={() => void handleCreateView()}
-              disabled={creatingView}
-            >
-              <Plus className="size-4" />
-              {creatingView ? "创建中..." : "创建看板"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={createWidgetOpen} onOpenChange={setCreateWidgetOpen}>
-        <DialogContent className="w-[calc(100vw-1rem)] max-w-none p-0 sm:w-[min(100vw-2rem,720px)] sm:max-w-[720px]">
-          <DialogHeader className="px-6 pt-6">
-            <DialogTitle>新增图表</DialogTitle>
-            <DialogDescription>
-              先选好图表类型和数据集，创建后右侧就可以继续补齐维度、指标与布局。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-5 px-6 pb-6 lg:grid-cols-2">
-            <EditorField label="图表标题">
-              <Input
-                value={createWidgetDraft.title}
-                onChange={(event) =>
-                  setCreateWidgetDraft((current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
-                }
-                className="h-11 rounded-2xl border-border/80 bg-white"
-                placeholder="例如：当日销售出库分仓 TOP10"
-              />
-            </EditorField>
-            <EditorField label="图表类型">
-              <Select
-                value={createWidgetDraft.widgetType}
-                onValueChange={(value) =>
-                  setCreateWidgetDraft((current) => ({
-                    ...current,
-                    widgetType: value,
-                  }))
-                }
-              >
-                <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                  <SelectValue placeholder="选择图表类型" />
-                </SelectTrigger>
-                <SelectContent>
-                  {widgetTypeOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </EditorField>
-            <EditorField
-              label="数据集"
-              hint="建议先选最接近业务主题的数据集，后面再细调维度和指标。"
-            >
-              <Select
-                value={createWidgetDraft.dataset}
-                onValueChange={(value) =>
-                  setCreateWidgetDraft((current) => ({
-                    ...current,
-                    dataset: value,
-                  }))
-                }
-              >
-                <SelectTrigger className="h-11 w-full rounded-2xl border-border/80 bg-white px-4">
-                  <SelectValue placeholder="选择数据集" />
-                </SelectTrigger>
-                <SelectContent>
-                  {datasetOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </EditorField>
-            <div className="rounded-[24px] border border-border/80 bg-muted/20 px-4 py-4 text-sm text-muted-foreground">
-              <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                创建后默认行为
-              </div>
-              <div className="mt-2 leading-6">
-                系统会先生成一个默认布局和默认指标，然后自动选中它，方便你继续做细节配置。
-              </div>
-            </div>
-          </div>
-          <DialogFooter className="mx-0 mb-0 mt-0 shrink-0 px-6 py-4">
-            <Button
-              variant="outline"
-              className="rounded-full"
-              onClick={() => setCreateWidgetOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              className="rounded-full"
-              onClick={() => void handleCreateWidget()}
-              disabled={creatingWidget}
-            >
-              <Plus className="size-4" />
-              {creatingWidget ? "创建中..." : "创建图表"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              </SheetFooter>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

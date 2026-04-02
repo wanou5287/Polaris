@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  resolvePostLoginPath,
   POLARIS_SESSION_COOKIE,
   POLARIS_SESSION_MAX_AGE,
   POLARIS_USERNAME_COOKIE,
@@ -45,10 +46,12 @@ export async function POST(request: NextRequest) {
   const response = NextResponse.json({
     ok: true,
     username,
-    redirect_to:
+    redirect_to: resolvePostLoginPath(
+      username,
       typeof result.data?.redirect_to === "string"
         ? result.data.redirect_to
         : nextPath,
+    ),
   });
 
   response.cookies.set({

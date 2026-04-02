@@ -13,8 +13,8 @@ import { ApiError, apiFetch } from "@/lib/polaris-client";
 
 export function LoginForm({ nextPath }: { nextPath: string }) {
   const router = useRouter();
-  const [username, setUsername] = useState("bi_admin");
-  const [password, setPassword] = useState("ChangeMe123!");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");

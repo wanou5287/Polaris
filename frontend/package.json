@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "powershell -ExecutionPolicy Bypass -File ../scripts/run_frontend_standalone.ps1",
     "lint": "eslint"
   },
   "dependencies": {

@@ -35,6 +35,7 @@ env/
 # PyInstaller
 *.manifest
 *.spec
+!deploy/windows/runtime/*.spec
 
 # Unit test / coverage reports
 htmlcov/
@@ -102,5 +103,6 @@ vendor/DataAgent/runtime/
 .tmp/
 .tools/
 app/routes/bi_dashboard.recovered.py
+deploy/windows/cloudflare_tunnel.local.json
 !frontend/src/lib/
 !frontend/src/lib/**

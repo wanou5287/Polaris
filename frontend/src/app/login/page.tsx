@@ -10,6 +10,8 @@ import { PolarisBrandMark } from "@/components/polaris/brand-mark";
 import { LoginForm } from "@/components/polaris/login-form";
 import {
   POLARIS_SESSION_COOKIE,
+  POLARIS_USERNAME_COOKIE,
+  resolvePostLoginPath,
   sanitizeNextPath,
 } from "@/lib/polaris-server";
 
@@ -20,17 +22,20 @@ type LoginPageProps = {
 const highlights = [
   {
     title: "采购供应协同",
-    description: "围绕采购订单、采购入库、形态转换与调拨流转，减少逐张做单。",
+    description:
+      "围绕采购订单、采购入库、形态转换与调拨流转，减少逐张做单。",
     icon: PackageCheck,
   },
   {
     title: "业务流自动化",
-    description: "通过已发布业务流串联关键单据节点，让常见链路按规则自动推进。",
+    description:
+      "通过已发布业务流串联关键单据节点，让常见链路按规则自动推进。",
     icon: Workflow,
   },
   {
     title: "数据分析支持",
-    description: "BI 看板与小北-数据分析Agent协同辅助，帮助快速识别经营风险和异常。",
+    description:
+      "BI 看板与小北-数据分析 Agent 协同辅助，帮助快速识别经营风险和异常。",
     icon: ChartColumnIncreasing,
   },
 ];
@@ -46,10 +51,11 @@ const modulePills = [
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const [{ next }, cookieStore] = await Promise.all([searchParams, cookies()]);
   const session = cookieStore.get(POLARIS_SESSION_COOKIE)?.value;
+  const username = cookieStore.get(POLARIS_USERNAME_COOKIE)?.value ?? "";
   const nextPath = sanitizeNextPath(next);
 
   if (session) {
-    redirect(nextPath);
+    redirect(resolvePostLoginPath(username, nextPath));
   }
 
   return (
@@ -126,7 +132,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 登录北极星工作台
               </h2>
               <p className="text-sm leading-7 text-muted-foreground">
-                登录后可直接进入采购供应、库存流转、基础数据与 BI 看板等业务入口。
+                登录后可直接进入采购供应、库存流转、基础数据与 BI
+                看板等业务入口。
               </p>
             </div>
 

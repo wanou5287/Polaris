@@ -6,6 +6,8 @@ export const POLARIS_USERNAME_COOKIE = "polaris_username";
 export const POLARIS_SESSION_MAX_AGE = 60 * 60 * 24 * 14;
 export const POLARIS_API_BASE_URL =
   process.env.POLARIS_API_BASE_URL ?? "http://127.0.0.1:8888";
+export const POLARIS_AFTER_SALES_ENTRY_PATH = "/after-sales-entry";
+export const POLARIS_AFTER_SALES_USERNAME = "test";
 export const POLARIS_BI_ROOT = "/financial/bi-dashboard";
 export const POLARIS_BI_API_ROOT = `${POLARIS_BI_ROOT}/api`;
 
@@ -19,6 +21,13 @@ export function sanitizeNextPath(rawValue: string | null | undefined) {
     return "/workspace";
   }
   return value;
+}
+
+export function resolvePostLoginPath(username: string, fallbackPath: string) {
+  if (username === POLARIS_AFTER_SALES_USERNAME) {
+    return POLARIS_AFTER_SALES_ENTRY_PATH;
+  }
+  return fallbackPath;
 }
 
 function buildBackendUrl(
@@ -44,7 +53,7 @@ function extractMessage(payload: unknown) {
       return message;
     }
   }
-  return "服务暂时不可用，请稍后重试";
+  return "服务暂时不可用，请稍后重试。";
 }
 
 async function getCurrentSessionValue(request?: NextRequest) {
@@ -131,7 +140,7 @@ export async function proxyBackendJson(
   const session = await getCurrentSessionValue(request);
 
   if (!session) {
-    return createProxyResponse({ message: "登录已失效，请重新登录" }, 401);
+    return createProxyResponse({ message: "登录已失效，请重新登录。" }, 401);
   }
 
   const body =

@@ -8,13 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.logger import logger
-from app.routes.bi_dashboard import start_sync_scheduler, stop_sync_scheduler
 from app.routes.base import api_router
+from app.routes.bi_dashboard import start_sync_scheduler, stop_sync_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("北极星启动中...")
+    logger.info("Polaris startup in progress...")
     try:
         init_db()
         logger.info("Database initialized.")
@@ -25,12 +25,15 @@ async def lifespan(app: FastAPI):
     logger.info("Storage backend: %s", settings.STORAGE_BACKEND)
     yield
     stop_sync_scheduler()
-    logger.info("北极星正在关闭...")
+    logger.info("Polaris shutdown complete.")
 
 
 app = FastAPI(
-    title="北极星供应链与财务运营系统",
-    description="北极星：基于用友与内部数据的财务自动化、供应链经营分析与预警平台。",
+    title="Polaris Supply Chain Workspace",
+    description=(
+        "Polaris operations platform for BI dashboards, inventory flow, "
+        "procurement supply, and workflow automation."
+    ),
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/financial/docs",
@@ -53,7 +56,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=settings.SERVER_PORT,
         reload=False,

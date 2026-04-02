@@ -30,6 +30,7 @@ from openpyxl import load_workbook
 from sqlalchemy import create_engine, text
 
 from app.core.logger import logger as app_logger
+from app.core.paths import get_data_root, get_project_root
 from app.services.dashboard_share_service import share_dashboard_widget
 from app.services.forecast_alert_service import (
     ensure_forecast_alert_schema,
@@ -70,9 +71,13 @@ from scripts.yonyou_inventory_sync import (
 router = APIRouter()
 engine = None
 schema_ready = False
-project_root = Path(__file__).resolve().parents[2]
+project_root = get_project_root()
+data_root = get_data_root()
 yonyou_sync_config_path = project_root / "config" / "yonyou_inventory_sync.yaml"
-dashboard_users_config_path = project_root / "config" / "bi_dashboard_users.local.yaml"
+dashboard_users_config_candidates = [
+    data_root / "config" / "bi_dashboard_users.local.yaml",
+    project_root / "config" / "bi_dashboard_users.local.yaml",
+]
 DASHBOARD_SESSION_COOKIE = "polaris_session"
 DASHBOARD_SESSION_MAX_AGE = 60 * 60 * 24 * 14
 DASHBOARD_DEFAULT_PATH = "/financial/bi-dashboard"
@@ -328,21 +333,25 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
 
 def load_dashboard_auth_config() -> Dict[str, Any]:
-    if not dashboard_users_config_path.exists():
-        return {}
-    try:
-        raw = yaml.safe_load(dashboard_users_config_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    return raw if isinstance(raw, dict) else {}
+    for config_path in dashboard_users_config_candidates:
+        if not config_path.exists():
+            continue
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if isinstance(raw, dict):
+            return raw
+    return {}
 
 
 def load_dashboard_users() -> Dict[str, str]:
     fallback = {
         os.getenv("BI_DASH_USERNAME", "bi_admin"): os.getenv("BI_DASH_PASSWORD", "ChangeMe123!"),
+        os.getenv("BI_DASH_TEST_USERNAME", "test"): os.getenv("BI_DASH_TEST_PASSWORD", "test123"),
     }
     raw = load_dashboard_auth_config()
-    users: Dict[str, str] = {}
+    users: Dict[str, str] = dict(fallback)
     for item in raw.get("users", []):
         if not isinstance(item, dict):
             continue
@@ -350,7 +359,7 @@ def load_dashboard_users() -> Dict[str, str]:
         password = str(item.get("password") or "")
         if username and password:
             users[username] = password
-    return users or fallback
+    return users
 
 
 def dashboard_session_secret() -> str:
