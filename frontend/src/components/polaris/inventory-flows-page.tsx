@@ -2,7 +2,9 @@
 
 import { startTransition, type ReactNode, useDeferredValue, useEffect, useId, useState } from "react";
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   CalendarClock,
   ChevronDown,
   Clock3,
@@ -13,6 +15,7 @@ import {
   Save,
   Search,
   Settings2,
+  Trash2,
   Waypoints,
   X,
 } from "lucide-react";
@@ -75,6 +78,23 @@ type InventoryWorkflowLaunchFormState = {
   serialsText: string;
 };
 
+type InventoryWorkflowDraftForm = {
+  key: string;
+  title: string;
+  workflowCode: string;
+  description: string;
+  defaultMaterialCode: string;
+  selectedBomCode: string;
+  selectedStepKeys: string[];
+};
+
+type InventoryWorkflowStepDefinition = {
+  key: string;
+  title: string;
+  description: string;
+  stageLabel: string;
+};
+
 function createInventoryLiveStockReportConfig(): InventoryLiveStockReportConfig {
   return {
     warehouse_codes: [],
@@ -123,6 +143,45 @@ function getInventoryWorkflowStatusMeta(status: string) {
     }
   );
 }
+
+const inventoryWorkflowStepDefinitions: InventoryWorkflowStepDefinition[] = [
+  {
+    key: "morphology_conversion",
+    title: "形态转换",
+    description: "基于采购入库单和 BOM 完成库存形态转换，生成后续库存执行的起点单据。",
+    stageLabel: "形态转换",
+  },
+  {
+    key: "transfer_order",
+    title: "调拨订单",
+    description: "创建跨仓调拨订单，明确目标仓与计划执行数量，作为调出和调入的前置节点。",
+    stageLabel: "调拨申请",
+  },
+  {
+    key: "storeout",
+    title: "调出单",
+    description: "执行源仓出库动作，推动库存从当前仓位正式扣减并进入运输或在途状态。",
+    stageLabel: "调出执行",
+  },
+  {
+    key: "storein",
+    title: "调入单",
+    description: "完成目标仓调入入库，闭合整条库存流转链路并同步目标库存状态。",
+    stageLabel: "调入完成",
+  },
+  {
+    key: "scrap_create",
+    title: "报废单新增",
+    description: "依据库存组织、交易类型、报废仓库和库存状态创建报废单。",
+    stageLabel: "报废建单",
+  },
+  {
+    key: "scrap_submit",
+    title: "报废单提交",
+    description: "将已生成的报废单提交审批，进入财务和库存核销链路。",
+    stageLabel: "报废提交",
+  },
+];
 
 function getInventoryWorkflowInstanceBadgeClassName(status: string) {
   return status === "completed"
@@ -321,6 +380,142 @@ function buildInventoryWorkflowStepSummary(workflow: InventoryFlowWorkflowTempla
   return workflow.steps.map((item) => item.title).join(" / ");
 }
 
+function bumpInventoryWorkflowVersion(version: string) {
+  const match = /^v(\d+)\.(\d+)$/i.exec(version.trim());
+  if (!match) {
+    return "v0.1";
+  }
+  const major = Number(match[1]);
+  const minor = Number(match[2]) + 1;
+  return `v${major}.${minor}`;
+}
+
+function normalizeInventoryPublishedVersion(version: string) {
+  const match = /^v(\d+)\.(\d+)$/i.exec(version.trim());
+  if (!match) {
+    return "v1.0";
+  }
+  const major = Number(match[1]);
+  return major === 0 ? "v1.0" : version;
+}
+
+function buildNextInventoryWorkflowOrdinal(workflows: InventoryFlowWorkflowTemplate[]) {
+  const usedOrdinals = new Set(
+    workflows
+      .map((workflow) => /^INVFLOW-CUSTOM-(\d+)$/i.exec(workflow.workflow_code.trim()))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .map((match) => Number(match[1])),
+  );
+
+  let nextOrdinal = 1;
+  while (usedOrdinals.has(nextOrdinal)) {
+    nextOrdinal += 1;
+  }
+  return nextOrdinal;
+}
+
+function buildInventoryWorkflowRequiredInputs(stepKeys: string[], serialManaged: boolean) {
+  const inputs: string[] = ["物料编码"];
+  if (stepKeys.includes("morphology_conversion") || stepKeys.includes("transfer_order")) {
+    inputs.push("采购入库单号");
+  }
+  if (stepKeys.includes("storeout") && !stepKeys.includes("transfer_order")) {
+    inputs.push("调拨订单单号");
+  }
+  if (stepKeys.includes("transfer_order")) {
+    inputs.push("调入仓");
+  }
+  if (stepKeys.includes("morphology_conversion")) {
+    inputs.push("形态转换 BOM");
+  }
+  if (stepKeys.includes("morphology_conversion") || stepKeys.includes("scrap_create")) {
+    inputs.push("计划数量");
+  }
+  if (stepKeys.includes("scrap_create")) {
+    inputs.push("库存组织", "交易类型", "报废仓库", "报废库存状态");
+  }
+  if (serialManaged && (stepKeys.includes("morphology_conversion") || stepKeys.includes("scrap_create"))) {
+    inputs.push("序列号明细");
+  }
+  return Array.from(new Set(inputs));
+}
+
+function buildInventoryDraftWorkflowTemplate(
+  sourceWorkflow: InventoryFlowWorkflowTemplate | null,
+  workflows: InventoryFlowWorkflowTemplate[],
+  defaultMaterialCode: string,
+  response: InventoryFlowResponse,
+): InventoryFlowWorkflowTemplate {
+  const nextIndex = buildNextInventoryWorkflowOrdinal(workflows);
+  const paddedIndex = String(nextIndex).padStart(3, "0");
+  const source = sourceWorkflow ?? workflows[0] ?? null;
+  const selectedMaterial =
+    response.material_profiles.find((item) => item.material_code === defaultMaterialCode) ?? response.material_profiles[0] ?? null;
+  const fallbackStepKeys = source?.steps.map((step) => step.key) ?? ["transfer_order", "storeout", "storein"];
+  const fallbackSteps = fallbackStepKeys
+    .map((stepKey) => inventoryWorkflowStepDefinitions.find((item) => item.key === stepKey) ?? null)
+    .filter((item): item is InventoryWorkflowStepDefinition => item !== null)
+    .map((item) => ({
+      key: item.key,
+      title: item.title,
+      description: item.description,
+    }));
+
+  return {
+    ...(source ?? {
+      key: "",
+      title: "",
+      description: "",
+      workflow_code: "",
+      version: "v0.1",
+      status: "draft",
+      default_material_code: defaultMaterialCode,
+      default_purchase_inbound_placeholder: "请输入采购入库单号",
+      default_transfer_order_placeholder: "请输入调拨订单单号",
+      default_warehouse_code: "",
+      default_inwarehouse_code: "",
+      bom_code: "",
+      required_inputs: [],
+      steps: [],
+    }),
+    key: `inventory_custom_workflow_${Date.now()}`,
+    title: `库存业务流 ${paddedIndex}`,
+    description: "请继续补充库存流转场景、节点和执行顺序，保存后会进入未发布列表等待联调。",
+    workflow_code: `INVFLOW-CUSTOM-${paddedIndex}`,
+    version: "v0.1",
+    status: "draft",
+    default_material_code: defaultMaterialCode,
+    required_inputs: buildInventoryWorkflowRequiredInputs(fallbackStepKeys, Boolean(selectedMaterial?.serial_managed)),
+    steps: fallbackSteps,
+  };
+}
+
+function buildInventoryWorkflowDraftForm(
+  sourceWorkflow: InventoryFlowWorkflowTemplate | null,
+  workflows: InventoryFlowWorkflowTemplate[],
+  response: InventoryFlowResponse,
+  defaultMaterialCode: string,
+): InventoryWorkflowDraftForm {
+  const draftSeed = buildInventoryDraftWorkflowTemplate(sourceWorkflow, workflows, defaultMaterialCode, response);
+  const matchedBom =
+    response.bom_profiles.find(
+      (item) => item.material_code === defaultMaterialCode && item.bom_code === draftSeed.bom_code,
+    ) ??
+    response.bom_profiles.find((item) => item.material_code === defaultMaterialCode) ??
+    response.bom_profiles[0] ??
+    null;
+
+  return {
+    key: draftSeed.key,
+    title: draftSeed.title,
+    workflowCode: draftSeed.workflow_code,
+    description: draftSeed.description,
+    defaultMaterialCode: draftSeed.default_material_code,
+    selectedBomCode: matchedBom?.bom_code ?? draftSeed.bom_code,
+    selectedStepKeys: draftSeed.steps.map((step) => step.key),
+  };
+}
+
 function findMaterialOptionByCode(
   options: InventoryLiveStockResponse["filters"]["material_options"],
   value: string,
@@ -347,8 +542,12 @@ export function InventoryFlowsPage() {
   const [savingSchedules, setSavingSchedules] = useState(false);
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
   const [workflowManagementOpen, setWorkflowManagementOpen] = useState(false);
+  const [createWorkflowOpen, setCreateWorkflowOpen] = useState(false);
   const [workflowLaunchDialogOpen, setWorkflowLaunchDialogOpen] = useState(false);
   const [unfinishedWorkflowDialogOpen, setUnfinishedWorkflowDialogOpen] = useState(false);
+  const [workflowDraftForm, setWorkflowDraftForm] = useState<InventoryWorkflowDraftForm | null>(null);
+  const [disableWorkflowKey, setDisableWorkflowKey] = useState<string | null>(null);
+  const [deleteWorkflowKey, setDeleteWorkflowKey] = useState<string | null>(null);
   const [liveStockReportEditorOpen, setLiveStockReportEditorOpen] = useState(false);
   const [liveStockWarehouseSelectorOpen, setLiveStockWarehouseSelectorOpen] = useState(false);
   const [liveStockMaterialSelectorOpen, setLiveStockMaterialSelectorOpen] = useState(false);
@@ -695,6 +894,275 @@ export function InventoryFlowsPage() {
     }
   }
 
+  function openCreateWorkflowDialog() {
+    if (!data) {
+      return;
+    }
+    const defaultMaterialCode =
+      workflowTemplates[0]?.default_material_code ?? data.material_profiles[0]?.material_code ?? "";
+    setWorkflowDraftForm(
+      buildInventoryWorkflowDraftForm(workflowTemplates[0] ?? null, workflowTemplates, data, defaultMaterialCode),
+    );
+    setCreateWorkflowOpen(true);
+  }
+
+  function handleDraftFormChange<K extends keyof InventoryWorkflowDraftForm>(
+    field: K,
+    value: InventoryWorkflowDraftForm[K],
+  ) {
+    setWorkflowDraftForm((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function handleDraftMaterialChange(nextMaterialCode: string) {
+    if (!data) {
+      return;
+    }
+    const matchedBom =
+      data.bom_profiles.find((item) => item.material_code === nextMaterialCode) ??
+      data.bom_profiles[0] ??
+      null;
+    setWorkflowDraftForm((current) =>
+      current
+        ? {
+            ...current,
+            defaultMaterialCode: nextMaterialCode,
+            selectedBomCode: matchedBom?.bom_code ?? "",
+          }
+        : current,
+    );
+  }
+
+  function handleDraftStepToggle(stepKey: string) {
+    setWorkflowDraftForm((current) => {
+      if (!current) {
+        return current;
+      }
+      const selected = current.selectedStepKeys.includes(stepKey);
+      return {
+        ...current,
+        selectedStepKeys: selected
+          ? current.selectedStepKeys.filter((item) => item !== stepKey)
+          : [...current.selectedStepKeys, stepKey],
+      };
+    });
+  }
+
+  function handleDraftStepMove(stepKey: string, direction: "up" | "down") {
+    setWorkflowDraftForm((current) => {
+      if (!current) {
+        return current;
+      }
+      const index = current.selectedStepKeys.indexOf(stepKey);
+      if (index === -1) {
+        return current;
+      }
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= current.selectedStepKeys.length) {
+        return current;
+      }
+      const nextKeys = [...current.selectedStepKeys];
+      [nextKeys[index], nextKeys[targetIndex]] = [nextKeys[targetIndex], nextKeys[index]];
+      return {
+        ...current,
+        selectedStepKeys: nextKeys,
+      };
+    });
+  }
+
+  function handleDraftStepRemove(stepKey: string) {
+    setWorkflowDraftForm((current) =>
+      current
+        ? {
+            ...current,
+            selectedStepKeys: current.selectedStepKeys.filter((item) => item !== stepKey),
+          }
+        : current,
+    );
+  }
+
+  function handleCreateWorkflowSave() {
+    if (!workflowDraftForm || !data) {
+      return;
+    }
+
+    const title = workflowDraftForm.title.trim();
+    const workflowCode = workflowDraftForm.workflowCode.trim().toUpperCase();
+    const description = workflowDraftForm.description.trim();
+    const bomCode = workflowDraftForm.selectedBomCode.trim().toUpperCase();
+
+    if (!title || !workflowCode || !description) {
+      toast.warning("请先完整填写业务流名称、编码和描述。");
+      return;
+    }
+    if (workflowDraftForm.selectedStepKeys.length === 0) {
+      toast.warning("请至少选择一个执行节点后再保存草稿。");
+      return;
+    }
+    if (workflowDraftForm.selectedStepKeys.includes("morphology_conversion") && !bomCode) {
+      toast.warning("当前链路包含形态转换，请先选择默认 BOM。");
+      return;
+    }
+
+    const materialProfile =
+      data.material_profiles.find((item) => item.material_code === workflowDraftForm.defaultMaterialCode) ?? null;
+    const sourceWorkflow = workflowTemplates[0] ?? null;
+    const steps = workflowDraftForm.selectedStepKeys
+      .map((stepKey) => inventoryWorkflowStepDefinitions.find((item) => item.key === stepKey) ?? null)
+      .filter((item): item is InventoryWorkflowStepDefinition => item !== null)
+      .map((item) => ({
+        key: item.key,
+        title: item.title,
+        description: item.description,
+      }));
+
+    const nextWorkflow: InventoryFlowWorkflowTemplate = {
+      ...(sourceWorkflow ?? {
+        key: "",
+        title: "",
+        description: "",
+        workflow_code: "",
+        version: "v0.1",
+        status: "draft",
+        default_material_code: workflowDraftForm.defaultMaterialCode,
+        default_purchase_inbound_placeholder: "请输入采购入库单号",
+        default_transfer_order_placeholder: "请输入调拨订单单号",
+        default_warehouse_code: "",
+        default_inwarehouse_code: "",
+        bom_code: bomCode,
+        required_inputs: [],
+        steps: [],
+      }),
+      key: workflowDraftForm.key,
+      title,
+      description,
+      workflow_code: workflowCode,
+      version: "v0.1",
+      status: "draft",
+      default_material_code: workflowDraftForm.defaultMaterialCode,
+      bom_code: bomCode,
+      required_inputs: buildInventoryWorkflowRequiredInputs(
+        workflowDraftForm.selectedStepKeys,
+        Boolean(materialProfile?.serial_managed),
+      ),
+      steps,
+    };
+
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            workflow_templates: [nextWorkflow, ...current.workflow_templates],
+            summary: {
+              ...current.summary,
+              workflow_template_count: current.workflow_templates.length + 1,
+            },
+          }
+        : current,
+    );
+    setCreateWorkflowOpen(false);
+    setWorkflowDraftForm(null);
+    toast.success(`${nextWorkflow.title} 已保存为草稿。`);
+  }
+
+  function handleSaveWorkflow(workflow: InventoryFlowWorkflowTemplate) {
+    const nextStatus = workflow.status === "draft" ? "unpublished" : workflow.status;
+    const nextVersion = bumpInventoryWorkflowVersion(workflow.version);
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            workflow_templates: current.workflow_templates.map((item) =>
+              item.key === workflow.key
+                ? {
+                    ...item,
+                    status: nextStatus,
+                    version: nextVersion,
+                  }
+                : item,
+            ),
+          }
+        : current,
+    );
+    toast.success(
+      workflow.status === "draft"
+        ? `${workflow.title} 已保存，当前状态变更为未发布。`
+        : `${workflow.title} 已保存，版本更新为 ${nextVersion}。`,
+    );
+  }
+
+  function handlePublishWorkflow(workflow: InventoryFlowWorkflowTemplate) {
+    if (workflow.status === "published") {
+      toast.info(`${workflow.title} 当前已经是已发布状态。`);
+      return;
+    }
+    const nextVersion = normalizeInventoryPublishedVersion(workflow.version);
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            workflow_templates: current.workflow_templates.map((item) =>
+              item.key === workflow.key
+                ? {
+                    ...item,
+                    status: "published",
+                    version: nextVersion,
+                  }
+                : item,
+            ),
+          }
+        : current,
+    );
+    toast.success(`${workflow.title} 已发布，前台执行区现在会展示这条业务流。`);
+  }
+
+  function handleDeleteWorkflowRequest(workflow: InventoryFlowWorkflowTemplate) {
+    setDeleteWorkflowKey(workflow.key);
+  }
+
+  function handleDeleteWorkflowConfirm() {
+    if (!deleteTargetWorkflow || deleteTargetWorkflow.status === "published") {
+      return;
+    }
+
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            workflow_templates: current.workflow_templates.filter((item) => item.key !== deleteTargetWorkflow.key),
+            summary: {
+              ...current.summary,
+              workflow_template_count: Math.max(current.workflow_templates.length - 1, 0),
+            },
+          }
+        : current,
+    );
+    setDeleteWorkflowKey(null);
+    toast.success(`${deleteTargetWorkflow.title} 已删除。`);
+  }
+
+  function handleDisableWorkflowConfirm() {
+    if (!disableTargetWorkflow) {
+      return;
+    }
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            workflow_templates: current.workflow_templates.map((item) =>
+              item.key === disableTargetWorkflow.key
+                ? {
+                    ...item,
+                    status: "disabled",
+                  }
+                : item,
+            ),
+          }
+        : current,
+    );
+    setDisableWorkflowKey(null);
+    toast.success(`${disableTargetWorkflow.title} 已停用。`);
+  }
+
   function openWorkflowLaunchDialog(workflow: InventoryFlowWorkflowTemplate) {
     if (workflow.status !== "published") {
       toast.warning("请先发布库存业务流后再发起业务流单据。");
@@ -900,10 +1368,19 @@ const liveStockReportStatusSummary = liveStockReportDraft.status_buckets.length
       getInventoryWorkflowStatusMeta(left.status).order - getInventoryWorkflowStatusMeta(right.status).order ||
       left.workflow_code.localeCompare(right.workflow_code),
   );
+  const allManagedWorkflows = workflowTemplates;
   const publishedWorkflows = workflowTemplates.filter((item) => item.status === "published");
   const unfinishedWorkflowSummary = data?.unfinished_workflow_instances ?? { unfinished_count: 0, items: [] };
   const unfinishedWorkflowItems = unfinishedWorkflowSummary.items ?? [];
   const unfinishedWorkflowCount = Number(unfinishedWorkflowSummary.unfinished_count ?? unfinishedWorkflowItems.length ?? 0);
+  const disableTargetWorkflow = disableWorkflowKey ? workflowTemplates.find((item) => item.key === disableWorkflowKey) ?? null : null;
+  const deleteTargetWorkflow = deleteWorkflowKey ? workflowTemplates.find((item) => item.key === deleteWorkflowKey) ?? null : null;
+  const workflowStatusSummary = {
+    published: workflowTemplates.filter((item) => item.status === "published").length,
+    unpublished: workflowTemplates.filter((item) => item.status === "unpublished").length,
+    draft: workflowTemplates.filter((item) => item.status === "draft").length,
+    disabled: workflowTemplates.filter((item) => item.status === "disabled").length,
+  };
   const workflowLaunchTargetWorkflow = workflowLaunchForm
     ? workflowTemplates.find((item) => item.key === workflowLaunchForm.workflowKey) ?? null
     : null;
@@ -922,6 +1399,14 @@ const liveStockReportStatusSummary = liveStockReportDraft.status_buckets.length
   const workflowNeedsBom = workflowStepKeys.includes("morphology_conversion");
   const workflowNeedsQuantity = workflowStepKeys.includes("morphology_conversion") || workflowNeedsScrapCreate;
   const workflowAllowsSerials = Boolean((workflowNeedsBom || workflowNeedsScrapCreate) && workflowLaunchSelectedMaterial?.serial_managed);
+  const availableDraftBomProfiles = workflowDraftForm
+    ? (data?.bom_profiles ?? []).filter((item) => item.material_code === workflowDraftForm.defaultMaterialCode)
+    : [];
+  const selectedDraftStepDefinitions = workflowDraftForm
+    ? workflowDraftForm.selectedStepKeys
+        .map((stepKey) => inventoryWorkflowStepDefinitions.find((item) => item.key === stepKey) ?? null)
+        .filter((item): item is InventoryWorkflowStepDefinition => item !== null)
+    : [];
   return (
     <div className="space-y-6" data-page="inventory-flows">
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
@@ -1600,27 +2085,53 @@ const liveStockReportStatusSummary = liveStockReportDraft.status_buckets.length
           <DialogHeader className="border-b border-border/70 px-6 pt-6 pb-5">
             <DialogTitle>库存业务流编排</DialogTitle>
             <DialogDescription>
-              把形态转换、调拨订单、调出单、调入单编成可复用库存链路；其他出库当前已支持查询和提交已有草稿单。
+              在这里继续完成新增业务流、保存业务流、发布业务流、停用业务流和删除业务流等管理动作。
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[calc(100vh-10rem)] overflow-y-auto px-6 py-6">
-            <div className="grid gap-4 lg:grid-cols-[0.86fr_1.14fr]">
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline" className="rounded-full border-emerald-200 bg-emerald-50 text-emerald-700">
+                    已发布 {workflowStatusSummary.published}
+                  </Badge>
+                  <Badge variant="outline" className="rounded-full border-amber-200 bg-amber-50 text-amber-700">
+                    未发布 {workflowStatusSummary.unpublished}
+                  </Badge>
+                  <Badge variant="outline" className="rounded-full border-border/80 bg-white text-muted-foreground">
+                    草稿 {workflowStatusSummary.draft}
+                  </Badge>
+                  <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-100 text-slate-700">
+                    已停用 {workflowStatusSummary.disabled}
+                  </Badge>
+                </div>
+
+                <Button className="rounded-full" onClick={openCreateWorkflowDialog}>
+                  <Plus className="size-4" />
+                  新增业务流
+                </Button>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
               <div className="space-y-4">
                 <div className="rounded-[24px] border border-border/70 bg-slate-50/70 p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">当前能力</p>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">管理动作</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     <div className="rounded-[20px] border border-border/70 bg-white px-4 py-3">
-                      <p className="text-xs text-muted-foreground">已发布业务流</p>
-                      <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{formatNumber(publishedWorkflows.length)}</p>
+                      <p className="text-sm font-semibold text-foreground">新增</p>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">新建业务流骨架并保存成草稿，后续再联调和发布。</p>
                     </div>
                     <div className="rounded-[20px] border border-border/70 bg-white px-4 py-3">
-                      <p className="text-xs text-muted-foreground">已验证单据节点</p>
-                      <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">4</p>
-                      <p className="mt-1 text-xs text-muted-foreground">形态转换 / 调拨订单 / 调出单 / 调入单</p>
+                      <p className="text-sm font-semibold text-foreground">保存</p>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">草稿保存后会进入未发布，便于继续补配置。</p>
                     </div>
                     <div className="rounded-[20px] border border-border/70 bg-white px-4 py-3">
-                      <p className="text-xs text-muted-foreground">未完成实例</p>
-                      <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{formatNumber(unfinishedWorkflowCount)}</p>
+                      <p className="text-sm font-semibold text-foreground">发布</p>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">发布后会出现在前台执行区，员工可直接发起单据。</p>
+                    </div>
+                    <div className="rounded-[20px] border border-border/70 bg-white px-4 py-3">
+                      <p className="text-sm font-semibold text-foreground">停用 / 删除</p>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">停用保留历史，删除只允许针对未发布或已停用业务流。</p>
                     </div>
                   </div>
                 </div>
@@ -1629,87 +2140,415 @@ const liveStockReportStatusSummary = liveStockReportDraft.status_buckets.length
                   <p className="text-sm font-semibold text-foreground">编排说明</p>
                   <div className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
                     <p>库存流转业务流会把已验证的库存单据节点按顺序串起来，发起后自动沿链路向用友下推。</p>
-                    <p>当前可以围绕调拨订单、调出单、调入单、形态转换做标准化链路编排。</p>
-                    <p>“其他出库”当前已接入查询与提交已有草稿单的能力，可纳入库存流转追踪。</p>
+                    <p>当前可以围绕形态转换、调拨订单、调出单、调入单和报废单做标准化链路编排。</p>
+                    <p>未完成实例仍会在前台单独汇总，便于追踪卡在哪个节点以及当前审批人。</p>
                   </div>
                 </div>
 
-                <div className="rounded-[24px] border border-amber-200 bg-amber-50/80 p-5">
-                  <p className="text-sm font-semibold text-amber-900">其他出库接入状态</p>
-                  <p className="mt-2 text-sm leading-6 text-amber-800">
-                    查询和提交接口已纳入库存流转业务流；新增其他出库单接口目前仍受用友当前 AppKey 权限限制，暂不开放真实创建。
+                <div className="rounded-[24px] border border-sky-200 bg-sky-50/80 p-5">
+                  <p className="text-sm font-semibold text-sky-900">当前上下文</p>
+                  <p className="mt-2 text-sm leading-6 text-sky-800">
+                    已发布业务流 {workflowStatusSummary.published} 条，未完成实例 {formatNumber(unfinishedWorkflowCount)} 条，
+                    报废单能力 {data?.scrap_integration?.supported ? "已接入新增 / 提交 / 查询" : "待接入"}。
                   </p>
                 </div>
               </div>
 
               <div className="space-y-4">
-                {workflowTemplates.length > 0 ? (
-                  workflowTemplates.map((workflow) => {
-                    const statusMeta = getInventoryWorkflowStatusMeta(workflow.status);
-                    return (
-                      <div key={workflow.key} className="rounded-[24px] border border-border/70 bg-white p-5 shadow-[var(--shadow-card)]">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="space-y-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-lg font-semibold tracking-tight text-foreground">{workflow.title}</h3>
-                              <Badge variant="outline" className={cn("rounded-full text-xs", statusMeta.className)}>
-                                {statusMeta.label}
-                              </Badge>
-                              <Badge variant="outline" className="rounded-full border-border/70 bg-white text-xs text-muted-foreground">
-                                {workflow.version}
-                              </Badge>
-                            </div>
-                            <p className="text-sm leading-6 text-muted-foreground">{workflow.description}</p>
-                          </div>
-                          <Button
-                            variant="outline"
-                            className="rounded-full border-sky-200 text-sky-700 hover:bg-sky-50 hover:text-sky-800"
-                            onClick={() => {
-                              setWorkflowManagementOpen(false);
-                              openWorkflowLaunchDialog(workflow);
-                            }}
-                          >
-                            <Rocket className="size-4" />
-                            发起业务流单据
-                          </Button>
-                        </div>
-
-                        <div className="mt-4 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-                          <div className="rounded-[20px] border border-border/70 bg-slate-50/60 p-4">
-                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">必填字段</p>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {(workflow.required_inputs ?? []).map((item) => (
-                                <Badge key={`${workflow.key}-${item}`} variant="outline" className="rounded-full border-border/70 bg-white text-xs text-muted-foreground">
-                                  {item}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="rounded-[20px] border border-border/70 bg-slate-50/60 p-4">
-                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">执行链路</p>
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                              {workflow.steps.map((step, index) => (
-                                <div key={`${workflow.key}-${step.key}`} className="flex items-center gap-2">
-                                  <Badge variant="outline" className="rounded-full border-sky-200 bg-white px-3 py-1 text-xs text-slate-700">
-                                    {step.title}
-                                  </Badge>
-                                  {index < workflow.steps.length - 1 ? <span className="text-xs text-muted-foreground">→</span> : null}
+                <div className="overflow-hidden rounded-[20px] border border-border/70 bg-white">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>业务流名称</TableHead>
+                        <TableHead>版本号</TableHead>
+                        <TableHead>默认物料</TableHead>
+                        <TableHead>执行链路</TableHead>
+                        <TableHead>状态</TableHead>
+                        <TableHead>操作</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {allManagedWorkflows.length > 0 ? (
+                        allManagedWorkflows.map((workflow) => {
+                          const statusMeta = getInventoryWorkflowStatusMeta(workflow.status);
+                          return (
+                            <TableRow key={workflow.key}>
+                              <TableCell>
+                                <div>
+                                  <p className="font-medium text-foreground">{workflow.title}</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">{workflow.workflow_code}</p>
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-[24px] border border-dashed border-border/80 bg-muted/25 px-4 py-6 text-sm text-muted-foreground">
-                    当前还没有已发布的库存业务流。后面接入模板保存和发布能力后，这里会继续扩成真正的业务流管理台。
-                  </div>
-                )}
+                              </TableCell>
+                              <TableCell>{workflow.version}</TableCell>
+                              <TableCell className="font-mono text-xs">{workflow.default_material_code || "--"}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{buildInventoryWorkflowStepSummary(workflow)}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className={cn("rounded-full text-xs", statusMeta.className)}>
+                                  {statusMeta.label}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-wrap items-center gap-3 text-sm">
+                                  {(workflow.status === "draft" || workflow.status === "unpublished") ? (
+                                    <button
+                                      type="button"
+                                      className="font-medium text-slate-700 transition hover:underline"
+                                      onClick={() => handleSaveWorkflow(workflow)}
+                                    >
+                                      保存
+                                    </button>
+                                  ) : null}
+                                  {workflow.status !== "published" ? (
+                                    <button
+                                      type="button"
+                                      className="font-medium text-sky-700 transition hover:underline"
+                                      onClick={() => handlePublishWorkflow(workflow)}
+                                    >
+                                      发布
+                                    </button>
+                                  ) : null}
+                                  {workflow.status === "published" ? (
+                                    <button
+                                      type="button"
+                                      className="font-medium text-amber-700 transition hover:underline"
+                                      onClick={() => setDisableWorkflowKey(workflow.key)}
+                                    >
+                                      停用
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="font-medium text-rose-700 transition hover:underline"
+                                    onClick={() => handleDeleteWorkflowRequest(workflow)}
+                                  >
+                                    删除
+                                  </button>
+                                  {workflow.status === "published" ? (
+                                    <button
+                                      type="button"
+                                      className="font-medium text-sky-700 transition hover:underline"
+                                      onClick={() => {
+                                        setWorkflowManagementOpen(false);
+                                        openWorkflowLaunchDialog(workflow);
+                                      }}
+                                    >
+                                      发起单据
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                            当前还没有库存业务流。点击右上角“新增业务流”先创建第一条草稿。
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+                </div>
               </div>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={createWorkflowOpen}
+        onOpenChange={(open) => {
+          setCreateWorkflowOpen(open);
+          if (!open) {
+            setWorkflowDraftForm(null);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[calc(100vh-2rem)] w-[min(100vw-2rem,1020px)] max-w-[1020px] flex-col overflow-hidden p-0">
+          <DialogHeader className="px-6 pt-6">
+            <DialogTitle>新增库存业务流</DialogTitle>
+            <DialogDescription>
+              先完成库存业务流基础配置，再保存为草稿。保存之后不会直接对前台执行区生效，需要再发布。
+            </DialogDescription>
+          </DialogHeader>
+          {workflowDraftForm && data ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+              <div className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">业务流名称</p>
+                    <Input
+                      value={workflowDraftForm.title}
+                      onChange={(event) => handleDraftFormChange("title", event.target.value)}
+                      className="h-11 rounded-2xl border-border/80 bg-white"
+                      placeholder="例如：学习机报废处理闭环"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">业务流编码</p>
+                    <Input
+                      value={workflowDraftForm.workflowCode}
+                      readOnly
+                      className="h-11 rounded-2xl border-border/80 bg-muted/30 text-muted-foreground"
+                    />
+                    <p className="text-xs text-muted-foreground">系统自动生成唯一编码，保存草稿前无需手动维护。</p>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">默认物料</p>
+                    <Select value={workflowDraftForm.defaultMaterialCode} onValueChange={handleDraftMaterialChange}>
+                      <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                        <SelectValue placeholder="选择物料" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {data.material_profiles.map((material) => (
+                          <SelectItem key={material.material_code} value={material.material_code}>
+                            {material.material_code} | {material.material_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">形态转换 BOM</p>
+                    <Select
+                      value={workflowDraftForm.selectedBomCode}
+                      onValueChange={(value) => handleDraftFormChange("selectedBomCode", value)}
+                      disabled={availableDraftBomProfiles.length === 0}
+                    >
+                      <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                        <SelectValue placeholder="选择 BOM" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableDraftBomProfiles.map((bom) => (
+                          <SelectItem key={bom.bom_code} value={bom.bom_code}>
+                            {bom.bom_code} | {bom.bom_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">如果业务流不包含形态转换节点，可以留空。</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">业务流描述</p>
+                  <Textarea
+                    value={workflowDraftForm.description}
+                    onChange={(event) => handleDraftFormChange("description", event.target.value)}
+                    className="min-h-[120px] rounded-[20px] border-border/80 bg-white"
+                    placeholder="描述这条库存业务流服务什么场景、用在什么节点、是否涉及报废或跨仓调拨。"
+                  />
+                </div>
+
+                <div className="space-y-3 rounded-[24px] border border-border/70 bg-white/90 p-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">执行节点</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      先把需要的节点加入执行链路，再按上下顺序调整。保存后会按这里的顺序作为库存业务流执行逻辑。
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
+                    <div className="space-y-3 rounded-[20px] border border-border/70 bg-muted/20 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">已选执行顺序</p>
+                          <p className="mt-1 text-xs text-muted-foreground">先用上下移动方式调整顺序，后续再补拖拽能力。</p>
+                        </div>
+                        <Badge className="rounded-full border border-border/80 bg-white px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-none">
+                          {selectedDraftStepDefinitions.length} 个节点
+                        </Badge>
+                      </div>
+
+                      {selectedDraftStepDefinitions.length > 0 ? (
+                        <div className="space-y-3">
+                          {selectedDraftStepDefinitions.map((item, index) => (
+                            <div
+                              key={item.key}
+                              className="rounded-[20px] border border-primary/20 bg-white px-4 py-4 shadow-[0_12px_28px_rgba(15,23,42,0.06)]"
+                            >
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="inline-flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+                                      {index + 1}
+                                    </span>
+                                    <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                                    <Badge className="rounded-full border border-border/80 bg-white px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-none">
+                                      {item.stageLabel}
+                                    </Badge>
+                                  </div>
+                                  <p className="mt-2 text-xs leading-6 text-muted-foreground">{item.description}</p>
+                                </div>
+
+                                <div className="flex shrink-0 items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon-sm"
+                                    className="rounded-full"
+                                    onClick={() => handleDraftStepMove(item.key, "up")}
+                                    disabled={index === 0}
+                                  >
+                                    <ArrowUp className="size-4" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon-sm"
+                                    className="rounded-full"
+                                    onClick={() => handleDraftStepMove(item.key, "down")}
+                                    disabled={index === selectedDraftStepDefinitions.length - 1}
+                                  >
+                                    <ArrowDown className="size-4" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon-sm"
+                                    className="rounded-full text-rose-700 hover:text-rose-700"
+                                    onClick={() => handleDraftStepRemove(item.key)}
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-[18px] border border-dashed border-border/80 bg-white px-4 py-6 text-sm text-muted-foreground">
+                          还没有加入执行节点。先从右侧节点库里选择需要纳入业务流的单据节点。
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3 rounded-[20px] border border-border/70 bg-white p-4">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">可选节点库</p>
+                        <p className="mt-1 text-xs text-muted-foreground">点击“加入链路”把节点放入执行顺序；已加入的节点不会重复添加。</p>
+                      </div>
+                      <div className="space-y-3">
+                        {inventoryWorkflowStepDefinitions.map((item) => {
+                          const active = workflowDraftForm.selectedStepKeys.includes(item.key);
+                          return (
+                            <div
+                              key={item.key}
+                              className={cn(
+                                "rounded-[18px] border px-4 py-4 transition-all",
+                                active ? "border-primary/20 bg-primary/5" : "border-border/70 bg-muted/20",
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                                    <Badge className="rounded-full border border-border/80 bg-white px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-none">
+                                      {item.stageLabel}
+                                    </Badge>
+                                  </div>
+                                  <p className="mt-2 text-xs leading-6 text-muted-foreground">{item.description}</p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant={active ? "outline" : "default"}
+                                  className="rounded-full"
+                                  onClick={() => handleDraftStepToggle(item.key)}
+                                >
+                                  {active ? "移出链路" : "加入链路"}
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter className="mx-0 mb-0 mt-0 shrink-0 px-6 py-4">
+            <Button variant="outline" onClick={() => setCreateWorkflowOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleCreateWorkflowSave}>
+              <Save className="size-4" />
+              保存草稿
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(disableTargetWorkflow)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDisableWorkflowKey(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md p-0">
+          <DialogHeader className="px-6 pt-6">
+            <DialogTitle>确认停用业务流</DialogTitle>
+            <DialogDescription>
+              {disableTargetWorkflow
+                ? `确认停用 ${disableTargetWorkflow.title} 吗？停用后它将不再展示在已发布业务流列表中。`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mx-0 mb-0 mt-0 shrink-0 px-6 py-4">
+            <Button variant="outline" onClick={() => setDisableWorkflowKey(null)}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={handleDisableWorkflowConfirm}>
+              确认停用
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deleteTargetWorkflow)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteWorkflowKey(null);
+          }
+        }}
+      >
+        <DialogContent className="w-[calc(100vw-0.75rem)] max-w-none p-0 sm:w-[min(100vw-2rem,560px)] sm:max-w-[560px]">
+          <DialogHeader className="px-6 pt-6">
+            <DialogTitle>{deleteTargetWorkflow?.status === "published" ? "已发布业务流不可直接删除" : "确认删除业务流"}</DialogTitle>
+            <DialogDescription>
+              {deleteTargetWorkflow
+                ? deleteTargetWorkflow.status === "published"
+                  ? `${deleteTargetWorkflow.title} 当前处于已发布状态。请先停用，再执行删除操作。`
+                  : `确认删除 ${deleteTargetWorkflow.title} 吗？删除后该业务流将从库存流转管理台中移除。`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mx-0 mb-0 mt-0 shrink-0 px-6 py-4">
+            <Button variant="outline" onClick={() => setDeleteWorkflowKey(null)}>
+              取消
+            </Button>
+            {deleteTargetWorkflow?.status === "published" ? (
+              <Button
+                className="rounded-full"
+                onClick={() => {
+                  setDeleteWorkflowKey(null);
+                  setDisableWorkflowKey(deleteTargetWorkflow.key);
+                }}
+              >
+                去停用
+              </Button>
+            ) : (
+              <Button variant="destructive" onClick={handleDeleteWorkflowConfirm}>
+                确认删除
+              </Button>
+            )}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
