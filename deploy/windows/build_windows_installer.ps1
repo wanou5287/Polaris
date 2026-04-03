@@ -139,6 +139,12 @@ if (-not $BuildRoot) {
     $BuildRoot = Join-Path $projectRoot "build\\windows-installer"
 }
 if (-not $AfterSalesSourceDir) {
+    $internalAfterSalesCandidate = Join-Path $projectRoot "vendor\\after-sales-source"
+    if (Test-Path $internalAfterSalesCandidate) {
+        $AfterSalesSourceDir = $internalAfterSalesCandidate
+    }
+}
+if (-not $AfterSalesSourceDir) {
     $afterSalesCandidate = Join-Path (Split-Path -Parent $projectRoot) "Polaris__after_sales_branch"
     if (Test-Path $afterSalesCandidate) {
         $AfterSalesSourceDir = $afterSalesCandidate
@@ -220,6 +226,14 @@ try {
         Write-Host "[2/9] Building after-sales workspace..."
         Push-Location $afterSalesSourceResolved
         try {
+            if (-not (Test-Path (Join-Path $afterSalesSourceResolved "node_modules"))) {
+                Write-Host "Installing after-sales workspace dependencies..."
+                & npm.cmd ci
+                if ($LASTEXITCODE -ne 0) {
+                    throw "after-sales npm ci failed"
+                }
+            }
+
             Push-Location (Join-Path $afterSalesSourceResolved "packages\\shared")
             try {
                 & npm.cmd run build

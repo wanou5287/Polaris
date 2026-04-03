@@ -106,3 +106,9 @@ app/routes/bi_dashboard.recovered.py
 deploy/windows/cloudflare_tunnel.local.json
 !frontend/src/lib/
 !frontend/src/lib/**
+vendor/after-sales-source/node_modules/
+vendor/after-sales-source/apps/*/dist/
+vendor/after-sales-source/apps/*/node_modules/
+vendor/after-sales-source/mock/**/*.log
+vendor/after-sales-source/prisma/dev.db
+vendor/after-sales-source/logs/

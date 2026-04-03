@@ -1,0 +1,10 @@
+node_modules
+dist
+.turbo
+.env
+coverage
+apps/web/node_modules
+apps/api/node_modules
+packages/shared/node_modules
+prisma/dev.db
+prisma/dev.db-journal

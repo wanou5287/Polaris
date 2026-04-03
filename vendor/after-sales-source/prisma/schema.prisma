@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Device {
+  id                  String               @id
+  sn                  String               @unique
+  model               String
+  factoryDate         DateTime             @map("factory_date")
+  currentDeviceStatus String               @map("current_device_status")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  saleCycles          SaleCycle[]
+  entitlements        WarrantyEntitlement[]
+  events              DeviceEvent[]
+  inheritedTo         SnInheritanceRecord[] @relation("InheritanceOriginalDevice")
+
+  @@map("devices")
+}
+
+model SaleCycle {
+  id               String               @id
+  saleCycleId      String               @unique @map("sale_cycle_id")
+  sn               String
+  cycleNo          Int                  @map("cycle_no")
+  saleStatus       String               @map("sale_status")
+  sourceOrderNo    String?              @map("source_order_no")
+  sourceChannel    String?              @map("source_channel")
+  soldAt           DateTime             @map("sold_at")
+  activatedAt      DateTime?            @map("activated_at")
+  returnReceivedAt DateTime?            @map("return_received_at")
+  unboundAt        DateTime?            @map("unbound_at")
+  cycleClosedAt    DateTime?            @map("cycle_closed_at")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+  device           Device               @relation(fields: [sn], references: [sn])
+  entitlements     WarrantyEntitlement[]
+  events           DeviceEvent[]
+
+  @@unique([sn, cycleNo])
+  @@map("sale_cycles")
+}
+
+model WarrantyEntitlement {
+  id              String   @id
+  entitlementId   String   @unique @map("entitlement_id")
+  saleCycleId     String?  @map("sale_cycle_id")
+  sn              String
+  entitlementType String   @map("entitlement_type")
+  sourceChannel   String   @map("source_channel")
+  sourceOrderNo   String   @map("source_order_no")
+  warrantyDays    Int      @map("warranty_days")
+  status          String
+  remark          String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  device          Device   @relation(fields: [sn], references: [sn])
+  saleCycle       SaleCycle? @relation(fields: [saleCycleId], references: [saleCycleId])
+
+  @@index([sn, sourceOrderNo, sourceChannel, status])
+  @@map("warranty_entitlements")
+}
+
+model DeviceEvent {
+  id          String    @id
+  eventId     String    @unique @map("event_id")
+  sn          String
+  saleCycleId String?   @map("sale_cycle_id")
+  eventType   String    @map("event_type")
+  eventTime   DateTime  @map("event_time")
+  rawPayload  String    @map("raw_payload")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  device      Device    @relation(fields: [sn], references: [sn])
+  saleCycle   SaleCycle? @relation(fields: [saleCycleId], references: [saleCycleId])
+
+  @@map("device_events")
+}
+
+model SnInheritanceRecord {
+  id                    String   @id
+  originalSn            String   @map("original_sn")
+  newSn                 String   @map("new_sn")
+  inheritedWarrantyStart DateTime @map("inherited_warranty_start")
+  inheritedBaseDays     Int      @map("inherited_base_days")
+  inheritedExtraDays    Int      @map("inherited_extra_days")
+  inheritedWarrantyEnd  DateTime @map("inherited_warranty_end")
+  previewActivatedAt    DateTime? @map("preview_activated_at")
+  originalOrderNo       String?  @map("original_order_no")
+  changeReason          String?  @map("change_reason")
+  effectiveAt           DateTime? @map("effective_at")
+  status                String
+  remark                String?
+  createdBy             String?  @map("created_by")
+  pendingApproverUsername String? @map("pending_approver_username")
+  pendingApproverName    String?  @map("pending_approver_name")
+  approvedBy            String?  @map("approved_by")
+  approvedAt            DateTime? @map("approved_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  originalDevice        Device?  @relation("InheritanceOriginalDevice", fields: [originalSn], references: [sn])
+
+  @@index([newSn, status])
+  @@index([originalSn])
+  @@map("sn_inheritance_records")
+}
+
+model AppUser {
+  id                    String        @id
+  username              String        @unique
+  passwordHash          String        @map("password_hash")
+  displayName           String        @map("display_name")
+  status                String
+  isSuperAdmin          Boolean       @default(false) @map("is_super_admin")
+  canQueryWarranty      Boolean       @default(false) @map("can_query_warranty")
+  canTestActivation     Boolean       @default(false) @map("can_test_activation")
+  canImportEntitlements Boolean       @default(false) @map("can_import_entitlements")
+  canManageInheritance  Boolean       @default(false) @map("can_manage_inheritance")
+  canApproveInheritance Boolean       @default(false) @map("can_approve_inheritance")
+  approvedBy            String?       @map("approved_by")
+  approvedAt            DateTime?     @map("approved_at")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+  sessions              UserSession[]
+
+  @@map("app_users")
+}
+
+model UserSession {
+  id         String   @id
+  token      String   @unique
+  userId     String   @map("user_id")
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  user       AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token, expiresAt])
+  @@map("user_sessions")
+}

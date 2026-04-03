@@ -1,0 +1,114 @@
+{
+  "SN001": {
+    "success": true,
+    "data": {
+      "sn": "SN001",
+      "activationStatus": "ACTIVATED",
+      "activationRecords": [
+        {
+          "activatedAt": "2026-01-10T10:00:00+08:00",
+          "recordType": "CURRENT_CYCLE"
+        }
+      ]
+    }
+  },
+  "SN002": {
+    "success": true,
+    "data": {
+      "sn": "SN002",
+      "activationStatus": "NOT_ACTIVATED",
+      "activationRecords": []
+    }
+  },
+  "SN003": {
+    "success": true,
+    "data": {
+      "sn": "SN003",
+      "activationStatus": "ACTIVATED",
+      "activationRecords": [
+        {
+          "activatedAt": "2025-11-12T09:00:00+08:00",
+          "recordType": "HISTORY_CYCLE"
+        },
+        {
+          "activatedAt": "2026-02-01T11:00:00+08:00",
+          "recordType": "CURRENT_CYCLE"
+        }
+      ]
+    }
+  },
+  "SN004": {
+    "success": true,
+    "data": {
+      "sn": "SN004",
+      "activationStatus": "ACTIVATED",
+      "activationRecords": [
+        {
+          "activatedAt": "2026-01-16T11:00:00+08:00",
+          "recordType": "UNKNOWN"
+        },
+        {
+          "activatedAt": "2026-01-18T11:00:00+08:00",
+          "recordType": "UNKNOWN"
+        }
+      ]
+    }
+  },
+  "SN005": {
+    "success": false,
+    "errorCode": "MOCK_TIMEOUT",
+    "errorMessage": "mock 激活服务模拟超时"
+  },
+  "SN006": {
+    "success": true,
+    "data": {
+      "sn": "SN006",
+      "activationStatus": "ACTIVATED",
+      "activationRecords": [
+        {
+          "activatedAt": "2026-01-25T10:00:00+08:00",
+          "recordType": "CURRENT_CYCLE"
+        }
+      ]
+    }
+  },
+  "SN007": {
+    "success": true,
+    "data": {
+      "sn": "SN007",
+      "activationStatus": "ACTIVATED",
+      "activationRecords": [
+        {
+          "activatedAt": "2026-01-28T10:00:00+08:00",
+          "recordType": "CURRENT_CYCLE"
+        }
+      ]
+    }
+  },
+  "SN008": {
+    "success": true,
+    "data": {
+      "sn": "SN008",
+      "activationStatus": "ACTIVATED",
+      "activationRecords": [
+        {
+          "activatedAt": "2026-01-29T10:00:00+08:00",
+          "recordType": "UNKNOWN"
+        }
+      ]
+    }
+  },
+  "SN009": {
+    "success": true,
+    "data": {
+      "sn": "SN009",
+      "activationStatus": "ACTIVATED",
+      "activationRecords": [
+        {
+          "activatedAt": "2026-01-27T09:00:00+08:00",
+          "recordType": "CURRENT_CYCLE"
+        }
+      ]
+    }
+  }
+}
