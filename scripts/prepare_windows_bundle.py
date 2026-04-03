@@ -174,9 +174,9 @@ def main() -> int:
             "api_entry": "after-sales/apps/api/dist/apps/api/src/server.js",
             "env": {
                 "port": "3210",
-                "activation_mode": after_sales_env.get("ACTIVATION_MODE", "mock"),
+                "activation_mode": after_sales_env.get("ACTIVATION_MODE", "real"),
                 "activation_mock_file": after_sales_env.get(
-                    "ACTIVATION_MOCK_FILE", "./mock/activation-data.json"
+                    "ACTIVATION_MOCK_FILE", "../../../mock/activation-data.json"
                 ),
                 "activation_real_base_url": after_sales_env.get("ACTIVATION_REAL_BASE_URL", ""),
                 "activation_real_path": after_sales_env.get(

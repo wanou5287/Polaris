@@ -462,12 +462,16 @@ if ($afterSalesEnabled) {
     $afterSalesDbUri = ("file:" + ($afterSalesDbTarget -replace "\\", "/"))
     $afterSalesMockFile = [string]$manifest.after_sales.env.activation_mock_file
     if (-not $afterSalesMockFile) {
-        $afterSalesMockFile = "./mock/activation-data.json"
+        $afterSalesMockFile = "../../../mock/activation-data.json"
+    }
+    $afterSalesActivationMode = [string]$manifest.after_sales.env.activation_mode
+    if (-not $afterSalesActivationMode) {
+        $afterSalesActivationMode = "real"
     }
     $afterSalesEnvContent = @"
 DATABASE_URL=$afterSalesDbUri
 PORT=$($manifest.after_sales.api_port)
-ACTIVATION_MODE=$($manifest.after_sales.env.activation_mode)
+ACTIVATION_MODE=$afterSalesActivationMode
 ACTIVATION_MOCK_FILE=$afterSalesMockFile
 ACTIVATION_REAL_BASE_URL=$($manifest.after_sales.env.activation_real_base_url)
 ACTIVATION_REAL_PATH=$($manifest.after_sales.env.activation_real_path)
@@ -513,7 +517,7 @@ POLARIS_AFTER_SALES_WEB_DIST=$(if ($afterSalesEnabled) { Join-Path $afterSalesBu
 POLARIS_AFTER_SALES_API_BASE_URL=$(if ($afterSalesEnabled) { $afterSalesApiUrl } else { "" })
 DATABASE_URL=$(if ($afterSalesEnabled) { "file:" + ((Join-Path $afterSalesPrismaDir "dev.db") -replace "\\", "/") } else { "" })
 PORT=$(if ($afterSalesEnabled) { $manifest.after_sales.api_port } else { "" })
-ACTIVATION_MODE=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_mode } else { "" })
+ACTIVATION_MODE=$(if ($afterSalesEnabled) { $afterSalesActivationMode } else { "" })
 ACTIVATION_MOCK_FILE=$(if ($afterSalesEnabled) { $afterSalesMockFile } else { "" })
 ACTIVATION_REAL_BASE_URL=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_real_base_url } else { "" })
 ACTIVATION_REAL_PATH=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_real_path } else { "" })
