@@ -1,5 +1,13 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { NextRequest, NextResponse } from "next/server";
+
+import {
+  canAccessAppPath,
+  canAccessBackendPath,
+  resolveHomePath,
+} from "@/lib/polaris-access";
+import type { CurrentUser, CurrentUserResponse } from "@/lib/polaris-types";
 
 export const POLARIS_SESSION_COOKIE = "polaris_session";
 export const POLARIS_USERNAME_COOKIE = "polaris_username";
@@ -8,6 +16,7 @@ export const POLARIS_API_BASE_URL =
   process.env.POLARIS_API_BASE_URL ?? "http://127.0.0.1:8888";
 export const POLARIS_BI_ROOT = "/financial/bi-dashboard";
 export const POLARIS_BI_API_ROOT = `${POLARIS_BI_ROOT}/api`;
+export const POLARIS_BI_REGISTER_PATH = `${POLARIS_BI_ROOT}/register`;
 
 function sanitizePath(path: string) {
   return path.startsWith("/") ? path : `/${path}`;
@@ -66,6 +75,50 @@ function readProxyBody(request: NextRequest) {
 export async function getCurrentUsername() {
   const cookieStore = await cookies();
   return cookieStore.get(POLARIS_USERNAME_COOKIE)?.value ?? "BI 用户";
+}
+
+export async function getCurrentUserProfile(sessionOverride?: string | null) {
+  const session =
+    typeof sessionOverride === "string"
+      ? sessionOverride
+      : await getCurrentSessionValue();
+
+  if (!session) {
+    return null;
+  }
+
+  try {
+    const payload = await fetchPolarisJson<CurrentUserResponse>(
+      "/financial/bi-dashboard/api/session/me",
+      undefined,
+      session,
+    );
+    return payload.current_user;
+  } catch {
+    return null;
+  }
+}
+
+export async function requireWorkspacePageAccess(pathname: string) {
+  const session = await getCurrentSessionValue();
+  if (!session) {
+    redirect("/login");
+  }
+
+  const currentUser = await getCurrentUserProfile(session);
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  if (currentUser.access_granted && !canAccessAppPath(currentUser, pathname)) {
+    redirect(resolveHomePath(currentUser));
+  }
+
+  return currentUser;
+}
+
+export function hasWorkspaceAccess(profile: CurrentUser | null | undefined) {
+  return Boolean(profile?.access_granted);
 }
 
 export async function fetchPolarisJson<T>(
@@ -134,6 +187,20 @@ export async function proxyBackendJson(
     return createProxyResponse({ message: "登录已失效，请重新登录" }, 401);
   }
 
+  const currentUser = await getCurrentUserProfile(session);
+  if (!hasWorkspaceAccess(currentUser)) {
+    return createProxyResponse(
+      { message: "当前账号还没有任何访问权限，请联系管理员添加权限" },
+      403,
+    );
+  }
+  if (!canAccessBackendPath(currentUser, path)) {
+    return createProxyResponse(
+      { message: "当前账号无权访问该模块，请联系管理员调整模块权限" },
+      403,
+    );
+  }
+
   const body =
     request.method === "GET" || request.method === "HEAD"
       ? undefined
@@ -171,6 +238,20 @@ export async function proxyBackendResponse(
   path: string,
 ) {
   const session = await getCurrentSessionValue(request);
+  const currentUser = session ? await getCurrentUserProfile(session) : null;
+
+  if (session && !hasWorkspaceAccess(currentUser)) {
+    return createProxyResponse(
+      { message: "当前账号还没有任何访问权限，请联系管理员添加权限" },
+      403,
+    );
+  }
+  if (session && currentUser && !canAccessBackendPath(currentUser, path)) {
+    return createProxyResponse(
+      { message: "当前账号无权访问该模块，请联系管理员调整模块权限" },
+      403,
+    );
+  }
   const body = await readProxyBody(request);
 
   const response = await fetch(
@@ -233,6 +314,44 @@ export async function postLoginToPolaris(payload: {
   next?: string;
 }) {
   const response = await fetch(buildBackendUrl(`${POLARIS_BI_ROOT}/login`), {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    return {
+      ok: false as const,
+      status: response.status,
+      message: extractMessage(data),
+      session: null,
+      data,
+    };
+  }
+
+  return {
+    ok: true as const,
+    status: response.status,
+    message: extractMessage(data),
+    session: extractSessionFromResponse(response),
+    data,
+  };
+}
+
+export async function postRegisterToPolaris(payload: {
+  email: string;
+  display_name?: string;
+  password: string;
+  remember?: boolean;
+  next?: string;
+}) {
+  const response = await fetch(buildBackendUrl(POLARIS_BI_REGISTER_PATH), {
     method: "POST",
     cache: "no-store",
     headers: {

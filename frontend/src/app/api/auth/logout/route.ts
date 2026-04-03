@@ -15,8 +15,27 @@ export async function POST(request: NextRequest) {
     redirect_to: "/login",
   });
 
-  response.cookies.delete(POLARIS_SESSION_COOKIE);
-  response.cookies.delete(POLARIS_USERNAME_COOKIE);
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+
+  response.cookies.set({
+    name: POLARIS_SESSION_COOKIE,
+    value: "",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    expires: new Date(0),
+    maxAge: 0,
+  });
+
+  response.cookies.set({
+    name: POLARIS_USERNAME_COOKIE,
+    value: "",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    expires: new Date(0),
+    maxAge: 0,
+  });
 
   return response;
 }

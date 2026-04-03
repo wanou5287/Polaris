@@ -3,6 +3,15 @@ settings:
 
 users:
   - username: bi_admin
+    display_name: 北极星管理员
     password: change-me-admin-password
+    role_name: 管理员
+    is_admin: true
+    note: 平台初始化管理员账号
+
   - username: tester
+    display_name: 采购测试账号
     password: change-me-tester-password
+    role_name: 采购专员
+    is_admin: false
+    note: 用于联调与页面验收

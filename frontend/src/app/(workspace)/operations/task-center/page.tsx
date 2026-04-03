@@ -1,5 +1,7 @@
 import { TaskCenterPage } from "@/components/polaris/task-center-page";
+import { requireWorkspacePageAccess } from "@/lib/polaris-server";
 
-export default function OperationsTaskCenterPage() {
+export default async function OperationsTaskCenterPage() {
+  await requireWorkspacePageAccess("/operations/task-center");
   return <TaskCenterPage />;
 }

@@ -98,6 +98,10 @@ Thumbs.db
 config/bi_dashboard_users.local.yaml
 config/yonyou_inventory_sync.yaml
 vendor/DataAgent/conf.yaml
+.env
+.env.*
+!.env.example
+!.env.*.example
 vendor/DataAgent/runtime/
 .tmp/
 .tools/

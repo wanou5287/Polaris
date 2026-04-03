@@ -4,6 +4,8 @@ import { type ChangeEvent, type ReactNode, startTransition, useEffect, useState 
 import {
   ArrowDown,
   ArrowUp,
+  CircleAlert,
+  Clock3,
   FileCog,
   FileUp,
   Loader2,
@@ -38,6 +40,7 @@ import { apiFetch, cn, formatNumber } from "@/lib/polaris-client";
 import type {
   ProcurementSupplyBomProfile,
   ProcurementSupplyLaunchResponse,
+  ProcurementSupplyWorkflowLaunchResponse,
   ProcurementSerialImportPreviewResponse,
   ProcurementSupplyBomLine,
   ProcurementSupplyConsoleResponse,
@@ -92,6 +95,20 @@ type StandaloneLaunchFormState = {
   creator: string;
   creatorId: string;
   selectedBomCode: string;
+  remark: string;
+  serials: string[];
+  serialFileName: string;
+};
+
+type WorkflowLaunchFormState = {
+  workflowKey: string;
+  materialCode: string;
+  quantity: string;
+  purchaseOrderCode: string;
+  warehouseCode: string;
+  inwarehouseCode: string;
+  selectedBomCode: string;
+  vouchdate: string;
   remark: string;
   serials: string[];
   serialFileName: string;
@@ -500,6 +517,10 @@ const fallbackConsoleData: ProcurementSupplyConsoleResponse = {
       lines: [{ line_type: "半成品", material_code: "003000013", material_name: "学习机彩盒", qty: 1 }],
     },
   ],
+  unfinished_workflow_instances: {
+    unfinished_count: 0,
+    items: [],
+  },
   serial_import_template: {
     accepted_extensions: [".xlsx", ".csv"],
     required_headers: ["序列号"],
@@ -517,6 +538,22 @@ async function launchStandaloneDocument(documentKey: string, payload: Record<str
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+async function launchWorkflowDocument(workflowKey: string, payload: Record<string, unknown>) {
+  return apiFetch<ProcurementSupplyWorkflowLaunchResponse>(
+    `/api/backend/procurement-supply/workflows/${workflowKey}/launch`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+function buildDefaultVouchdate() {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
 async function uploadSerialPreview(materialCode: string, file: File) {
@@ -579,6 +616,40 @@ function buildStandaloneLaunchForm(
   };
 }
 
+function buildWorkflowLaunchForm(
+  workflow: ProcurementSupplyWorkflowTemplate,
+  materials: ProcurementSupplyConsoleResponse["material_profiles"],
+  boms: ProcurementSupplyBomProfile[],
+  seed?: Partial<WorkflowLaunchFormState>,
+): WorkflowLaunchFormState {
+  const defaultMaterialCode =
+    seed?.materialCode ||
+    workflow.default_material_code ||
+    materials.find((item) => item.recommended_workflow === workflow.key)?.material_code ||
+    materials[0]?.material_code ||
+    "yscs061601";
+  const defaultBomCode =
+    seed?.selectedBomCode ||
+    boms.find((item) => item.bom_code === workflow.bom_code)?.bom_code ||
+    boms.find((item) => item.material_code === defaultMaterialCode)?.bom_code ||
+    boms[0]?.bom_code ||
+    "";
+
+  return {
+    workflowKey: workflow.key,
+    materialCode: defaultMaterialCode,
+    quantity: seed?.quantity ?? "",
+    purchaseOrderCode: seed?.purchaseOrderCode ?? "",
+    warehouseCode: seed?.warehouseCode ?? "000003",
+    inwarehouseCode: seed?.inwarehouseCode ?? "15532921",
+    selectedBomCode: defaultBomCode,
+    vouchdate: seed?.vouchdate ?? buildDefaultVouchdate(),
+    remark: seed?.remark ?? "",
+    serials: seed?.serials ?? [],
+    serialFileName: seed?.serialFileName ?? "",
+  };
+}
+
 function getWorkflowMeta(workflow: ProcurementSupplyWorkflowTemplate | null | undefined): WorkflowMeta {
   const status = workflow?.status ?? "draft";
   const statusInfo = workflowStatusMeta[status];
@@ -590,6 +661,29 @@ function getWorkflowMeta(workflow: ProcurementSupplyWorkflowTemplate | null | un
     version: workflow?.version ?? "v0.1",
     bomCode: workflow?.bom_code ?? "BOM00000000",
   };
+}
+
+function getWorkflowInstanceBadgeClassName(status: string) {
+  if (status === "failed") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  if (status === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+function getWorkflowDocumentBadgeClassName(status: string) {
+  if (status === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (status === "approved") {
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (status === "failed") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
 function bumpWorkflowVersion(version: string) {
@@ -980,6 +1074,13 @@ export function ProcurementArrivalsPage() {
   const [launchUploadingSerial, setLaunchUploadingSerial] = useState(false);
   const [launchSerialPreview, setLaunchSerialPreview] = useState<ProcurementSerialImportPreviewResponse | null>(null);
   const [launchForm, setLaunchForm] = useState<StandaloneLaunchFormState | null>(null);
+  const [workflowLaunchDialogOpen, setWorkflowLaunchDialogOpen] = useState(false);
+  const [workflowLaunchSubmitting, setWorkflowLaunchSubmitting] = useState(false);
+  const [workflowLaunchUploadingSerial, setWorkflowLaunchUploadingSerial] = useState(false);
+  const [workflowLaunchSerialPreview, setWorkflowLaunchSerialPreview] =
+    useState<ProcurementSerialImportPreviewResponse | null>(null);
+  const [workflowLaunchForm, setWorkflowLaunchForm] = useState<WorkflowLaunchFormState | null>(null);
+  const [unfinishedWorkflowDialogOpen, setUnfinishedWorkflowDialogOpen] = useState(false);
 
   async function loadConsole() {
     setLoading(true);
@@ -1058,6 +1159,35 @@ export function ProcurementArrivalsPage() {
   const launchSelectedBom = launchForm
     ? data.bom_profiles.find((item) => item.bom_code === launchForm.selectedBomCode) ?? null
     : null;
+  const workflowLaunchTargetWorkflow = workflowLaunchForm
+    ? data.workflow_templates.find((item) => item.key === workflowLaunchForm.workflowKey) ?? null
+    : null;
+  const workflowLaunchSelectedMaterial = workflowLaunchForm
+    ? data.material_profiles.find((item) => item.material_code === workflowLaunchForm.materialCode) ?? null
+    : null;
+  const workflowLaunchAvailableBomProfiles = workflowLaunchForm
+    ? data.bom_profiles.filter((item) => item.material_code === workflowLaunchForm.materialCode)
+    : [];
+  const workflowLaunchSelectedBom = workflowLaunchForm
+    ? data.bom_profiles.find((item) => item.bom_code === workflowLaunchForm.selectedBomCode) ?? null
+    : null;
+  const unfinishedWorkflowSummary = data.unfinished_workflow_instances ?? fallbackConsoleData.unfinished_workflow_instances;
+  const unfinishedWorkflowItems = unfinishedWorkflowSummary.items ?? [];
+  const unfinishedWorkflowCount = Number(unfinishedWorkflowSummary.unfinished_count ?? unfinishedWorkflowItems.length ?? 0);
+  const workflowLaunchStepKeys = workflowLaunchTargetWorkflow?.steps.map((step) => step.key) ?? [];
+  const workflowLaunchNeedsPurchaseOrder =
+    Boolean(workflowLaunchTargetWorkflow?.purchase_order_required) && !workflowLaunchStepKeys.includes("purchase_order");
+  const workflowLaunchNeedsInboundWarehouse = workflowLaunchStepKeys.includes("purchase_inbound");
+  const workflowLaunchNeedsBom = workflowLaunchStepKeys.includes("morphology_conversion");
+  const workflowLaunchNeedsQuantity =
+    workflowLaunchStepKeys.includes("purchase_order") || workflowLaunchStepKeys.includes("morphology_conversion");
+  const workflowLaunchNeedsTargetWarehouse = workflowLaunchStepKeys.includes("transfer_order");
+  const workflowLaunchSerialRequired =
+    workflowLaunchNeedsBom &&
+    Boolean(workflowLaunchSelectedMaterial?.serial_managed) &&
+    workflowLaunchTargetWorkflow?.serial_upload_policy !== "none";
+  const workflowLaunchNeedsSerialUpload =
+    workflowLaunchSerialRequired && workflowLaunchTargetWorkflow?.serial_upload_policy === "material_based_required";
   const selectedDraftStepModules = workflowDraftForm
     ? workflowDraftForm.selectedStepKeys
         .map((stepKey) => workflowCapableModules.find((item) => item.key === stepKey) ?? null)
@@ -1228,6 +1358,164 @@ export function ProcurementArrivalsPage() {
     }
   }
 
+  function openWorkflowLaunchDialog(workflow: ProcurementSupplyWorkflowTemplate | null) {
+    if (!workflow) {
+      return;
+    }
+    if (workflow.status !== "published") {
+      toast.warning(`${workflow.title} 当前还不是已发布业务流，请先发布后再发起业务流单据。`);
+      return;
+    }
+    setWorkflowLaunchSerialPreview(null);
+    setWorkflowLaunchForm(buildWorkflowLaunchForm(workflow, data.material_profiles, data.bom_profiles));
+    setWorkflowLaunchDialogOpen(true);
+  }
+
+  function updateWorkflowLaunchForm<K extends keyof WorkflowLaunchFormState>(
+    field: K,
+    value: WorkflowLaunchFormState[K],
+  ) {
+    setWorkflowLaunchForm((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function handleWorkflowLaunchMaterialChange(nextMaterialCode: string) {
+    setWorkflowLaunchSerialPreview(null);
+    setWorkflowLaunchForm((current) => {
+      if (!current) {
+        return current;
+      }
+      const matchedBom =
+        data.bom_profiles.find((item) => item.material_code === nextMaterialCode && item.bom_code === current.selectedBomCode) ??
+        data.bom_profiles.find((item) => item.material_code === nextMaterialCode) ??
+        null;
+      return {
+        ...current,
+        materialCode: nextMaterialCode,
+        selectedBomCode: matchedBom?.bom_code ?? "",
+        serials: [],
+        serialFileName: "",
+      };
+    });
+  }
+
+  async function handleWorkflowLaunchSerialFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !workflowLaunchForm || !workflowLaunchSelectedMaterial) {
+      return;
+    }
+    setWorkflowLaunchUploadingSerial(true);
+    try {
+      const response = await uploadSerialPreview(workflowLaunchSelectedMaterial.material_code, file);
+      setWorkflowLaunchSerialPreview(response);
+      setWorkflowLaunchForm((current) =>
+        current
+          ? {
+              ...current,
+              serials: response.preview.accepted_serials,
+              serialFileName: file.name,
+            }
+          : current,
+      );
+      toast.success("序列号预检通过，可以直接用于业务流单据下推。");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "序列号预检失败");
+      setWorkflowLaunchSerialPreview(null);
+      setWorkflowLaunchForm((current) =>
+        current
+          ? {
+              ...current,
+              serials: [],
+              serialFileName: "",
+            }
+          : current,
+      );
+    } finally {
+      setWorkflowLaunchUploadingSerial(false);
+      event.target.value = "";
+    }
+  }
+
+  async function submitWorkflowLaunch() {
+    if (!workflowLaunchForm || !workflowLaunchTargetWorkflow) {
+      return;
+    }
+
+    if (!workflowLaunchForm.materialCode) {
+      toast.warning("请先选择物料。");
+      return;
+    }
+    if (workflowLaunchNeedsPurchaseOrder && !workflowLaunchForm.purchaseOrderCode.trim()) {
+      toast.warning("请先填写用友采购订单编号。");
+      return;
+    }
+    if (workflowLaunchNeedsInboundWarehouse && !workflowLaunchForm.warehouseCode.trim()) {
+      toast.warning("请先填写采购入库仓库。");
+      return;
+    }
+    if (workflowLaunchNeedsTargetWarehouse && !workflowLaunchForm.inwarehouseCode.trim()) {
+      toast.warning("请先填写调入仓。");
+      return;
+    }
+    if (workflowLaunchNeedsBom && !workflowLaunchForm.selectedBomCode.trim()) {
+      toast.warning("请先选择形态转换 BOM。");
+      return;
+    }
+    if (workflowLaunchNeedsQuantity) {
+      const quantity = Number(workflowLaunchForm.quantity || 0);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        toast.warning("请先输入有效的计划数量。");
+        return;
+      }
+    }
+    if (workflowLaunchNeedsSerialUpload && workflowLaunchForm.serials.length === 0) {
+      toast.warning("当前业务流要求导入序列号明细，请先完成预检。");
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      material_code: workflowLaunchForm.materialCode,
+      vouchdate: workflowLaunchForm.vouchdate,
+      remark: workflowLaunchForm.remark.trim(),
+    };
+
+    if (workflowLaunchNeedsPurchaseOrder) {
+      payload.purchase_order_code = workflowLaunchForm.purchaseOrderCode.trim();
+    }
+    if (workflowLaunchNeedsInboundWarehouse) {
+      payload.warehouse_code = workflowLaunchForm.warehouseCode.trim();
+    }
+    if (workflowLaunchNeedsTargetWarehouse) {
+      payload.inwarehouse_code = workflowLaunchForm.inwarehouseCode.trim();
+    }
+    if (workflowLaunchNeedsBom) {
+      payload.bom_code = workflowLaunchForm.selectedBomCode.trim();
+    }
+    if (workflowLaunchNeedsQuantity) {
+      payload.quantity = Number(workflowLaunchForm.quantity || 0);
+    }
+    if (workflowLaunchSerialRequired && workflowLaunchForm.serials.length > 0) {
+      payload.serials = workflowLaunchForm.serials;
+    }
+
+    setWorkflowLaunchSubmitting(true);
+    try {
+      const result = await launchWorkflowDocument(workflowLaunchTargetWorkflow.key, payload);
+      toast.success(
+        result.instance_status === "completed"
+          ? `${result.workflow_title} 已完结，共执行 ${result.step_results.length} 个节点。`
+          : `${result.workflow_title} 已发起，当前停留在 ${result.current_step_title || "当前环节"}。`,
+      );
+      setWorkflowLaunchDialogOpen(false);
+      setWorkflowLaunchForm(null);
+      setWorkflowLaunchSerialPreview(null);
+      await loadConsole();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "业务流单据发起失败");
+    } finally {
+      setWorkflowLaunchSubmitting(false);
+    }
+  }
+
   function handleWorkflowManagementAction(actionKey: string) {
     const label = workflowManagementActions.find((item) => item.key === actionKey)?.title ?? "该功能";
     toast.info(`${label} 入口已留好，下一步接真实的业务流保存与发布接口。`);
@@ -1238,15 +1526,7 @@ export function ProcurementArrivalsPage() {
   }
 
   function handleOpenWorkflowExecution(workflow: ProcurementSupplyWorkflowTemplate | null) {
-    if (!workflow) {
-      return;
-    }
-    if (workflow.status !== "published") {
-      toast.warning(`${workflow.title} 当前还不是已发布业务流，请先保存并发布后再执行。`);
-      return;
-    }
-    const poRequiredNotice = workflow.purchase_order_required ? "，并强制要求输入用友采购订单编号" : "";
-    toast.info(`${workflow.title} 将按已发布业务流执行${poRequiredNotice}。`);
+    openWorkflowLaunchDialog(workflow);
   }
 
   function handleWorkflowChange(nextWorkflowKey: string) {
@@ -1556,11 +1836,6 @@ export function ProcurementArrivalsPage() {
         </CardHeader>
 
         <CardContent className="pt-0">
-          {usingFallback ? (
-            <p className="mb-4 text-xs text-muted-foreground">
-              当前显示的是本地示意布局，待控制台接口完全联通后会自动切换到在线数据。
-            </p>
-          ) : null}
           <div className="rounded-[24px] border border-border/70 bg-white/85 p-4">
             <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
               <Workflow className="size-4" />
@@ -1616,13 +1891,15 @@ export function ProcurementArrivalsPage() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <button
-                              type="button"
-                              className="text-sm font-medium text-amber-700 transition hover:underline"
-                              onClick={() => setDisableWorkflowKey(workflow.key)}
-                            >
-                              停用
-                            </button>
+                            <div className="flex flex-wrap items-center gap-3">
+                              <button
+                                type="button"
+                                className="text-sm font-medium text-sky-700 transition hover:underline"
+                                onClick={() => openWorkflowLaunchDialog(workflow)}
+                              >
+                                发起业务流单据
+                              </button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -1635,6 +1912,31 @@ export function ProcurementArrivalsPage() {
                 当前没有生效中的业务流。你可以点击右侧“业务流编排”按钮继续新增、发布或恢复业务流。
               </div>
             )}
+
+            <div className="mt-4 rounded-[20px] border border-border/70 bg-slate-50/70 p-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Clock3 className="size-4 text-sky-600" />
+                    未完成的业务流单据
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    汇总当前仍未完结的业务流卡点，点击数量即可查看所处环节、单号、状态和待审批人。
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="inline-flex min-w-[180px] items-center justify-center gap-3 rounded-[18px] border border-sky-200 bg-white px-5 py-4 text-left shadow-sm transition hover:border-sky-300 hover:bg-sky-50"
+                  onClick={() => setUnfinishedWorkflowDialogOpen(true)}
+                >
+                  <span className="text-sm font-medium text-slate-600">当前数量</span>
+                  <span className="text-3xl font-semibold tracking-tight text-slate-950">
+                    {formatNumber(unfinishedWorkflowCount)}
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -2445,6 +2747,406 @@ export function ProcurementArrivalsPage() {
               创建单据
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={workflowLaunchDialogOpen}
+        onOpenChange={(open) => {
+          setWorkflowLaunchDialogOpen(open);
+          if (!open) {
+            setWorkflowLaunchForm(null);
+            setWorkflowLaunchSerialPreview(null);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.75rem)] max-w-none flex-col overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)] sm:w-[min(100vw-2rem,1040px)] sm:max-w-[1040px] lg:w-[min(100vw-4rem,1120px)] lg:max-w-[1120px]">
+          <DialogHeader className="px-6 pt-6">
+            <DialogTitle>发起业务流单据</DialogTitle>
+            <DialogDescription>
+              填写当前业务流的必填字段后，系统会按照已发布的执行链路自动向下推单。
+            </DialogDescription>
+          </DialogHeader>
+          {workflowLaunchForm && workflowLaunchTargetWorkflow ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+              <div className="space-y-5">
+                <div className="grid gap-4 lg:grid-cols-[1.06fr_0.94fr]">
+                  <div className="space-y-4 rounded-[24px] border border-border/70 bg-white/90 p-5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge className="rounded-full border border-border/80 bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-none">
+                        已发布业务流
+                      </Badge>
+                      <Badge variant="outline" className="rounded-full border-border/70 bg-white text-xs text-muted-foreground">
+                        {getWorkflowMeta(workflowLaunchTargetWorkflow).version}
+                      </Badge>
+                      <Badge variant="outline" className="rounded-full border-border/70 bg-white text-xs text-muted-foreground">
+                        {getWorkflowMeta(workflowLaunchTargetWorkflow).bomCode}
+                      </Badge>
+                    </div>
+
+                    <div>
+                      <h3 className="text-xl font-semibold tracking-tight text-foreground">
+                        {workflowLaunchTargetWorkflow.title}
+                      </h3>
+                      <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                        {workflowLaunchTargetWorkflow.description}
+                      </p>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          物料
+                        </p>
+                        <Select
+                          value={workflowLaunchForm.materialCode}
+                          onValueChange={handleWorkflowLaunchMaterialChange}
+                        >
+                          <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                            <SelectValue placeholder="选择物料" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {data.material_profiles.map((material) => (
+                              <SelectItem key={material.material_code} value={material.material_code}>
+                                {material.material_code} · {material.material_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {workflowLaunchNeedsQuantity ? (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                            计划数量
+                          </p>
+                          <Input
+                            value={workflowLaunchForm.quantity}
+                            onChange={(event) => updateWorkflowLaunchForm("quantity", event.target.value)}
+                            className="h-11 rounded-2xl border-border/80 bg-white"
+                            placeholder="请输入计划数量"
+                          />
+                        </div>
+                      ) : null}
+
+                      {workflowLaunchNeedsPurchaseOrder ? (
+                        <div className="space-y-2 md:col-span-2">
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                              用友采购订单编号
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className="rounded-full border-amber-200 bg-amber-50 text-[11px] text-amber-700"
+                            >
+                              必填
+                            </Badge>
+                          </div>
+                          <Input
+                            value={workflowLaunchForm.purchaseOrderCode}
+                            onChange={(event) =>
+                              updateWorkflowLaunchForm("purchaseOrderCode", event.target.value)
+                            }
+                            className="h-11 rounded-2xl border-border/80 bg-white"
+                            placeholder={workflowLaunchTargetWorkflow.default_purchase_order_placeholder}
+                          />
+                        </div>
+                      ) : null}
+
+                      {workflowLaunchNeedsInboundWarehouse ? (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                            采购入库仓库
+                          </p>
+                          <Input
+                            value={workflowLaunchForm.warehouseCode}
+                            onChange={(event) => updateWorkflowLaunchForm("warehouseCode", event.target.value)}
+                            className="h-11 rounded-2xl border-border/80 bg-white"
+                            placeholder="请输入采购入库仓库编码"
+                          />
+                        </div>
+                      ) : null}
+
+                      {workflowLaunchNeedsTargetWarehouse ? (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                            调入仓
+                          </p>
+                          <Input
+                            value={workflowLaunchForm.inwarehouseCode}
+                            onChange={(event) =>
+                              updateWorkflowLaunchForm("inwarehouseCode", event.target.value)
+                            }
+                            className="h-11 rounded-2xl border-border/80 bg-white"
+                            placeholder="请输入调入仓编码"
+                          />
+                        </div>
+                      ) : null}
+
+                      {workflowLaunchNeedsBom ? (
+                        <div className="space-y-2 md:col-span-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                            形态转换 BOM
+                          </p>
+                          <Select
+                            value={workflowLaunchForm.selectedBomCode}
+                            onValueChange={(value) => updateWorkflowLaunchForm("selectedBomCode", value)}
+                            disabled={workflowLaunchAvailableBomProfiles.length === 0}
+                          >
+                            <SelectTrigger className="h-11 rounded-2xl border-border/80 bg-white">
+                              <SelectValue placeholder="选择 BOM" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {workflowLaunchAvailableBomProfiles.map((bom) => (
+                                <SelectItem key={bom.bom_code} value={bom.bom_code}>
+                                  {bom.bom_code} · {bom.bom_name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+
+                      <div className="space-y-2 md:col-span-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          单据日期
+                        </p>
+                        <Input
+                          value={workflowLaunchForm.vouchdate}
+                          onChange={(event) => updateWorkflowLaunchForm("vouchdate", event.target.value)}
+                          className="h-11 rounded-2xl border-border/80 bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        备注
+                      </p>
+                      <Textarea
+                        value={workflowLaunchForm.remark}
+                        onChange={(event) => updateWorkflowLaunchForm("remark", event.target.value)}
+                        className="min-h-[110px] rounded-[20px] border-border/80 bg-white"
+                        placeholder="补充本次业务流单据的说明、城市或仓库备注"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 rounded-[24px] border border-border/70 bg-white/90 p-5">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        自动下推链路
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {workflowLaunchTargetWorkflow.steps.map((step) => (
+                          <Badge
+                            key={step.key}
+                            variant="outline"
+                            className="rounded-full border-border/80 bg-white px-3 py-1 text-xs font-medium text-foreground"
+                          >
+                            {step.title}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[20px] border border-border/70 bg-muted/20 p-4">
+                      <p className="text-sm font-semibold text-foreground">本次发起将自动完成</p>
+                      <div className="mt-3 space-y-2 text-sm leading-7 text-muted-foreground">
+                        <p>系统会按业务流顺序逐步创建单据，并自动承接上一步生成的单号。</p>
+                        <p>发起成功后，新的单据会直接写入用友，不需要再逐张手工点击下推。</p>
+                        <p>如果任一步骤失败，系统会中断并返回失败原因，方便你立即修正重试。</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        必填字段
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {workflowLaunchTargetWorkflow.required_inputs.map((field) => (
+                          <Badge
+                            key={field}
+                            variant="outline"
+                            className="rounded-full border-border/80 bg-white px-3 py-1 text-xs font-medium text-foreground"
+                          >
+                            {field}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    {workflowLaunchNeedsBom && workflowLaunchSelectedBom ? (
+                      <div className="rounded-[20px] border border-border/70 bg-white/95 p-4">
+                        <p className="text-sm font-semibold text-foreground">当前 BOM 预览</p>
+                        <div className="mt-3 overflow-hidden rounded-[18px] border border-border/70">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>类型</TableHead>
+                                <TableHead>物料编码</TableHead>
+                                <TableHead>物料名称</TableHead>
+                                <TableHead className="text-right">数量</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {workflowLaunchSelectedBom.lines.map((line) => (
+                                <TableRow key={`${line.line_type}-${line.material_code}`}>
+                                  <TableCell>{line.line_type}</TableCell>
+                                  <TableCell className="font-mono text-xs">{line.material_code}</TableCell>
+                                  <TableCell>{line.material_name}</TableCell>
+                                  <TableCell className="text-right">{formatNumber(line.qty)}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                {workflowLaunchSerialRequired ? (
+                  <div className="rounded-[24px] border border-amber-200 bg-amber-50/65 p-5">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">序列号明细表</p>
+                        <p className="mt-1 text-sm leading-7 text-muted-foreground">
+                          {workflowLaunchNeedsSerialUpload
+                            ? "当前业务流要求导入序列号明细表。系统会先做预检，再把通过的 SN 自动带入后续单据。"
+                            : "当前物料启用了序列号管理。你可以先导入序列号明细表，系统会把预检通过的 SN 自动带入业务流。"}
+                        </p>
+                      </div>
+
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-foreground transition hover:border-amber-300">
+                        <FileUp className="size-4" />
+                        {workflowLaunchUploadingSerial ? "正在预检..." : "导入序列号文件"}
+                        <input
+                          type="file"
+                          accept={data.serial_import_template.accepted_extensions.join(",")}
+                          className="hidden"
+                          onChange={(event) => void handleWorkflowLaunchSerialFileChange(event)}
+                          disabled={workflowLaunchUploadingSerial}
+                        />
+                      </label>
+                    </div>
+
+                    {workflowLaunchForm.serialFileName ? (
+                      <p className="mt-3 text-sm text-amber-800">
+                        当前文件：{workflowLaunchForm.serialFileName}
+                      </p>
+                    ) : null}
+
+                    {workflowLaunchSerialPreview ? (
+                      <div className="mt-4">
+                        <SerialPreviewSummary
+                          preview={workflowLaunchSerialPreview}
+                          fileName={workflowLaunchForm.serialFileName}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter className="mx-0 mb-0 mt-0 shrink-0 px-6 py-4">
+            <Button variant="outline" onClick={() => setWorkflowLaunchDialogOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={() => void submitWorkflowLaunch()} disabled={workflowLaunchSubmitting}>
+              {workflowLaunchSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Rocket className="size-4" />}
+              确认发起并自动下推
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={unfinishedWorkflowDialogOpen} onOpenChange={setUnfinishedWorkflowDialogOpen}>
+        <DialogContent className="flex max-h-[calc(100vh-2rem)] w-[min(100vw-2rem,1080px)] max-w-[1080px] flex-col overflow-hidden p-0">
+          <DialogHeader className="border-b border-border/70 px-6 py-5">
+            <DialogTitle>未完成的业务流单据</DialogTitle>
+            <DialogDescription>
+              这里只展示仍未完结的业务流实例，方便快速查看当前卡点环节、单号、单据状态和待审批人。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-5">
+            {unfinishedWorkflowItems.length > 0 ? (
+              <div className="overflow-hidden rounded-[20px] border border-border/70">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>业务流名称</TableHead>
+                      <TableHead>当前环节</TableHead>
+                      <TableHead>当前单号</TableHead>
+                      <TableHead>单据状态</TableHead>
+                      <TableHead>待审批人</TableHead>
+                      <TableHead>发起时间</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {unfinishedWorkflowItems.map((item) => (
+                      <TableRow key={item.instance_no}>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="font-medium text-foreground">{item.workflow_title}</p>
+                            <p className="text-xs text-muted-foreground">{item.instance_no}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="font-medium text-foreground">{item.current_step_title}</p>
+                            <Badge
+                              variant="outline"
+                              className={cn("rounded-full text-xs", getWorkflowInstanceBadgeClassName(item.instance_status))}
+                            >
+                              {item.instance_status_label}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="font-mono text-sm text-foreground">{item.current_document_code || "--"}</p>
+                            {item.error_message ? (
+                              <p className="flex items-start gap-1 text-xs text-rose-600">
+                                <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+                                <span>{item.error_message}</span>
+                              </p>
+                            ) : item.step_count > 0 ? (
+                              <p className="text-xs text-muted-foreground">
+                                已完成 {item.completed_step_count}/{item.step_count} 步
+                              </p>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "rounded-full text-xs",
+                              getWorkflowDocumentBadgeClassName(item.current_document_status),
+                            )}
+                          >
+                            {item.current_document_status_label || "--"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-foreground">{item.current_pending_approver || "--"}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {item.launched_at ? String(item.launched_at).replace("T", " ").slice(0, 19) : "--"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="rounded-[20px] border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center">
+                <p className="text-base font-medium text-foreground">当前没有未完成的业务流单据</p>
+                <p className="mt-2 text-sm text-muted-foreground">新的业务流发起后，如果仍处于审批中或执行失败，会自动出现在这里。</p>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
