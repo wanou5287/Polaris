@@ -1,5 +1,8 @@
 import type { ActivationRecord } from "@warranty/shared";
-import type { SaleCycle } from "@prisma/client";
+type SaleCycleLike = {
+  activatedAt: Date | null;
+  unboundAt: Date | null;
+};
 
 export type ActivationResolution =
   | { type: "not_started" }
@@ -7,7 +10,7 @@ export type ActivationResolution =
   | { type: "manual_review"; message: string };
 
 export class ActivationRecordResolverService {
-  resolve(currentCycle: SaleCycle, records: ActivationRecord[]): ActivationResolution {
+  resolve(currentCycle: SaleCycleLike, records: ActivationRecord[]): ActivationResolution {
     if (currentCycle.activatedAt) {
       return {
         type: "resolved",

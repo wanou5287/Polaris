@@ -176,8 +176,9 @@ if (-not (Test-Path $NodeExePath)) {
 if (-not (Test-Path $specPath)) {
     throw "PyInstaller spec not found: $specPath"
 }
-if (-not (Test-Path (Join-Path $projectRoot "config\\yonyou_inventory_sync.yaml"))) {
-    throw "Missing config\\yonyou_inventory_sync.yaml; cannot export database and Yonyou config."
+$yonyouConfigPath = Join-Path $projectRoot "config\\yonyou_inventory_sync.yaml"
+if (-not (Test-Path $yonyouConfigPath)) {
+    Write-Warning "config\\yonyou_inventory_sync.yaml not found. Build will continue with embedded minimal seed data."
 }
 
 Remove-PathIfExists -Path $stageRoot
@@ -234,6 +235,13 @@ try {
                 }
             }
 
+            Write-Host "Generating after-sales Prisma client..."
+            $env:DATABASE_URL = "file:./prisma/dev.db"
+            & npx.cmd prisma generate --schema prisma/schema.prisma
+            if ($LASTEXITCODE -ne 0) {
+                throw "after-sales prisma generate failed"
+            }
+
             Push-Location (Join-Path $afterSalesSourceResolved "packages\\shared")
             try {
                 & npm.cmd run build
@@ -263,6 +271,7 @@ try {
                 }
             } finally {
                 Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
+                Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
                 Pop-Location
             }
         } finally {

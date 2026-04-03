@@ -1,13 +1,28 @@
-import type { SaleCycle } from "@prisma/client";
+type SaleCycleLike = {
+  id: string;
+  sn: string;
+  saleCycleId: string;
+  cycleNo: number;
+  saleStatus: string;
+  sourceOrderNo: string | null;
+  sourceChannel: string | null;
+  soldAt: Date;
+  activatedAt: Date | null;
+  returnReceivedAt: Date | null;
+  unboundAt: Date | null;
+  cycleClosedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 export type SaleCycleResolution =
   | { type: "not_found" }
   | { type: "no_active_cycle" }
-  | { type: "multiple_open_cycles"; cycles: SaleCycle[] }
-  | { type: "resolved"; cycle: SaleCycle };
+  | { type: "multiple_open_cycles"; cycles: SaleCycleLike[] }
+  | { type: "resolved"; cycle: SaleCycleLike };
 
 export class SaleCycleResolverService {
-  resolve(cycles: SaleCycle[]): SaleCycleResolution {
+  resolve(cycles: SaleCycleLike[]): SaleCycleResolution {
     if (cycles.length === 0) {
       return { type: "not_found" };
     }

@@ -338,7 +338,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
     return reply.send({
       success: true,
-      data: users.map((user) => ({
+      data: users.map((user: (typeof users)[number]) => ({
         ...buildUserResponse(user),
         approvedBy: user.approvedBy,
         approvedAt: user.approvedAt?.toISOString() ?? null,

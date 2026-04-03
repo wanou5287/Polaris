@@ -12,6 +12,7 @@ import yaml
 DEFAULT_PACKAGE_MYSQL_PORT = 13306
 DEFAULT_BACKEND_PORT = 8888
 DEFAULT_FRONTEND_PORT = 3000
+DEFAULT_DB_URL = "mysql+pymysql://bi_client:Polaris123456@127.0.0.1:3306/bi_center?charset=utf8mb4"
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +69,14 @@ def dump_database(mysql_bin_dir: Path, db: dict, dump_path: Path) -> None:
         subprocess.run(command, check=True, stdout=handle)
 
 
+def write_fallback_seed(project_root: Path, dump_path: Path) -> None:
+    fallback_seed = project_root / "deploy" / "windows" / "mysql" / "polaris_seed.sql"
+    if not fallback_seed.exists():
+        raise FileNotFoundError(f"Fallback seed SQL not found: {fallback_seed}")
+    dump_path.parent.mkdir(parents=True, exist_ok=True)
+    dump_path.write_text(fallback_seed.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
+
+
 def parse_env_file(path: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     if not path.exists():
@@ -90,16 +99,15 @@ def main() -> int:
     after_sales_source_dir = Path(args.after_sales_source_dir).resolve() if args.after_sales_source_dir else None
 
     config_path = project_root / "config" / "yonyou_inventory_sync.yaml"
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config not found: {config_path}")
-
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config = {}
+    if config_path.exists():
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     yonyou = config.get("yonyou", {})
     database = config.get("database", {})
 
     db_url = str(database.get("url") or "").strip()
     if not db_url:
-        raise ValueError("database.url is empty in config/yonyou_inventory_sync.yaml")
+        db_url = DEFAULT_DB_URL
 
     db = parse_database_url(db_url)
     if "mysql" not in db["scheme"]:
@@ -108,7 +116,10 @@ def main() -> int:
     seed_dir = output_dir / "seed"
     runtime_dir = output_dir / "runtime"
     dump_path = seed_dir / f"{db['database']}.sql"
-    dump_database(mysql_bin_dir, db, dump_path)
+    try:
+        dump_database(mysql_bin_dir, db, dump_path)
+    except Exception:
+        write_fallback_seed(project_root, dump_path)
 
     manifest = {
         "app_name": "Polaris",

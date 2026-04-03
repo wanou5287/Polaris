@@ -1,4 +1,8 @@
-import type { WarrantyEntitlement } from "@prisma/client";
+type WarrantyEntitlementLike = {
+  sn: string;
+  sourceOrderNo: string;
+  warrantyDays: number;
+};
 
 type EntitlementMatchInput = {
   sn: string;
@@ -35,7 +39,7 @@ export type EntitlementMatchResult =
 
 export class WarrantyEntitlementService {
   resolveMatch(
-    entitlements: WarrantyEntitlement[],
+    entitlements: WarrantyEntitlementLike[],
     input: EntitlementMatchInput,
   ): EntitlementMatchResult {
     if (!input.sourceOrderNo.trim()) {

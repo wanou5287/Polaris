@@ -1,17 +1,28 @@
 import { BASE_WARRANTY_DAYS, type WarrantyQueryResponse } from "@warranty/shared";
-import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { createActivationQueryService } from "./activation-query-service.js";
 import { SnInheritanceService } from "./sn-inheritance-service.js";
 import { WarrantyEntitlementService } from "./warranty-entitlement-service.js";
 
-type DeviceWithRelations = Prisma.DeviceGetPayload<{
-  include: {
-    saleCycles: true;
-    entitlements: true;
-    events: true;
-  };
-}>;
+type SaleCycleLike = {
+  saleCycleId: string;
+  saleStatus: string;
+};
+
+type WarrantyEntitlementLike = {
+  sn: string;
+  sourceOrderNo: string;
+  warrantyDays: number;
+};
+
+type DeviceWithRelations = {
+  sn: string;
+  model: string;
+  currentDeviceStatus: string;
+  saleCycles: SaleCycleLike[];
+  entitlements: WarrantyEntitlementLike[];
+  events: unknown[];
+};
 
 type WarrantyQueryInput = {
   sn: string;
