@@ -112,3 +112,5 @@ vendor/after-sales-source/apps/*/node_modules/
 vendor/after-sales-source/mock/**/*.log
 vendor/after-sales-source/prisma/dev.db
 vendor/after-sales-source/logs/
+vendor/after-sales-source/apps/api/mock/entitlement-import-samples/import-*.xlsx
+vendor/after-sales-source/apps/api/mock/entitlement-import-samples/jobs/
