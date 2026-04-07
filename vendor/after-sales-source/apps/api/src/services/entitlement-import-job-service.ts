@@ -84,6 +84,10 @@ function chunkArray<T>(items: T[], size: number) {
   return chunks;
 }
 
+function buildEntitlementKey(sn: string, sourceOrderNo: string) {
+  return `${sn}::${sourceOrderNo.trim()}`;
+}
+
 function pushError(errors: ImportErrorRow[], row: number, sn: string, message: string) {
   if (errors.length < MAX_ERROR_ROWS) {
     errors.push({ row, sn, message });
@@ -298,7 +302,13 @@ class EntitlementImportJobService {
         }
       }
 
-      const uniqueSnList = [...new Set(normalizedRows.map((item) => item.sn))];
+      const dedupedRowsMap = new Map<string, NormalizedRow>();
+      for (const item of normalizedRows) {
+        dedupedRowsMap.set(buildEntitlementKey(item.sn, item.sourceOrderNo), item);
+      }
+
+      const dedupedRows = [...dedupedRowsMap.values()];
+      const uniqueSnList = [...new Set(dedupedRows.map((item) => item.sn))];
       const deviceLookupChunks = chunkArray(uniqueSnList, SQLITE_SAFE_BATCH_SIZE);
       const existingSnSet = new Set<string>();
 
@@ -348,7 +358,30 @@ class EntitlementImportJobService {
         }
       }
 
-      const entitlementRows = normalizedRows.map((item, index) => ({
+      const deleteKeys = dedupedRows.map((item) => ({
+        sn: item.sn,
+        sourceOrderNo: item.sourceOrderNo,
+      }));
+      const deleteChunks = chunkArray(deleteKeys, SQLITE_SAFE_BATCH_SIZE);
+      job.phase = "覆盖旧延保记录";
+      for (const [index, deleteChunk] of deleteChunks.entries()) {
+        if (deleteChunk.length > 0) {
+          await prisma.warrantyEntitlement.deleteMany({
+            where: {
+              OR: deleteChunk.map((item) => ({
+                sn: item.sn,
+                sourceOrderNo: item.sourceOrderNo,
+              })),
+            },
+          });
+        }
+
+        if (deleteChunks.length > 0) {
+          job.progressPercent = 65 + Math.round(((index + 1) / deleteChunks.length) * 10);
+        }
+      }
+
+      const entitlementRows = dedupedRows.map((item, index) => ({
         id: `imp-${importId}-${index}`,
         entitlementId: `IMP-${importId}-${index}`,
         saleCycleId: null,
@@ -371,7 +404,7 @@ class EntitlementImportJobService {
         }
 
         if (entitlementChunks.length > 0) {
-          job.progressPercent = 65 + Math.round(((index + 1) / entitlementChunks.length) * 30);
+          job.progressPercent = 75 + Math.round(((index + 1) / entitlementChunks.length) * 20);
         }
       }
 
@@ -384,8 +417,8 @@ class EntitlementImportJobService {
       job.phase = "导入完成";
       job.progressPercent = 100;
       job.processed = rows.length;
-      job.successCount = normalizedRows.length;
-      job.failedCount = rows.length - normalizedRows.length;
+      job.successCount = dedupedRows.length;
+      job.failedCount = rows.length - dedupedRows.length;
       job.errors = errors;
       job.truncatedErrorCount =
         job.failedCount > errors.length ? job.failedCount - errors.length : 0;
