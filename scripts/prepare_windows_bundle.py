@@ -13,6 +13,8 @@ DEFAULT_PACKAGE_MYSQL_PORT = 13306
 DEFAULT_BACKEND_PORT = 8888
 DEFAULT_FRONTEND_PORT = 3000
 DEFAULT_DB_URL = "mysql+pymysql://bi_client:Polaris123456@127.0.0.1:3306/bi_center?charset=utf8mb4"
+DEFAULT_AFTER_SALES_ACTIVATION_REAL_BASE_URL = "https://work-order.91jzx.cn"
+DEFAULT_AFTER_SALES_ACTIVATION_REAL_PATH = "/wo/tt/main/activation/info"
 
 
 def parse_args() -> argparse.Namespace:
@@ -178,9 +180,13 @@ def main() -> int:
                 "activation_mock_file": after_sales_env.get(
                     "ACTIVATION_MOCK_FILE", "../../../mock/activation-data.json"
                 ),
-                "activation_real_base_url": after_sales_env.get("ACTIVATION_REAL_BASE_URL", ""),
+                "activation_real_base_url": after_sales_env.get(
+                    "ACTIVATION_REAL_BASE_URL",
+                    DEFAULT_AFTER_SALES_ACTIVATION_REAL_BASE_URL,
+                ),
                 "activation_real_path": after_sales_env.get(
-                    "ACTIVATION_REAL_PATH", "/wo/tt/main/activation/info"
+                    "ACTIVATION_REAL_PATH",
+                    DEFAULT_AFTER_SALES_ACTIVATION_REAL_PATH,
                 ),
                 "activation_real_timeout_ms": after_sales_env.get(
                     "ACTIVATION_REAL_TIMEOUT_MS", "5000"

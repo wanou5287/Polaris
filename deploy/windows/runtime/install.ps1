@@ -468,13 +468,21 @@ if ($afterSalesEnabled) {
     if (-not $afterSalesActivationMode) {
         $afterSalesActivationMode = "real"
     }
+    $afterSalesRealBaseUrl = [string]$manifest.after_sales.env.activation_real_base_url
+    if (-not $afterSalesRealBaseUrl) {
+        $afterSalesRealBaseUrl = "https://work-order.91jzx.cn"
+    }
+    $afterSalesRealPath = [string]$manifest.after_sales.env.activation_real_path
+    if (-not $afterSalesRealPath) {
+        $afterSalesRealPath = "/wo/tt/main/activation/info"
+    }
     $afterSalesEnvContent = @"
 DATABASE_URL=$afterSalesDbUri
 PORT=$($manifest.after_sales.api_port)
 ACTIVATION_MODE=$afterSalesActivationMode
 ACTIVATION_MOCK_FILE=$afterSalesMockFile
-ACTIVATION_REAL_BASE_URL=$($manifest.after_sales.env.activation_real_base_url)
-ACTIVATION_REAL_PATH=$($manifest.after_sales.env.activation_real_path)
+ACTIVATION_REAL_BASE_URL=$afterSalesRealBaseUrl
+ACTIVATION_REAL_PATH=$afterSalesRealPath
 ACTIVATION_REAL_TIMEOUT_MS=$($manifest.after_sales.env.activation_real_timeout_ms)
 ACTIVATION_REAL_AUTH_TYPE=$($manifest.after_sales.env.activation_real_auth_type)
 ACTIVATION_REAL_TOKEN=$($manifest.after_sales.env.activation_real_token)
@@ -519,8 +527,8 @@ DATABASE_URL=$(if ($afterSalesEnabled) { "file:" + ((Join-Path $afterSalesPrisma
 PORT=$(if ($afterSalesEnabled) { $manifest.after_sales.api_port } else { "" })
 ACTIVATION_MODE=$(if ($afterSalesEnabled) { $afterSalesActivationMode } else { "" })
 ACTIVATION_MOCK_FILE=$(if ($afterSalesEnabled) { $afterSalesMockFile } else { "" })
-ACTIVATION_REAL_BASE_URL=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_real_base_url } else { "" })
-ACTIVATION_REAL_PATH=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_real_path } else { "" })
+ACTIVATION_REAL_BASE_URL=$(if ($afterSalesEnabled) { $afterSalesRealBaseUrl } else { "" })
+ACTIVATION_REAL_PATH=$(if ($afterSalesEnabled) { $afterSalesRealPath } else { "" })
 ACTIVATION_REAL_TIMEOUT_MS=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_real_timeout_ms } else { "" })
 ACTIVATION_REAL_AUTH_TYPE=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_real_auth_type } else { "" })
 ACTIVATION_REAL_TOKEN=$(if ($afterSalesEnabled) { $manifest.after_sales.env.activation_real_token } else { "" })
